@@ -4,6 +4,7 @@ pbt — prompt-build-tool CLI
 Commands
 --------
 pbt run          Execute all prompt models (or a subset via --select).
+pbt test         Run test prompts from the tests/ directory.
 pbt ls           List discovered models and their dependencies.
 pbt show-runs    Show recent run history from the SQLite store.
 pbt show-result  Print the stored output for a specific model + run.
@@ -31,6 +32,7 @@ from pbt.graph import (
     UnknownModelError,
 )
 from pbt.executor import execute_run, ModelRunResult
+from pbt.tester import load_tests, execute_tests, TestResult
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -226,6 +228,155 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool) -> None:
     c.print(summary)
 
     if errors:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# pbt test
+# ---------------------------------------------------------------------------
+
+@main.command("test")
+@click.option(
+    "--models-dir",
+    default="models",
+    show_default=True,
+    help="Directory containing *.prompt model files.",
+)
+@click.option(
+    "--tests-dir",
+    default="tests",
+    show_default=True,
+    help="Directory containing *.prompt test files.",
+)
+@click.option(
+    "--run-id",
+    default=None,
+    help="Use outputs from this specific run (default: latest run with matching DAG hash).",
+)
+@click.option("--no-color", is_flag=True, default=False)
+def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) -> None:
+    """
+    Run test prompts from the tests/ directory against the latest model outputs.
+
+    Each test prompt has full Jinja2 context (ref() works as in models).
+    A test passes when the LLM returns JSON containing {"results": "pass"}.
+    """
+    c = Console(highlight=not no_color)
+    db.init_db()
+
+    # ------------------------------------------------------------------
+    # Discover tests
+    # ------------------------------------------------------------------
+    tests = load_tests(tests_dir)
+    if not tests:
+        c.print(
+            f"[yellow]No test files found in '{tests_dir}'.[/yellow]\n"
+            f"Create *.prompt files there to get started."
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # Load models to compute the DAG hash
+    # ------------------------------------------------------------------
+    try:
+        all_models = load_models(models_dir)
+    except FileNotFoundError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+    try:
+        ordered = execution_order(all_models)
+    except (CyclicDependencyError, UnknownModelError) as exc:
+        err_console.print(f"[red]Dependency error:[/red] {exc}")
+        sys.exit(1)
+
+    dag_hash = compute_dag_hash(all_models)
+
+    # ------------------------------------------------------------------
+    # Find the run whose outputs we'll test against
+    # ------------------------------------------------------------------
+    if run_id:
+        with db.get_conn() as conn:
+            target_run = conn.execute(
+                "SELECT * FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        if not target_run:
+            err_console.print(f"[red]Error:[/red] Run '{run_id}' not found.")
+            sys.exit(1)
+    else:
+        target_run = db.get_latest_run_with_dag_hash(dag_hash)
+        if target_run is None:
+            err_console.print(
+                f"[red]Error:[/red] No previous run found with DAG hash [bold]{dag_hash}[/bold].\n"
+                f"Run [bold]pbt run[/bold] first, then [bold]pbt test[/bold]."
+            )
+            sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # Load model outputs from that run
+    # ------------------------------------------------------------------
+    model_names = [m.name for m in ordered]
+    model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
+
+    # ------------------------------------------------------------------
+    # Print header
+    # ------------------------------------------------------------------
+    c.rule("[bold cyan]pbt test[/bold cyan]")
+    c.print(f"  Tests dir  : [dim]{tests_dir}[/dim]")
+    c.print(f"  Tests      : {len(tests)}")
+    c.print(f"  Using run  : [dim]{target_run['run_id']}[/dim]  ({target_run['run_date']})")
+    c.print(f"  DAG hash   : [dim]{dag_hash}[/dim]")
+    c.print()
+
+    # ------------------------------------------------------------------
+    # Execute tests
+    # ------------------------------------------------------------------
+    test_results: list[TestResult] = []
+    total = len(tests)
+
+    def on_start(name: str) -> None:
+        idx = len(test_results) + 1
+        c.print(f"  [{idx}/{total}] [bold]{name}[/bold] … ", end="")
+
+    def on_done(result: TestResult) -> None:
+        test_results.append(result)
+        if result.status == "pass":
+            c.print(f"[green]PASS[/green] [dim]({result.execution_ms} ms)[/dim]")
+        elif result.status == "fail":
+            c.print("[red]FAIL[/red]")
+            c.print(f"    LLM returned: [dim]{result.llm_output!r}[/dim]")
+        else:
+            c.print("[red]ERROR[/red]")
+            c.print(f"    [dim]{result.error}[/dim]")
+
+    execute_tests(
+        run_id=target_run["run_id"],
+        tests=tests,
+        model_outputs=model_outputs,
+        on_test_start=on_start,
+        on_test_done=on_done,
+    )
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    passed  = sum(1 for r in test_results if r.status == "pass")
+    failed  = sum(1 for r in test_results if r.status == "fail")
+    errored = sum(1 for r in test_results if r.status == "error")
+
+    c.print()
+    c.rule()
+
+    summary = Table(box=box.SIMPLE, show_header=False)
+    summary.add_row("Passed  :", f"[green]{passed}[/green]")
+    if failed:
+        summary.add_row("Failed  :", f"[red]{failed}[/red]")
+    if errored:
+        summary.add_row("Errors  :", f"[red]{errored}[/red]")
+    summary.add_row("Run ID  :", f"[dim]{target_run['run_id']}[/dim]")
+    c.print(summary)
+
+    if failed or errored:
         sys.exit(1)
 
 

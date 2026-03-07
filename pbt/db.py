@@ -79,6 +79,23 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_runs_dag_hash
                 ON runs (dag_hash, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS test_results (
+                id               INTEGER   PRIMARY KEY AUTOINCREMENT,
+                run_id           TEXT      NOT NULL REFERENCES runs(run_id),
+                test_name        TEXT      NOT NULL,
+                status           TEXT      NOT NULL,
+                                  -- 'pass' | 'fail' | 'error'
+                prompt_rendered  TEXT,     -- fully-rendered prompt sent to LLM
+                llm_output       TEXT,     -- raw LLM response text
+                error            TEXT,
+                started_at       TEXT,
+                completed_at     TEXT,
+                execution_ms     INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_test_results_run
+                ON test_results (run_id, test_name);
         """)
         _migrate(conn)
 
@@ -145,6 +162,35 @@ def get_latest_run_with_dag_hash(dag_hash: str) -> Optional[sqlite3.Row]:
                LIMIT 1""",
             (dag_hash,),
         ).fetchone()
+
+
+def record_test_result(run_id: str, result: "TestResult") -> None:  # noqa: F821
+    """Persist a single test outcome to the test_results table."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO test_results
+               (run_id, test_name, status, prompt_rendered, llm_output,
+                error, completed_at, execution_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id,
+                result.test_name,
+                result.status,
+                result.prompt_rendered,
+                result.llm_output,
+                result.error or None,
+                _now(),
+                result.execution_ms,
+            ),
+        )
+
+
+def get_test_results(run_id: str) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM test_results WHERE run_id=? ORDER BY id",
+            (run_id,),
+        ).fetchall()
 
 
 def get_model_outputs_from_run(
