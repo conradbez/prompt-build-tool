@@ -32,6 +32,7 @@ class ModelRunResult:
     llm_output: str = ""
     error: str = ""
     execution_ms: int = 0
+    cached: bool = False
 
 
 
@@ -102,9 +103,15 @@ def execute_run(
 
         try:
             rendered = render_prompt(model.source, model_outputs)
-            t0 = time.monotonic()
-            llm_output = llm_call(rendered)
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+            cached = db.get_cached_llm_output(rendered)
+            if cached is not None:
+                llm_output = cached
+                elapsed_ms = 0
+            else:
+                t0 = time.monotonic()
+                llm_output = llm_call(rendered)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
 
             model_outputs[model.name] = llm_output
             db.mark_model_success(run_id, model.name, rendered, llm_output)
@@ -115,6 +122,7 @@ def execute_run(
                 prompt_rendered=rendered,
                 llm_output=llm_output,
                 execution_ms=elapsed_ms,
+                cached=cached is not None,
             )
 
         except Exception as exc:  # noqa: BLE001

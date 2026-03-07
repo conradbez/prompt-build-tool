@@ -10,6 +10,7 @@ model_results
     One row per model per run — stores rendered prompt input and LLM output.
 """
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -66,6 +67,7 @@ def init_db() -> None:
                                   -- 'pending' | 'running' | 'success' | 'error' | 'skipped'
                 prompt_template  TEXT,     -- raw .prompt file contents
                 prompt_rendered  TEXT,     -- fully-rendered prompt sent to LLM
+                prompt_hash      TEXT,     -- SHA-256 of prompt_rendered (for cache lookup)
                 llm_output       TEXT,     -- raw LLM response text
                 started_at       TEXT,
                 completed_at     TEXT,
@@ -79,6 +81,9 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_runs_dag_hash
                 ON runs (dag_hash, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_model_results_prompt_hash
+                ON model_results (prompt_hash, completed_at DESC);
 
             CREATE TABLE IF NOT EXISTS test_results (
                 id               INTEGER   PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +113,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     migrations = [
         ("runs", "run_date",  "TEXT NOT NULL DEFAULT ''"),
         ("runs", "dag_hash",  "TEXT"),
+        ("model_results", "prompt_hash", "TEXT"),
     ]
     for table, col, defn in migrations:
         try:
@@ -216,6 +222,27 @@ def get_model_outputs_from_run(
 
 
 # ---------------------------------------------------------------------------
+# Prompt cache
+# ---------------------------------------------------------------------------
+
+def get_cached_llm_output(prompt_rendered: str) -> Optional[str]:
+    """
+    Return a previously stored LLM output for an identical rendered prompt,
+    or None if no cached result exists.
+    """
+    prompt_hash = hashlib.sha256(prompt_rendered.encode()).hexdigest()
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT llm_output FROM model_results
+               WHERE prompt_hash = ? AND status = 'success'
+               ORDER BY completed_at DESC
+               LIMIT 1""",
+            (prompt_hash,),
+        ).fetchone()
+    return row["llm_output"] if row else None
+
+
+# ---------------------------------------------------------------------------
 # Model result helpers
 # ---------------------------------------------------------------------------
 
@@ -267,16 +294,18 @@ def mark_model_success(
         else:
             elapsed = 0
 
+        prompt_hash = hashlib.sha256(prompt_rendered.encode()).hexdigest()
         conn.execute(
             """UPDATE model_results
                SET status='success',
                    prompt_rendered=?,
+                   prompt_hash=?,
                    llm_output=?,
                    completed_at=?,
                    execution_ms=?
                WHERE run_id=? AND model_name=?
             """,
-            (prompt_rendered, llm_output, now, elapsed, run_id, model_name),
+            (prompt_rendered, prompt_hash, llm_output, now, elapsed, run_id, model_name),
         )
 
 
