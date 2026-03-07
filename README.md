@@ -183,6 +183,68 @@ sqlite3 .pbt/pbt.db "SELECT model_name, status, execution_ms FROM model_results 
 
 ---
 
+## Customising the LLM backend (`models/client.py`)
+
+By default pbt uses Gemini. To swap in any other LLM, create
+`models/client.py` and define an `llm_call` function:
+
+```python
+# models/client.py
+import anthropic
+
+def llm_call(prompt: str) -> str:
+    client = anthropic.Anthropic()
+    message = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
+```
+
+pbt will automatically detect and use this file instead of the built-in
+Gemini implementation. If the file exists but does not define `llm_call`,
+pbt raises an error at startup.
+
+---
+
+## RAG inside prompts (`models/rag.py`)
+
+pbt exposes a `return_list_RAG_results(*args)` Jinja function in every
+template. To power it, create `models/rag.py` with a `do_RAG` function:
+
+```python
+# models/rag.py
+def do_RAG(*args) -> list[str] | str:
+    query = args[0]
+    # your vector search, keyword lookup, etc.
+    return ["Relevant document 1", "Relevant document 2"]
+```
+
+`do_RAG` receives whatever arguments you pass to `return_list_RAG_results`
+in the template. It can return a `list[str]` or a bare `str` (wrapped
+automatically). Return `False` or `None` to signal no results.
+
+Use it in any `.prompt` file:
+
+```jinja
+{% set hits = return_list_RAG_results(ref('topic')) %}
+{% if hits[0] %}
+A related article in our library: "{{ hits[0] }}"
+
+Write a paragraph explaining how the topic below connects to it:
+{{ ref('topic') }}
+{% else %}
+Write a paragraph introducing this topic as a fresh subject:
+{{ ref('topic') }}
+{% endif %}
+```
+
+If `models/rag.py` is absent and a template calls `return_list_RAG_results`,
+pbt raises a clear error at render time.
+
+---
+
 ## Project layout
 
 ```
@@ -191,13 +253,17 @@ prompt-build-tool-for-LLMs/
 │   ├── __init__.py      # package metadata
 │   ├── cli.py           # Click CLI (pbt run, pbt ls, …)
 │   ├── graph.py         # DAG builder + topological sort (networkx)
-│   ├── parser.py        # Jinja2 renderer with ref() support
-│   ├── executor.py      # Gemini API calls + SQLite writes
+│   ├── parser.py        # Jinja2 renderer with ref() and return_list_RAG_results()
+│   ├── executor.py      # LLM calls + SQLite writes
+│   ├── llm.py           # LLM backend resolver (built-in Gemini or models/client.py)
+│   ├── rag.py           # RAG resolver (models/rag.py → do_RAG)
 │   └── db.py            # SQLite schema + query helpers
 ├── models/
 │   ├── topic.prompt     # example: no dependencies
 │   ├── outline.prompt   # example: depends on topic
-│   └── article.prompt   # example: depends on topic + outline
+│   ├── article.prompt   # example: depends on topic + outline
+│   ├── client.py        # optional: custom LLM backend
+│   └── rag.py           # optional: RAG function (do_RAG)
 ├── pyproject.toml
 └── README.md
 ```
@@ -208,7 +274,7 @@ prompt-build-tool-for-LLMs/
 
 | Environment variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | — | **Required.** Gemini API key. |
+| `GEMINI_API_KEY` | — | **Required** (unless using `models/client.py`). Gemini API key. |
 | `GEMINI_MODEL` | `gemini-2.0-flash` | Override the Gemini model. |
 
 ---
