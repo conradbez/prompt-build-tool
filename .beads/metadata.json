@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "prompt_build_tool_for_LLMs",
+  "project_id": "5d691a74-13d3-45cc-bbc5-26423f145522"
+}

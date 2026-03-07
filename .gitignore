@@ -15,3 +15,7 @@ venv/
 .vscode/
 .idea/
 *.swp
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
