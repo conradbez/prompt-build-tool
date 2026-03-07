@@ -39,6 +39,7 @@ def render_prompt(
     template_source: str,
     model_outputs: dict[str, str],
     extra_vars: dict | None = None,
+    rag_call: "Callable[..., list[str]] | None" = None,
 ) -> str:
     """
     Render *template_source* as a Jinja2 template.
@@ -65,7 +66,14 @@ def render_prompt(
             )
         return model_outputs[model_name]
 
-    context: dict = {"ref": ref}
+    def return_list_RAG_results(*args) -> list[str]:
+        if rag_call is None:
+            raise RuntimeError(
+                "return_list_RAG_results() called but no rag_call was provided to render_prompt."
+            )
+        return rag_call(*args)
+
+    context: dict = {"ref": ref, "return_list_RAG_results": return_list_RAG_results}
     if extra_vars:
         context.update(extra_vars)
 

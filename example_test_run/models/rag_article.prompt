@@ -1,0 +1,14 @@
+{% set rag_result = return_list_RAG_results(ref('topic')) %}
+{% if rag_result[0] %}
+A related article in our library is: "{{ rag_result[0] }}"
+
+Write a short paragraph (3-5 sentences) explaining how the following topic
+connects to that existing article:
+
+Topic: {{ ref('topic') }}
+{% else %}
+Write a short paragraph (3-5 sentences) introducing this topic as a fresh subject
+with no prior coverage in our library:
+
+Topic: {{ ref('topic') }}
+{% endif %}

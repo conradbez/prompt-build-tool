@@ -21,6 +21,7 @@ from typing import Callable
 from pbt import db
 from pbt.graph import PromptModel
 from pbt.llm import resolve_llm_call
+from pbt.rag import resolve_rag_call
 from pbt.parser import render_prompt
 
 
@@ -64,6 +65,7 @@ def execute_run(
     List of ModelRunResult, one per model.
     """
     llm_call = resolve_llm_call(models_dir)
+    rag_call = resolve_rag_call(models_dir)
 
     # Seed model_outputs with any preloaded results from a previous run.
     model_outputs: dict[str, str] = dict(preloaded_outputs or {})
@@ -102,7 +104,7 @@ def execute_run(
         db.mark_model_running(run_id, model.name)
 
         try:
-            rendered = render_prompt(model.source, model_outputs)
+            rendered = render_prompt(model.source, model_outputs, rag_call=rag_call)
 
             cached = db.get_cached_llm_output(rendered)
             if cached is not None:
