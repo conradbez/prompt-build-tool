@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "click>=8.1",
     "jinja2>=3.1",
-    "google-generativeai>=0.8",
+    "google-genai>=1.0",
     "networkx>=3.0",
     "rich>=13.0",
 ]

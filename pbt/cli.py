@@ -192,6 +192,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool) -> None:
         all_results = execute_run(
             run_id=run_id,
             ordered_models=ordered,
+            models_dir=models_dir,
             preloaded_outputs=preloaded_outputs,
             on_model_start=on_start,
             on_model_done=on_done,
