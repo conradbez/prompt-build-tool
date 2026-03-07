@@ -183,6 +183,64 @@ sqlite3 .pbt/pbt.db "SELECT model_name, status, execution_ms FROM model_results 
 
 ---
 
+## Python API
+
+pbt can be used directly from Python without the CLI:
+
+```python
+import pbt
+
+results = pbt.run("path/to/models")
+
+for r in results:
+    print(r.model_name, r.status, r.llm_output)
+```
+
+### `pbt.run()`
+
+```python
+pbt.run(
+    models_dir="models",   # path to *.prompt files
+    select=["article"],    # optional: run only these models
+    llm_call=my_llm_fn,    # optional: custom LLM backend
+    rag_call=my_rag_fn,    # optional: custom RAG function
+)
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `models_dir` | `str` | Directory containing `*.prompt` files |
+| `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
+| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `models/client.py` then Gemini |
+| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `models/rag.py::do_RAG` |
+
+Returns a list of `ModelRunResult` objects with fields: `model_name`, `status`, `prompt_rendered`, `llm_output`, `error`, `execution_ms`, `cached`.
+
+### Passing functions inline
+
+```python
+import anthropic
+import pbt
+
+def my_llm(prompt: str) -> str:
+    client = anthropic.Anthropic()
+    msg = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text
+
+def my_rag(*args) -> list[str]:
+    query = args[0]
+    # your vector search here
+    return ["Relevant doc 1", "Relevant doc 2"]
+
+results = pbt.run("models", llm_call=my_llm, rag_call=my_rag)
+```
+
+---
+
 ## Customising the LLM backend (`models/client.py`)
 
 By default pbt uses Gemini. To swap in any other LLM, create

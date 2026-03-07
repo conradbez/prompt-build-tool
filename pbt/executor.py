@@ -44,6 +44,8 @@ def execute_run(
     preloaded_outputs: dict[str, str] | None = None,
     on_model_start: Callable[[str], None] | None = None,
     on_model_done: Callable[[ModelRunResult], None] | None = None,
+    llm_call: Callable[[str], str] | None = None,
+    rag_call: Callable[..., list] | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in sequence (dependency order).
@@ -64,8 +66,10 @@ def execute_run(
     -------
     List of ModelRunResult, one per model.
     """
-    llm_call = resolve_llm_call(models_dir)
-    rag_call = resolve_rag_call(models_dir)
+    if llm_call is None:
+        llm_call = resolve_llm_call(models_dir)
+    if rag_call is None:
+        rag_call = resolve_rag_call(models_dir)
 
     # Seed model_outputs with any preloaded results from a previous run.
     model_outputs: dict[str, str] = dict(preloaded_outputs or {})
