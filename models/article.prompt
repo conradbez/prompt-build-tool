@@ -1,0 +1,15 @@
+You are an expert technical blogger writing for a developer audience.
+
+Write a full blog post using the topic and outline below.
+The post should be engaging, technically accurate, and between 600–900 words.
+Use Markdown formatting.
+
+--- Topic ---
+{{ ref('topic') }}
+--- End Topic ---
+
+--- Outline ---
+{{ ref('outline') }}
+--- End Outline ---
+
+Write the complete blog post now.

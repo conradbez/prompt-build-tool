@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prompt-build-tool"
+version = "0.1.0"
+description = "A dbt-inspired prompt orchestration tool for LLMs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+    "jinja2>=3.1",
+    "google-generativeai>=0.8",
+    "networkx>=3.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+pbt = "pbt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pbt*"]

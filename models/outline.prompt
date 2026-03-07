@@ -1,0 +1,10 @@
+You are a technical writer.
+
+Based on the following blog topic, create a detailed outline with 4–5 sections.
+Each section should have a heading and 2–3 bullet points describing what it covers.
+
+--- Topic ---
+{{ ref('topic') }}
+--- End Topic ---
+
+Return the outline in Markdown format.
