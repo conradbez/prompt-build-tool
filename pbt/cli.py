@@ -776,6 +776,8 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
     import threading
     import time
     import webbrowser
+    from dotenv import load_dotenv
+    load_dotenv()
 
     try:
         import uvicorn
