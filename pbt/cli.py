@@ -693,6 +693,65 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
 # ---------------------------------------------------------------------------
 
 _INIT_FILES = {
+    "tests/basic-usage.md": """\
+# Tests
+
+Used when you change prompts to make sure everything still works and passes quality standards.
+Write prompts here that will run against your models to assess their quality.
+
+Each `.prompt` file in this directory is an LLM-as-judge test.
+The prompt should reference model outputs via `{{ ref('model_name') }}` and return JSON:
+  - Pass: `{"results": "pass"}`
+  - Fail: `{"results": "fail"}`
+
+Example test file `tests/summary_has_bullets.prompt`:
+
+    Does the following text contain at least 3 bullet points (lines starting with - or •)?
+
+    {{ ref('summary') }}
+
+    Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
+""",
+    "models/basic-usage.md": """\
+# Models
+
+Write your prompts here. Each `.prompt` file defines one step in your pipeline.
+
+You can:
+- Reference other prompt outputs:  `{{ ref('other_prompt_name') }}`
+- Access passed-in data:           `{{ promptdata("key") }}`
+- Include files/data:              `{{ file("path/to/file.txt") }}`
+- Configure output structure in the prompt (e.g. ask for JSON)
+
+Example chain — `models/topic.prompt` → `models/article.prompt` → `models/summary.prompt`:
+
+    # topic.prompt
+    Generate a catchy blog post topic about AI.
+
+    # article.prompt
+    Write a detailed article about: {{ ref('topic') }}
+
+    # summary.prompt
+    Summarise this article in 3 bullet points:
+    {{ ref('article') }}
+
+Run with: `pbt run` or `pbt run --promptdata topic="your topic"`
+""",
+    "validation/basic-usage.md": """\
+# Validation
+
+Optional Python code that runs *before* an LLM prompt output is passed to the next prompt.
+Use this to check basic quality gates and avoid wasting tokens on bad intermediate results.
+
+Each `.py` file must expose a `validate(prompt: str, result: str) -> bool` function.
+Returning `False` stops the pipeline and reports a validation error.
+
+Example `validation/article.py`:
+
+    def validate(prompt: str, result: str) -> bool:
+        \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
+        return len(result) >= 200 and "#" in result
+""",
     "models/article.prompt": """\
 {# Generate an article on a topic. Pass --promptdata topic=... or leave blank for a generic article. #}
 {% if promptdata("topic") %}
