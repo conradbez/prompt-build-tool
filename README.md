@@ -88,10 +88,13 @@ Execute all prompt models in dependency order.
 pbt run [OPTIONS]
 
 Options:
-  --models-dir TEXT    Directory containing *.prompt files  [default: models]
-  --select / -s MODEL  Run only these models (and their dependencies).
-                       Repeatable: -s outline -s article
-  --no-color           Disable rich color output
+  --models-dir TEXT       Directory containing *.prompt files  [default: models]
+  --select / -s MODEL     Run only these models (and their dependencies).
+                          Repeatable: -s outline -s article
+  --var KEY=VALUE         Inject a variable into every Jinja2 template.
+                          Repeatable: --var country=USA --var tone=formal
+  --validation-dir TEXT   Directory with per-model validation Python files  [default: validation]
+  --no-color              Disable rich color output
 ```
 
 Example output:
@@ -117,6 +120,25 @@ List discovered models and their dependency graph.
 
 ```bash
 pbt ls
+```
+
+### `pbt docs`
+
+Generate a self-contained HTML report of all previous runs with expandable model details and a DAG diagram.
+
+```bash
+pbt docs                        # writes to .pbt/docs/index.html
+pbt docs --open                 # also opens in the browser
+pbt docs --output my/report.html
+```
+
+### `pbt test`
+
+Run `tests/*.prompt` files against the latest run's outputs. Each test passes when the LLM returns `{"results": "pass"}`.
+
+```bash
+pbt test
+pbt test --run-id <run_id>
 ```
 
 ### `pbt show-runs`
@@ -200,10 +222,12 @@ for r in results:
 
 ```python
 pbt.run(
-    models_dir="models",   # path to *.prompt files
-    select=["article"],    # optional: run only these models
-    llm_call=my_llm_fn,    # optional: custom LLM backend
-    rag_call=my_rag_fn,    # optional: custom RAG function
+    models_dir="models",       # path to *.prompt files
+    select=["article"],        # optional: run only these models
+    llm_call=my_llm_fn,        # optional: custom LLM backend
+    rag_call=my_rag_fn,        # optional: custom RAG function
+    vars={"tone": "formal"},   # optional: variables injected into every template
+    validation_dir="validation", # optional: per-model validation functions
 )
 ```
 
@@ -213,6 +237,8 @@ pbt.run(
 | `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
 | `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `models/client.py` then Gemini |
 | `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `models/rag.py::do_RAG` |
+| `vars` | `dict \| None` | Variables injected into every Jinja2 template as `{{ key }}` |
+| `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
 
 Returns a list of `ModelRunResult` objects with fields: `model_name`, `status`, `prompt_rendered`, `llm_output`, `error`, `execution_ms`, `cached`.
 
@@ -303,25 +329,103 @@ pbt raises a clear error at render time.
 
 ---
 
+## Passing variables to templates (`--var`)
+
+Inject variables into every Jinja2 template from the CLI or Python API:
+
+```bash
+pbt run --var tone=formal --var audience=engineers
+```
+
+```python
+pbt.run("models", vars={"tone": "formal", "audience": "engineers"})
+```
+
+Access them in any `.prompt` file as `{{ tone }}`, `{{ audience }}`, etc.
+
+---
+
+## Output format config (`{# pbt:config #}`)
+
+Add an optional config block at the top of a `.prompt` file to declare the expected output format:
+
+```jinja
+{# pbt:config
+output_format: json
+#}
+Return a JSON object with keys "title" and "summary".
+```
+
+When `output_format: json` is set, pbt validates the LLM output as JSON (stripping optional ` ```json ``` ` fences) and passes the parsed `dict`/`list` to downstream models via `ref()`, enabling `{{ ref('model').title }}` access.
+
+---
+
+## Validation (`validation/`)
+
+Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error.
+
+```python
+# validation/article.py
+def validate(prompt: str, result: str) -> bool:
+    return len(result) > 100  # require at least 100 characters
+```
+
+Run with `pbt run` — validation fires automatically after each model's LLM call.
+
+---
+
+## HTTP server (`utils/server`)
+
+Run pbt over HTTP with a lightweight FastAPI server (requires `pip install fastapi uvicorn`):
+
+```bash
+python -m utils.server --models-dir models --port 8000
+```
+
+```
+POST /run   body: {"vars": {"tone": "formal"}, "select": ["article"]}
+            returns: {"outputs": {"topic": "...", "article": "..."}}
+
+GET  /health
+```
+
+Or use the factory in Python:
+
+```python
+from utils.server import create_app
+import uvicorn
+
+app = create_app(models_dir="models")
+uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+---
+
 ## Project layout
 
 ```
 prompt-build-tool-for-LLMs/
 ├── pbt/
-│   ├── __init__.py      # package metadata
-│   ├── cli.py           # Click CLI (pbt run, pbt ls, …)
+│   ├── __init__.py      # Python API (pbt.run)
+│   ├── cli.py           # Click CLI (pbt run, pbt test, pbt docs, …)
 │   ├── graph.py         # DAG builder + topological sort (networkx)
-│   ├── parser.py        # Jinja2 renderer with ref() and return_list_RAG_results()
-│   ├── executor.py      # LLM calls + SQLite writes
+│   ├── parser.py        # Jinja2 renderer with ref(), config block parsing
+│   ├── executor.py      # LLM calls + SQLite writes + validation hooks
 │   ├── llm.py           # LLM backend resolver (built-in Gemini or models/client.py)
 │   ├── rag.py           # RAG resolver (models/rag.py → do_RAG)
-│   └── db.py            # SQLite schema + query helpers
+│   ├── db.py            # SQLite schema + query helpers
+│   ├── docs.py          # HTML report generator (pbt docs)
+│   ├── tester.py        # Test runner (pbt test)
+│   └── validator.py     # Validation framework (validation/*.py)
 ├── models/
 │   ├── topic.prompt     # example: no dependencies
 │   ├── outline.prompt   # example: depends on topic
 │   ├── article.prompt   # example: depends on topic + outline
 │   ├── client.py        # optional: custom LLM backend
 │   └── rag.py           # optional: RAG function (do_RAG)
+├── validation/          # optional: per-model validate(prompt, result)->bool files
+├── utils/
+│   └── server/          # FastAPI HTTP server (POST /run, GET /health)
 ├── pyproject.toml
 └── README.md
 ```
