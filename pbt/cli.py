@@ -36,6 +36,7 @@ from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests, TestResult
 from pbt.docs import generate_docs
+from pbt.validator import load_validators
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -86,7 +87,13 @@ def main() -> None:
         "Repeatable: --var country=USA --var max_tokens=200"
     ),
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, var: tuple[str, ...]) -> None:
+@click.option(
+    "--validation-dir",
+    default="validation",
+    show_default=True,
+    help="Directory containing per-model validation Python files.",
+)
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, var: tuple[str, ...], validation_dir: str) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
 
@@ -218,6 +225,18 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, var: tuple[str
         db.finish_run(run_id, "error")
         sys.exit(1)
 
+    # Load per-model validators from validation_dir (optional)
+    try:
+        validators = load_validators(validation_dir)
+    except AttributeError as exc:
+        err_console.print(f"[red]Validation config error:[/red] {exc}")
+        db.finish_run(run_id, "error")
+        sys.exit(1)
+
+    if validators:
+        c.print(f"  Validators: {sorted(validators.keys())}")
+        c.print()
+
     if extra_vars:
         c.print(f"  Vars     : {extra_vars}")
         c.print()
@@ -232,6 +251,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, var: tuple[str
             llm_call=llm_call,
             rag_call=rag_call,
             vars=extra_vars or None,
+            validators=validators or None,
         )
     except EnvironmentError as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")

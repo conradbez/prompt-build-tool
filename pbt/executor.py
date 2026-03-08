@@ -23,6 +23,7 @@ from typing import Callable
 from pbt import db
 from pbt.graph import PromptModel
 from pbt.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT
+from pbt.validator import run_validator
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
@@ -63,6 +64,7 @@ def execute_run(
     llm_call: Callable[[str], str] | None = None,
     rag_call: Callable[..., list] | None = None,
     vars: dict | None = None,
+    validators: dict | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in sequence (dependency order).
@@ -154,6 +156,10 @@ def execute_run(
                 llm_output = json.dumps(parsed)
             else:
                 model_outputs[model.name] = llm_output
+
+            # Run user-defined validator if one exists for this model
+            if llm_output != _SKIP_OUTPUT and validators:
+                run_validator(model.name, validators, rendered, llm_output)
 
             db.mark_model_success(run_id, model.name, rendered, llm_output)
 

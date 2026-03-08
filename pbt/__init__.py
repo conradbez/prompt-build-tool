@@ -22,6 +22,7 @@ def run(
     rag_call: Callable[..., list] | None = None,
     verbose: bool = True,
     vars: dict | None = None,
+    validation_dir: str = "validation",
 ):
     """
     Execute prompt models as a Python library call.
@@ -61,6 +62,7 @@ def run(
     from pbt.executor import execute_run, ModelRunResult
     from pbt.llm import resolve_llm_call
     from pbt.rag import resolve_rag_call
+    from pbt.validator import load_validators
     from pbt.parser import _SKIP_OUTPUT
     from pbt.graph import (
         load_models,
@@ -121,6 +123,9 @@ def run(
     if rag_call is None:
         rag_call = resolve_rag_call(models_dir)
 
+    # Load per-model validators from validation_dir (optional)
+    validators = load_validators(validation_dir)
+
     run_id = db.create_run(
         model_count=len(ordered),
         dag_hash=dag_hash,
@@ -180,6 +185,7 @@ def run(
         on_model_start=on_start,
         on_model_done=on_done,
         vars=vars,
+        validators=validators or None,
     )
 
     errors = sum(1 for r in results if r.status == "error")
