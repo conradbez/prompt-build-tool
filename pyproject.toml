@@ -23,3 +23,9 @@ pbt = "pbt.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pbt*"]
+
+[dependency-groups]
+dev = [
+    "fastapi>=0.135.1",
+    "uvicorn>=0.41.0",
+]

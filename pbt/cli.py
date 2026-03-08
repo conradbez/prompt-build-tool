@@ -269,8 +269,6 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     # Warn about promptdata() vars used in templates but not provided
     dag_promptdata = get_dag_promptdata(all_models)
     missing_promptdata = [v for v in dag_promptdata if v not in promptdata_vars]
-    if dag_promptdata:
-        c.print(f"  promptdata() used: {dag_promptdata}")
     if promptdata_vars:
         c.print(f"  promptdata() set : {list(promptdata_vars.keys())}")
     if missing_promptdata:
@@ -786,7 +784,7 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
         sys.exit(1)
 
     try:
-        from utils.server.app import create_app
+        from pbt.server.app import create_app
     except ImportError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
