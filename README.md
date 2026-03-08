@@ -341,7 +341,7 @@ pbt run --var tone=formal --var audience=engineers
 pbt.run("models", vars={"tone": "formal", "audience": "engineers"})
 ```
 
-Access them in any `.prompt` file as `{{ tone }}`, `{{ audience }}`, etc.
+Access them in any `.prompt` file via `{{ vars.tone }}`, `{{ vars.audience }}`, etc.
 
 ---
 

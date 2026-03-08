@@ -116,9 +116,8 @@ def render_prompt(
         "return_list_RAG_results": return_list_RAG_results,
         "was_skipped": was_skipped,
         "skip_this_model": SKIP_SENTINEL,
+        "vars": extra_vars or {},
     }
-    if extra_vars:
-        context.update(extra_vars)
 
     template = env.from_string(template_source)
     return template.render(**context)
