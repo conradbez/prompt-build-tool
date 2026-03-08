@@ -512,3 +512,19 @@ prompt-build-tool-for-LLMs/
 4. If a model errors, all models that depend on it are marked **skipped** rather
    than failing with a confusing LLM error.
 5. If a cycle is detected, pbt exits immediately with a clear error message.
+
+---
+
+## How to dynamically skip a model
+
+If a rendered prompt evaluates to exactly `SKIP THIS MODEL`, pbt skips the LLM call and marks the model as `skipped`. Use the built-in `{{ skip_this_model }}` variable with a Jinja condition:
+
+```jinja
+{% if "no action needed" in ref('previous_model') %}
+{{ skip_this_model }}
+{% else %}
+Summarise the following: {{ ref('previous_model') }}
+{% endif %}
+```
+
+Downstream models that depend on a skipped model are also skipped automatically.
