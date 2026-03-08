@@ -682,19 +682,21 @@ def validate(prompt: str, result: str) -> bool:
 }
 
 @main.command("init")
+@click.argument("project_name", default="generate_articles_example")
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing files.")
-def init(force: bool) -> None:
-    """Scaffold a starter pbt project (models, tests, validation)."""
+def init(project_name: str, force: bool) -> None:
+    """Scaffold a starter pbt project inside PROJECT_NAME/."""
+    root = Path(project_name)
     created, skipped = [], []
 
     for rel_path, content in _INIT_FILES.items():
-        path = Path(rel_path)
+        path = root / rel_path
         if path.exists() and not force:
-            skipped.append(rel_path)
+            skipped.append(str(path))
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        created.append(rel_path)
+        created.append(str(path))
 
     for f in created:
         console.print(f"  [green]created[/green]  {f}")
@@ -702,7 +704,7 @@ def init(force: bool) -> None:
         console.print(f"  [dim]skipped[/dim]  {f}  [dim](use --force to overwrite)[/dim]")
 
     if created:
-        console.print(f"\nRun [bold cyan]pbt run[/bold cyan] to execute, or [bold cyan]pbt run --var topic='your topic'[/bold cyan]")
+        console.print(f"\nRun [bold cyan]cd {project_name} && pbt run[/bold cyan], or [bold cyan]pbt run --var topic='your topic'[/bold cyan]")
 
 
 # ---------------------------------------------------------------------------
