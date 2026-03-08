@@ -4,10 +4,11 @@ FastAPI application factory for the pbt server.
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import Any, Optional
 
 try:
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Query
     from pydantic import BaseModel
 except ImportError as exc:
     raise ImportError(
@@ -18,15 +19,69 @@ except ImportError as exc:
 import pbt
 
 
-class RunRequest(BaseModel):
-    vars: dict[str, Any] | None = None
-    select: list[str] | None = None
-
-
 class RunResponse(BaseModel):
-    run_id: str | None = None
     outputs: dict[str, Any]
     errors: list[str] = []
+
+
+def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
+    serialised: dict[str, Any] = {}
+    errors: list[str] = []
+    for name, value in outputs.items():
+        if isinstance(value, pbt.ModelStatus):
+            serialised[name] = value.value
+            errors.append(f"{name}: {value.value}")
+        else:
+            serialised[name] = value
+    return serialised, errors
+
+
+def _build_run_endpoint(models_dir: str, validation_dir: str, dag_vars: list[str]):
+    """
+    Dynamically build a /run function whose signature lists each detected
+    var as an optional query parameter. FastAPI reads __signature__ to
+    generate the OpenAPI schema, so every var shows up in /docs.
+    """
+
+    # The actual handler — receives vars as keyword arguments
+    def _run(**kwargs: Any) -> RunResponse:
+        provided_vars = {k: v for k, v in kwargs.items() if v is not None}
+        try:
+            outputs = pbt.run(
+                models_dir=models_dir,
+                vars=provided_vars or None,
+                validation_dir=validation_dir,
+                verbose=False,
+            )
+        except Exception as exc:
+            return RunResponse(outputs={}, errors=[str(exc)])
+        serialised, errors = _serialise(outputs)
+        return RunResponse(outputs=serialised, errors=errors)
+
+    # Build a signature: one Optional[str] query param per detected var
+    params = [
+        inspect.Parameter(
+            var_name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=Query(None, description=f"Template variable: `{{{{ vars.{var_name} }}}}`"),
+            annotation=Optional[str],
+        )
+        for var_name in dag_vars
+    ]
+    _run.__signature__ = inspect.Signature(params)
+
+    description = (
+        "Run all pbt prompt models and return their outputs.\n\n"
+        + (
+            "**Detected template variables** (from `vars.*` usage in `.prompt` files):\n"
+            + "\n".join(f"- `{v}`" for v in dag_vars)
+            if dag_vars
+            else "_No template variables detected in current models._"
+        )
+    )
+    _run.__doc__ = description
+
+    return _run
 
 
 def create_app(
@@ -36,33 +91,39 @@ def create_app(
     """
     Create and return a FastAPI app that exposes pbt over HTTP.
 
-    Parameters
-    ----------
-    models_dir:
-        Path to the directory containing *.prompt files.
-    validation_dir:
-        Path to the directory containing per-model validation Python files.
+    The /run endpoint's query parameters are built dynamically from the vars
+    detected across all .prompt files via VarSpy dry-render at startup.
     """
+    # Detect vars at startup so the OpenAPI schema is accurate
+    try:
+        from pbt.graph import load_models, get_dag_vars
+        models = load_models(models_dir)
+        dag_vars = get_dag_vars(models)
+    except Exception:
+        dag_vars = []
+
     app = FastAPI(
         title="pbt server",
-        description="Run pbt prompt models via HTTP",
+        description=(
+            "Run pbt prompt models via HTTP. "
+            "Query parameters on `/run` are auto-generated from `vars.*` "
+            "usage detected in your `.prompt` files."
+        ),
         version=pbt.__version__,
     )
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "pbt_version": pbt.__version__}
+        return {"status": "ok", "pbt_version": pbt.__version__, "dag_vars": dag_vars}
 
-    @app.post("/run", response_model=RunResponse)
-    def run(request: RunRequest) -> RunResponse:
-        """
-        Run pbt models and return their outputs.
+    # POST /run — generic JSON body (for programmatic use)
+    class RunRequest(BaseModel):
+        vars: dict[str, Any] | None = None
+        select: list[str] | None = None
 
-        - **vars**: Variables injected into every Jinja2 template (like `--var` on CLI)
-        - **select**: Run only these models (reuses upstream outputs from latest run)
-        """
-        errors: list[str] = []
-
+    @app.post("/run", response_model=RunResponse, summary="Run models (JSON body)")
+    def run_post(request: RunRequest) -> RunResponse:
+        """Run pbt models with a JSON body. Useful for programmatic access."""
         try:
             outputs = pbt.run(
                 models_dir=models_dir,
@@ -73,17 +134,11 @@ def create_app(
             )
         except Exception as exc:
             return RunResponse(outputs={}, errors=[str(exc)])
-
-        # Serialise outputs: convert ModelStatus enums to their string values,
-        # keep dict/list (from json output_format models) as-is.
-        serialised: dict[str, Any] = {}
-        for name, value in outputs.items():
-            if isinstance(value, pbt.ModelStatus):
-                serialised[name] = value.value
-                errors.append(f"{name}: {value.value}")
-            else:
-                serialised[name] = value
-
+        serialised, errors = _serialise(outputs)
         return RunResponse(outputs=serialised, errors=errors)
+
+    # GET /run — dynamic query params per detected var (for the docs UI)
+    run_get = _build_run_endpoint(models_dir, validation_dir, dag_vars)
+    app.get("/run", response_model=RunResponse, summary="Run models (query params)")(run_get)
 
     return app

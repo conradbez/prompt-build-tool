@@ -647,6 +647,65 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# pbt init
+# ---------------------------------------------------------------------------
+
+_INIT_FILES = {
+    "models/article.prompt": """\
+{# Generate an article on a topic. Pass --var topic=... or leave blank for a generic article. #}
+{% if vars.topic %}
+Write a detailed, engaging article about: {{ vars.topic }}
+{% else %}
+Write a detailed, engaging article about a fascinating topic of your choice.
+{% endif %}
+
+Structure it with an introduction, 3-4 body sections, and a conclusion.
+Use markdown formatting with headers.
+""",
+    "models/summary.prompt": """\
+Summarise the following article in 3 bullet points. Be concise.
+
+{{ ref('article') }}
+""",
+    "tests/summary_has_bullets.prompt": """\
+Does the following text contain at least 3 bullet points (lines starting with - or •)?
+
+{{ ref('summary') }}
+
+Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
+""",
+    "validation/article.py": """\
+def validate(prompt: str, result: str) -> bool:
+    \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
+    return len(result) >= 200 and "#" in result
+""",
+}
+
+@main.command("init")
+@click.option("--force", is_flag=True, default=False, help="Overwrite existing files.")
+def init(force: bool) -> None:
+    """Scaffold a starter pbt project (models, tests, validation)."""
+    created, skipped = [], []
+
+    for rel_path, content in _INIT_FILES.items():
+        path = Path(rel_path)
+        if path.exists() and not force:
+            skipped.append(rel_path)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        created.append(rel_path)
+
+    for f in created:
+        console.print(f"  [green]created[/green]  {f}")
+    for f in skipped:
+        console.print(f"  [dim]skipped[/dim]  {f}  [dim](use --force to overwrite)[/dim]")
+
+    if created:
+        console.print(f"\nRun [bold cyan]pbt run[/bold cyan] to execute, or [bold cyan]pbt run --var topic='your topic'[/bold cyan]")
+
+
+# ---------------------------------------------------------------------------
 # pbt serve
 # ---------------------------------------------------------------------------
 
