@@ -3,8 +3,7 @@
 A **dbt-inspired** prompt orchestration tool for LLMs.
 
 Write modular prompts in Jinja2, reference the output of other prompts with
-`ref()`, and let **pbt** resolve dependencies, execute everything in order via
-Gemini, and store every input/output in a SQLite database for full auditability.
+`ref()`, and let **pbt** resolve dependencies. 
 
 ---
 
