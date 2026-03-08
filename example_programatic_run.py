@@ -24,10 +24,9 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), "example_test_run", "models
 def example_default():
     print("=== Example 1: default run ===")
     results = pbt.run(models_dir=MODELS_DIR)
-    for r in results:
-        status = r.status
-        preview = r.llm_output[:80].replace("\n", " ") if r.llm_output else r.error
-        print(f"  {r.model_name:20s}  [{status}]  {preview}")
+    for name, output in results.items():
+        preview = output[:80].replace("\n", " ") if output else "(no output)"
+        print(f"  {name:20s}  {preview}")
 
 
 # ---------------------------------------------------------------------------

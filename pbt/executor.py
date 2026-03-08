@@ -22,7 +22,7 @@ from pbt import db
 from pbt.graph import PromptModel
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
-from pbt.parser import render_prompt
+from pbt.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT
 
 
 @dataclass
@@ -110,8 +110,10 @@ def execute_run(
         try:
             rendered = render_prompt(model.source, model_outputs, rag_call=rag_call)
 
-            cached = db.get_cached_llm_output(rendered)
-            if cached is not None:
+            if rendered.strip() == SKIP_SENTINEL:
+                llm_output = _SKIP_OUTPUT
+                elapsed_ms = 0
+            elif (cached := db.get_cached_llm_output(rendered)) is not None:
                 llm_output = cached
                 elapsed_ms = 0
             else:

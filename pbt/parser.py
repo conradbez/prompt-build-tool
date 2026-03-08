@@ -17,6 +17,9 @@ from typing import Callable
 from jinja2 import Environment, StrictUndefined, Undefined
 
 
+SKIP_SENTINEL = "SKIP THIS MODEL"
+_SKIP_OUTPUT  = "SKIPPED THIS MODEL"
+
 # Regex that finds every ref('...') or ref("...") call in raw template text.
 # Used for static dependency extraction WITHOUT executing the template.
 _REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)['"]\s*\)""")
@@ -73,7 +76,15 @@ def render_prompt(
             )
         return rag_call(*args)
 
-    context: dict = {"ref": ref, "return_list_RAG_results": return_list_RAG_results}
+    def was_skipped(model_name: str) -> bool:
+        return model_outputs.get(model_name) == _SKIP_OUTPUT
+
+    context: dict = {
+        "ref": ref,
+        "return_list_RAG_results": return_list_RAG_results,
+        "was_skipped": was_skipped,
+        "skip_this_model": SKIP_SENTINEL,
+    }
     if extra_vars:
         context.update(extra_vars)
 

@@ -1,0 +1,7 @@
+{% if was_skipped('topic') %}
+{{ skip_this_model }}
+{% else %}
+The following topic was generated: {{ ref('topic') }}
+
+Should this topic be skipped for further processing? Reply with only "yes" or "no".
+{% endif %}
