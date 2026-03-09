@@ -23,8 +23,8 @@ def setup_vscode_associations():
                 pass
 
     associations = settings.get("files.associations", {})
-    associations["*.prompt"] = "markdown-jinja"
-    associations["*.prompt.jinja"] = "markdown-jinja"
+    associations["*.prompt"] = "jinja"
+    associations["*.prompt.jinja"] = "jinja"
     settings["files.associations"] = associations
 
     with open(settings_file, "w") as f:
