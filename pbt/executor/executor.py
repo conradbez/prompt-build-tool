@@ -149,10 +149,14 @@ def execute_run(
                         )
                     model_files.append(promptfiles[name])
 
+            # Cache key includes config so a config-only change (e.g. adding
+            # output_format: json) correctly busts the cache.
+            cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+
             if rendered.strip() == SKIP_SENTINEL:
                 llm_output = _SKIP_OUTPUT
                 elapsed_ms = 0
-            elif (cached := db.get_cached_llm_output(rendered)) is not None:
+            elif (cached := db.get_cached_llm_output(cache_key)) is not None:
                 llm_output = cached
                 elapsed_ms = 0
             else:
@@ -179,7 +183,7 @@ def execute_run(
             if llm_output != _SKIP_OUTPUT and validators:
                 run_validator(model.name, validators, rendered, llm_output)
 
-            db.mark_model_success(run_id, model.name, rendered, llm_output)
+            db.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
 
             result = ModelRunResult(
                 model_name=model.name,

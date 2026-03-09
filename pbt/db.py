@@ -259,12 +259,16 @@ def load_dag(dag_hash: str) -> Optional[str]:
 # Prompt cache
 # ---------------------------------------------------------------------------
 
-def get_cached_llm_output(prompt_rendered: str) -> Optional[str]:
+def get_cached_llm_output(cache_key: str) -> Optional[str]:
     """
-    Return a previously stored LLM output for an identical rendered prompt,
+    Return a previously stored LLM output whose cache key matches *cache_key*,
     or None if no cached result exists.
+
+    *cache_key* is the string that gets SHA-256 hashed for the lookup.
+    Callers should include all inputs that affect the LLM response
+    (rendered prompt text, model config, etc.).
     """
-    prompt_hash = hashlib.sha256(prompt_rendered.encode()).hexdigest()
+    prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
     with get_conn() as conn:
         row = conn.execute(
             """SELECT llm_output FROM model_results
@@ -310,6 +314,7 @@ def mark_model_success(
     model_name: str,
     prompt_rendered: str,
     llm_output: str,
+    cache_key: str | None = None,
 ) -> None:
     now = _now()
     with get_conn() as conn:
@@ -328,7 +333,7 @@ def mark_model_success(
         else:
             elapsed = 0
 
-        prompt_hash = hashlib.sha256(prompt_rendered.encode()).hexdigest()
+        prompt_hash = hashlib.sha256((cache_key or prompt_rendered).encode()).hexdigest()
         conn.execute(
             """UPDATE model_results
                SET status='success',
