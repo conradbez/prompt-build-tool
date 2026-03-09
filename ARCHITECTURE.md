@@ -6,13 +6,14 @@
 
 ```
 pbt/
-  __init__.py   Python API (pbt.run) — also resolves llm/rag backends
-  cli.py        Click commands — orchestrates discovery, calls execute_run
-  graph.py      PromptModel dataclass, DAG building, topological sort
-  parser.py     Jinja2 rendering, VarSpy dry-render, config block parsing
-  executor.py   Pure execution loop — no file discovery, no CLI concerns
+  __init__.py          Python API (pbt.run) — also resolves llm/rag backends
+  cli.py               Click commands — orchestrates discovery, calls execute_run
+  executor/
+    graph.py           PromptModel dataclass, DAG building, topological sort, serialisation
+    parser.py          Jinja2 rendering, config block parsing
+    executor.py        Pure execution loop — no file discovery, no CLI concerns
   llm.py / rag.py / validator.py  Backend resolvers
-  db.py         SQLite schema + queries
+  db.py                SQLite schema + queries
   tester.py / docs.py  pbt test and pbt docs implementations
 ```
 
@@ -22,9 +23,13 @@ pbt/
 
 **`executor.py` is a pure executor.** It takes callables (`llm_call`, `rag_call`, `validators`) and never touches the filesystem. File discovery lives in `cli.py` and `pbt/__init__.py`. This keeps the executor testable with mock callables.
 
-**DAG hash covers structure, not content.** `compute_dag_hash()` hashes model names and edges only — not prompt text. The hash is used to verify `--select` can safely reuse a previous run's outputs. Content changes don't invalidate it.
+**DAG hash covers structure and content.** `compute_dag_hash()` hashes model names, dependency edges, prompt source text, and config. Any change to structure or prompt content produces a new hash. The hash is also the stable key used to look up the DAG snapshot in the `dags` table.
 
-**Prompt cache is content-addressed.** SHA256 of the *rendered* prompt (post-Jinja, pre-LLM) is the cache key. Identical rendered prompts across any run reuse the stored output. Independent of `--select` which operates at the run level.
+**DAG snapshots are persisted.** After each run, the full DAG (all model sources, configs, and edges) is stored in the `dags` table keyed by `dag_hash`. Pass `dag_id=<hash>` to `pbt.run()` or `--dag-id <hash>` to `pbt run` to replay a specific DAG version from DB without reading *.prompt files from disk.
+
+**Prompt cache is content-addressed.** SHA256 of the *rendered* prompt (post-Jinja, pre-LLM) is the cache key. Identical rendered prompts across any run reuse the stored output.
+
+**`--select` runs the full upstream chain fresh.** `pbt run --select tweet` runs `tweet` and all its ancestors in dependency order. The prompt cache makes unchanged upstream nodes instant — no stale-output risk, no need for a previous run of the same DAG.
 
 **`model_outputs` is `dict[str, str | dict | list]`.** When a model declares `output_format: json`, its entry is a parsed Python object, not a string. Downstream `ref('model')` in Jinja receives the object, enabling `{{ ref('model').key }}` access. The DB always stores canonical JSON strings.
 
@@ -65,4 +70,5 @@ Results stored in `PromptModel.promptdata_used`, shown in `pbt ls`, and warned a
 - DB at `.pbt/pbt.db` relative to cwd.
 - `PRAGMA journal_mode=WAL` — allows concurrent readers during a run.
 - `_migrate()` applies idempotent `ALTER TABLE ADD COLUMN` for backward compat.
-- `prompt_hash` and `dag_hash` are indexed for the cache and `--select` lookups.
+- `prompt_hash` is indexed for cache lookups; `dag_hash` is indexed on `runs` for test-run matching.
+- `dags` table stores one row per unique DAG content hash; `INSERT OR IGNORE` keeps it idempotent.

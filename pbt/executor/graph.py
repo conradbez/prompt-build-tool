@@ -173,23 +173,53 @@ def get_dag_promptdata(models: dict[str, PromptModel]) -> list[str]:
 
 def compute_dag_hash(models: dict[str, PromptModel]) -> str:
     """
-    Return a short, deterministic hash of the DAG *structure* only —
-    i.e. the set of model names and their dependency edges.
+    Return a short, deterministic hash of the DAG structure *and* content —
+    i.e. model names, dependency edges, prompt source text, and config.
 
     The hash changes when:
       - a model is added or removed
       - any dependency edge is added or removed
-
-    It does NOT change when prompt file *content* changes (only structure).
-    This is intentional: the hash is used to validate that a previous run's
-    outputs are safe to reuse for a --select run on the same DAG.
+      - any prompt file content changes
+      - any model config block changes
     """
-    # Represent as sorted list-of-tuples for full determinism
     structure = [
-        (name, sorted(model.depends_on))
+        (name, sorted(model.depends_on), model.source, json.dumps(model.config, sort_keys=True))
         for name, model in sorted(models.items())
     ]
     digest = hashlib.sha256(
         json.dumps(structure, separators=(",", ":")).encode()
     ).hexdigest()
     return digest[:16]
+
+
+def models_to_json(models: dict[str, PromptModel]) -> str:
+    """Serialise a models dict to a JSON string for storage in the dags table."""
+    data = [
+        {
+            "name": m.name,
+            "path": str(m.path),
+            "source": m.source,
+            "depends_on": m.depends_on,
+            "config": m.config,
+            "promptdata_used": m.promptdata_used,
+            "promptfiles_used": m.promptfiles_used,
+        }
+        for m in sorted(models.values(), key=lambda m: m.name)
+    ]
+    return json.dumps(data)
+
+
+def models_from_json(dag_json: str) -> dict[str, PromptModel]:
+    """Deserialise a models dict from a JSON string produced by models_to_json()."""
+    return {
+        item["name"]: PromptModel(
+            name=item["name"],
+            path=Path(item["path"]),
+            source=item["source"],
+            depends_on=item["depends_on"],
+            config=item["config"],
+            promptdata_used=item["promptdata_used"],
+            promptfiles_used=item["promptfiles_used"],
+        )
+        for item in json.loads(dag_json)
+    }

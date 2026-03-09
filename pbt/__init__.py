@@ -18,6 +18,7 @@ class ModelStatus(Enum):
 def run(
     models_dir: str = "models",
     select: list[str] | None = None,
+    dag_id: str | None = None,
     llm_call: Callable[[str], str] | None = None,
     rag_call: Callable[..., list] | None = None,
     verbose: bool = True,
@@ -33,8 +34,12 @@ def run(
     models_dir:
         Path to the directory containing *.prompt files.
     select:
-        Optional list of model names to run. Upstream outputs are loaded
-        from the most recent matching run in the DB.
+        Optional list of model names to run. All upstream dependencies are
+        also executed fresh; the prompt cache makes unchanged nodes instant.
+    dag_id:
+        Optional DAG hash returned by a previous run. When provided, the DAG
+        (model sources and config) is loaded from the database instead of
+        reading *.prompt files from disk.
     llm_call:
         Optional function ``(prompt: str) -> str`` to use as the LLM backend.
         Falls back to ``models/client.py`` then the built-in Gemini client.
@@ -75,6 +80,8 @@ def run(
         execution_order,
         build_dag,
         compute_dag_hash,
+        models_to_json,
+        models_from_json,
     )
 
     console = Console(highlight=False, soft_wrap=True)
@@ -88,33 +95,33 @@ def run(
 
     db.init_db()
 
-    all_models = load_models(models_dir)
-    ordered = execution_order(all_models)
-    dag_hash = compute_dag_hash(all_models)
+    if dag_id:
+        dag_json = db.load_dag(dag_id)
+        if dag_json is None:
+            raise RuntimeError(
+                f"DAG '{dag_id}' not found in database. "
+                "Run pbt.run() without dag_id first to register it."
+            )
+        all_models = models_from_json(dag_json)
+        dag_hash = dag_id
+    else:
+        all_models = load_models(models_dir)
+        dag_hash = compute_dag_hash(all_models)
+        db.save_dag(dag_hash, models_to_json(all_models))
 
-    preloaded_outputs: dict[str, str] = {}
+    ordered = execution_order(all_models)
 
     if select:
         selected_set = set(select)
         dag = build_dag(all_models)
 
-        upstream_needed: set[str] = set()
+        # Run selected nodes AND all their ancestors fresh.
+        # The prompt cache makes unchanged upstream nodes instant.
+        to_run: set[str] = set(selected_set)
         for name in selected_set:
-            upstream_needed.update(nx.ancestors(dag, name))
-        upstream_needed -= selected_set
+            to_run.update(nx.ancestors(dag, name))
 
-        if upstream_needed:
-            prev_run = db.get_latest_run_with_dag_hash(dag_hash)
-            if prev_run is None:
-                raise RuntimeError(
-                    f"select= requires a previous run with DAG hash '{dag_hash}'. "
-                    "Call pbt.run() without select first."
-                )
-            preloaded_outputs = db.get_model_outputs_from_run(
-                prev_run["run_id"], list(upstream_needed)
-            )
-
-        ordered = [m for m in ordered if m.name in selected_set]
+        ordered = [m for m in ordered if m.name in to_run]
 
     try:
         git_sha = subprocess.check_output(
@@ -146,7 +153,7 @@ def run(
         )
         console.print(
             f"[dim]{ts()}[/dim]  Found [bold]{total}[/bold] prompt model{'s' if total != 1 else ''}"
-            + (f", [dim]{len(preloaded_outputs)} upstream reused[/dim]" if preloaded_outputs else "")
+            + (f" [dim](select: {sorted(select)})[/dim]" if select else "")
         )
         if git_sha:
             console.print(f"[dim]{ts()}[/dim]  git SHA [dim]{git_sha}[/dim]")
@@ -185,7 +192,6 @@ def run(
     results = execute_run(
         run_id=run_id,
         ordered_models=ordered,
-        preloaded_outputs=preloaded_outputs,
         llm_call=llm_call,
         rag_call=rag_call,
         on_model_start=on_start,

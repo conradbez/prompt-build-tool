@@ -31,6 +31,8 @@ from pbt.executor.graph import (
     get_dag_promptdata,
     CyclicDependencyError,
     UnknownModelError,
+    models_to_json,
+    models_from_json,
 )
 from pbt.executor.executor import execute_run, ModelRunResult
 from pbt.llm import resolve_llm_call
@@ -69,8 +71,18 @@ def main() -> None:
     multiple=True,
     metavar="MODEL",
     help=(
-        "Run only these models, reusing upstream outputs from the latest "
-        "matching run. Repeatable: -s tweet -s haiku"
+        "Run only these models and their upstream dependencies. "
+        "Unchanged nodes are served instantly from the prompt cache. "
+        "Repeatable: -s tweet -s haiku"
+    ),
+)
+@click.option(
+    "--dag-id",
+    default=None,
+    metavar="HASH",
+    help=(
+        "Load the DAG snapshot from the database instead of reading "
+        "*.prompt files from disk. Use the dag_hash shown after a previous run."
     ),
 )
 @click.option(
@@ -104,7 +116,7 @@ def main() -> None:
     show_default=True,
     help="Directory containing per-model validation Python files.",
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
+def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
 
@@ -129,13 +141,26 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     db.init_db()
 
     # ------------------------------------------------------------------
-    # Discover & validate models
+    # Discover & validate models  (from disk or DB snapshot)
     # ------------------------------------------------------------------
-    try:
-        all_models = load_models(models_dir)
-    except FileNotFoundError as exc:
-        err_console.print(f"[red]Error:[/red] {exc}")
-        sys.exit(1)
+    if dag_id:
+        dag_json = db.load_dag(dag_id)
+        if dag_json is None:
+            err_console.print(
+                f"[red]Error:[/red] DAG '{dag_id}' not found in database.\n"
+                f"Run [bold]pbt run[/bold] without --dag-id first to register it."
+            )
+            sys.exit(1)
+        all_models = models_from_json(dag_json)
+        dag_hash = dag_id
+    else:
+        try:
+            all_models = load_models(models_dir)
+        except FileNotFoundError as exc:
+            err_console.print(f"[red]Error:[/red] {exc}")
+            sys.exit(1)
+        dag_hash = compute_dag_hash(all_models)
+        db.save_dag(dag_hash, models_to_json(all_models))
 
     try:
         ordered = execution_order(all_models)
@@ -143,15 +168,11 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         err_console.print(f"[red]Dependency error:[/red] {exc}")
         sys.exit(1)
 
-    dag_hash = compute_dag_hash(all_models)
-
     # ------------------------------------------------------------------
-    # --select: only run chosen models, load upstream outputs from DB
+    # --select: run chosen models AND their full upstream dependency chain.
+    # Unchanged nodes are served from the prompt cache automatically.
     # ------------------------------------------------------------------
-    preloaded_outputs: dict[str, str] = {}
-
     if select:
-        # Validate names
         for name in select:
             if name not in all_models:
                 err_console.print(f"[red]Unknown model:[/red] '{name}'")
@@ -160,37 +181,11 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         selected_set = set(select)
         dag = build_dag(all_models)
 
-        # Determine which upstream models we need outputs for but won't run
-        upstream_needed: set[str] = set()
+        to_run: set[str] = set(selected_set)
         for name in selected_set:
-            upstream_needed.update(nx.ancestors(dag, name))
-        upstream_needed -= selected_set
+            to_run.update(nx.ancestors(dag, name))
 
-        if upstream_needed:
-            prev_run = db.get_latest_run_with_dag_hash(dag_hash)
-            if prev_run is None:
-                err_console.print(
-                    f"[red]Error:[/red] --select requires a previous run with the "
-                    f"same DAG structure (hash [bold]{dag_hash}[/bold]).\n"
-                    f"Run [bold]pbt run[/bold] without --select first."
-                )
-                sys.exit(1)
-
-            preloaded_outputs = db.get_model_outputs_from_run(
-                prev_run["run_id"], list(upstream_needed)
-            )
-
-            missing = upstream_needed - set(preloaded_outputs)
-            if missing:
-                err_console.print(
-                    f"[red]Error:[/red] Previous run [dim]{prev_run['run_id']}[/dim] "
-                    f"is missing successful outputs for: {sorted(missing)}\n"
-                    f"Those models may have errored. Run [bold]pbt run[/bold] first."
-                )
-                sys.exit(1)
-
-        # Only execute the explicitly selected models (in topological order)
-        ordered = [m for m in ordered if m.name in selected_set]
+        ordered = [m for m in ordered if m.name in to_run]
 
     # ------------------------------------------------------------------
     # Print run header
@@ -206,10 +201,8 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     c.print(f"  Run ID   : [dim]{run_id}[/dim]")
     c.print(f"  DAG hash : [dim]{dag_hash}[/dim]")
     c.print(f"  Models   : {len(ordered)}", end="")
-    if preloaded_outputs:
-        c.print(
-            f"  [dim](+{len(preloaded_outputs)} reused from previous run)[/dim]"
-        )
+    if select:
+        c.print(f"  [dim](select: {sorted(select)})[/dim]")
     else:
         c.print()
     if git_sha:
@@ -280,7 +273,6 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         all_results = execute_run(
             run_id=run_id,
             ordered_models=ordered,
-            preloaded_outputs=preloaded_outputs,
             on_model_start=on_start,
             on_model_done=on_done,
             llm_call=llm_call,
@@ -325,8 +317,6 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         summary.add_row("        :", f"[red]{errors}[/red] errored")
     if skipped:
         summary.add_row("        :", f"[yellow]{skipped}[/yellow] skipped")
-    if preloaded_outputs:
-        summary.add_row("Reused  :", f"[dim]{len(preloaded_outputs)} from previous run[/dim]")
     if written:
         summary.add_row("Outputs :", f"[dim]{outputs_dir}/[/dim]  {', '.join(written)}")
     summary.add_row("Run ID  :", f"[dim]{run_id}[/dim]")

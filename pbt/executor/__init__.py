@@ -8,6 +8,8 @@ from pbt.executor.graph import (
     execution_order,
     get_dag_promptdata,
     compute_dag_hash,
+    models_to_json,
+    models_from_json,
 )
 from pbt.executor.parser import (
     render_prompt,
@@ -29,6 +31,8 @@ __all__ = [
     "execution_order",
     "get_dag_promptdata",
     "compute_dag_hash",
+    "models_to_json",
+    "models_from_json",
     "render_prompt",
     "extract_dependencies",
     "parse_model_config",
