@@ -40,6 +40,7 @@ from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests, TestResult
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
+from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -870,6 +871,10 @@ def validate(prompt: str, result: str) -> bool:
 
     if created:
         console.print(f"\nRun [bold cyan]cd {project_name} && pbt run[/bold cyan], or [bold cyan]pbt run --promptdata topic='your topic'[/bold cyan]")
+
+    if is_running_in_vscode():
+        setup_vscode_associations()
+        console.print("  [dim]VS Code detected — configured .vscode/settings.json for .prompt files[/dim]")
 
 
 # ---------------------------------------------------------------------------

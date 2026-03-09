@@ -31,6 +31,3 @@ def setup_vscode_associations():
         json.dump(settings, f, indent=4)
 
 
-if is_running_in_vscode():
-    print("VS Code detected. Applying configuration...")
-    setup_vscode_associations()
