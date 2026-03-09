@@ -390,7 +390,7 @@ def validate(prompt: str, result: str) -> bool:
     return len(summaries.summaries) >= 1 and len(summaries.summaries[0].key_points) >= 1
 ```
 
-Run `pbt init` to scaffold these validation files automatically — type hints are included out of the box.
+Run `pbt type-hints` to generate jinja-lsp context stubs from your validation classes, enabling autocomplete for `ref()` inside `.prompt` templates in VS Code.
 
 ---
 
