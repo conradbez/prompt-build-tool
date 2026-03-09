@@ -87,7 +87,8 @@ Example `validation/article.py`:
         \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
         return len(result) >= 200 and "#" in result
 """,
-    "models/article.prompt": """\
+    "models/articles.prompt": """\
+{{ config(output_format="json") }}
 {# Generate an article on a topic. Pass --promptdata topic=... or leave blank for a generic article. #}
 {% if promptdata("topic") %}
 Write a detailed, engaging article about: {{ promptdata("topic") }}
@@ -97,16 +98,36 @@ Write a detailed, engaging article about a fascinating topic of your choice.
 
 Structure it with an introduction, 3-4 body sections, and a conclusion.
 Use markdown formatting with headers.
-""",
-    "models/summary.prompt": """\
-Summarise the following article in 3 bullet points. Be concise.
 
-{{ ref('article') }}
+Return only valid JSON in this exact format:
+{
+  "content": "<full article text in markdown>",
+  "author": "<a plausible author name>",
+  "audience": "<intended audience, e.g. 'general public', 'developers', 'students'>"
+}
+""",
+    "models/summaries.prompt": """\
+{{ config(output_format="json") }}
+You are given a JSON article object. Produce a concise summary.
+
+Article:
+{{ ref('articles') }}
+
+Return only valid JSON in this exact format:
+{
+  "summaries": [
+    {
+      "title": "<short title for the summary>",
+      "summary": "<2-3 sentence summary of the article>",
+      "key_points": ["<point 1>", "<point 2>", "<point 3>"]
+    }
+  ]
+}
 """,
     "tests/summary_has_bullets.prompt": """\
-Does the following text contain at least 3 bullet points (lines starting with - or •)?
+Does the following JSON summaries object contain at least 3 key points in the first summary entry?
 
-{{ ref('summary') }}
+{{ ref('summaries') }}
 
 Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
 """,
@@ -180,10 +201,58 @@ def register_command(main) -> None:
         """Scaffold a starter pbt project inside PROJECT_NAME/."""
         files = dict(INIT_FILES)
         files["models/client.py"] = CLIENT_PY[provider.lower()]
-        files["validation/article.py"] = """\
+        files["validation/articles.py"] = """\
+import json
+
+EXPECTED_SCHEMA = {
+    "content": str,
+    "author": str,
+    "audience": str,
+}
+
+
 def validate(prompt: str, result: str) -> bool:
-    \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
-    return len(result) >= 200 and "#" in result
+    \"\"\"Article output must be valid JSON with content, author, and audience fields.\"\"\"
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        return False
+    return all(
+        key in data and isinstance(data[key], expected_type)
+        for key, expected_type in EXPECTED_SCHEMA.items()
+    ) and len(data.get("content", "")) >= 200
+"""
+        files["validation/summaries.py"] = """\
+import json
+
+EXPECTED_SCHEMA = {
+    "summaries": list,
+}
+
+SUMMARY_ITEM_SCHEMA = {
+    "title": str,
+    "summary": str,
+    "key_points": list,
+}
+
+
+def validate(prompt: str, result: str) -> bool:
+    \"\"\"Summaries output must be valid JSON with a non-empty summaries list, each entry having title, summary, and key_points.\"\"\"
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data.get("summaries"), list) or not data["summaries"]:
+        return False
+    for item in data["summaries"]:
+        if not all(
+            key in item and isinstance(item[key], expected_type)
+            for key, expected_type in SUMMARY_ITEM_SCHEMA.items()
+        ):
+            return False
+        if not isinstance(item["key_points"], list) or len(item["key_points"]) < 1:
+            return False
+    return True
 """
 
         root = Path(project_name)
