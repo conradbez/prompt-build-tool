@@ -338,11 +338,70 @@ Create a `validation/` directory with Python files matching model names. Each fi
 
 ```python
 # validation/article.py
+import json
+from dataclasses import dataclass, fields
+
+
+@dataclass
+class Article:
+    content: str
+    author: str
+    audience: str
+
+
 def validate(prompt: str, result: str) -> bool:
-    return len(result) > 100  # require at least 100 characters
+    """Article output must be valid JSON matching the Article dataclass."""
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        return False
+    return all(
+        f.name in data and isinstance(data[f.name], f.type)
+        for f in fields(Article)
+    ) and len(data.get("content", "")) >= 200
 ```
 
 Run with `pbt run` — validation fires automatically after each model's LLM call.
+
+### Typed hints in validation
+
+Use Python dataclasses to define the expected shape of your model's JSON output. This makes validation self-documenting and easy to extend:
+
+```python
+# validation/summaries.py
+import json
+from dataclasses import dataclass, field, fields
+
+
+@dataclass
+class SummaryItem:
+    title: str
+    summary: str
+    key_points: list[str]
+
+
+@dataclass
+class Summaries:
+    summaries: list[SummaryItem] = field(default_factory=list)
+
+
+def validate(prompt: str, result: str) -> bool:
+    """Summaries output must be valid JSON matching the Summaries dataclass."""
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data.get("summaries"), list) or not data["summaries"]:
+        return False
+    for item in data["summaries"]:
+        if not all(f.name in item for f in fields(SummaryItem)):
+            return False
+        if not isinstance(item["key_points"], list) or len(item["key_points"]) < 1:
+            return False
+    return True
+```
+
+Dataclass-based validation pairs naturally with `{{ config(output_format="json") }}` models — the LLM is asked to return JSON, and the validator confirms the structure matches your expected schema before passing the result downstream.
 
 ---
 
