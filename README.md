@@ -338,11 +338,59 @@ Create a `validation/` directory with Python files matching model names. Each fi
 
 ```python
 # validation/article.py
+import json
+from pydantic import BaseModel, ValidationError
+
+
+class Article(BaseModel):
+    content: str
+    author: str
+    audience: str
+
+
 def validate(prompt: str, result: str) -> bool:
-    return len(result) > 100  # require at least 100 characters
+    """Article output must be valid JSON matching the Article model."""
+    try:
+        data = json.loads(result)
+        article = Article(**data)
+    except (json.JSONDecodeError, ValidationError):
+        return False
+    return len(article.content) >= 200
 ```
 
 Run with `pbt run` — validation fires automatically after each model's LLM call.
+
+### Typed hints in validation
+
+Use Pydantic models to define the expected shape of your model's JSON output:
+
+```python
+# validation/summaries.py
+import json
+from pydantic import BaseModel, ValidationError
+
+
+class SummaryItem(BaseModel):
+    title: str
+    summary: str
+    key_points: list[str]
+
+
+class Summaries(BaseModel):
+    summaries: list[SummaryItem]
+
+
+def validate(prompt: str, result: str) -> bool:
+    """Summaries output must be valid JSON matching the Summaries model."""
+    try:
+        data = json.loads(result)
+        summaries = Summaries(**data)
+    except (json.JSONDecodeError, ValidationError):
+        return False
+    return len(summaries.summaries) >= 1 and len(summaries.summaries[0].key_points) >= 1
+```
+
+Run `pbt type-hints` to generate jinja-lsp context stubs from your validation classes, enabling autocomplete for `ref()` inside `.prompt` templates in VS Code.
 
 ---
 
