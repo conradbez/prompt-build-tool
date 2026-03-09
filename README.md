@@ -339,69 +339,58 @@ Create a `validation/` directory with Python files matching model names. Each fi
 ```python
 # validation/article.py
 import json
-from dataclasses import dataclass, fields
+from pydantic import BaseModel, ValidationError
 
 
-@dataclass
-class Article:
+class Article(BaseModel):
     content: str
     author: str
     audience: str
 
 
 def validate(prompt: str, result: str) -> bool:
-    """Article output must be valid JSON matching the Article dataclass."""
+    """Article output must be valid JSON matching the Article model."""
     try:
         data = json.loads(result)
-    except json.JSONDecodeError:
+        article = Article(**data)
+    except (json.JSONDecodeError, ValidationError):
         return False
-    return all(
-        f.name in data and isinstance(data[f.name], f.type)
-        for f in fields(Article)
-    ) and len(data.get("content", "")) >= 200
+    return len(article.content) >= 200
 ```
 
 Run with `pbt run` — validation fires automatically after each model's LLM call.
 
 ### Typed hints in validation
 
-Use Python dataclasses to define the expected shape of your model's JSON output. This makes validation self-documenting and easy to extend:
+Use Pydantic models to define the expected shape of your model's JSON output. Pydantic automatically coerces compatible types (e.g. `"123"` → `123`) and raises `ValidationError` with clear messages when data doesn't match:
 
 ```python
 # validation/summaries.py
 import json
-from dataclasses import dataclass, field, fields
+from pydantic import BaseModel, ValidationError
 
 
-@dataclass
-class SummaryItem:
+class SummaryItem(BaseModel):
     title: str
     summary: str
     key_points: list[str]
 
 
-@dataclass
-class Summaries:
-    summaries: list[SummaryItem] = field(default_factory=list)
+class Summaries(BaseModel):
+    summaries: list[SummaryItem]
 
 
 def validate(prompt: str, result: str) -> bool:
-    """Summaries output must be valid JSON matching the Summaries dataclass."""
+    """Summaries output must be valid JSON matching the Summaries model."""
     try:
         data = json.loads(result)
-    except json.JSONDecodeError:
+        summaries = Summaries(**data)
+    except (json.JSONDecodeError, ValidationError):
         return False
-    if not isinstance(data.get("summaries"), list) or not data["summaries"]:
-        return False
-    for item in data["summaries"]:
-        if not all(f.name in item for f in fields(SummaryItem)):
-            return False
-        if not isinstance(item["key_points"], list) or len(item["key_points"]) < 1:
-            return False
-    return True
+    return len(summaries.summaries) >= 1 and len(summaries.summaries[0].key_points) >= 1
 ```
 
-Dataclass-based validation pairs naturally with `{{ config(output_format="json") }}` models — the LLM is asked to return JSON, and the validator confirms the structure matches your expected schema before passing the result downstream.
+Pydantic-based validation pairs naturally with `{{ config(output_format="json") }}` models — the LLM is asked to return JSON, and the validator confirms the structure matches your expected schema before passing the result downstream.
 
 ---
 
