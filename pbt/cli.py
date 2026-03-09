@@ -895,7 +895,7 @@ def type_hints(models_dir: str, validation_dir: str, gen_dir: str, pyproject_pat
     Also ensures pyproject.toml contains a [tool.jinja-lsp] section pointing
     at your models/, validation/, and the generated stubs directory.
     """
-    from cli_helpful_type_hints import generate_stubs, update_pyproject_toml
+    from pbt.type_hints import generate_stubs, update_pyproject_toml
 
     try:
         written = generate_stubs(models_dir, validation_dir, gen_dir)

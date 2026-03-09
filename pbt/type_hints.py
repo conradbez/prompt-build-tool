@@ -1,5 +1,5 @@
 """
-cli_helpful_type_hints.py
+pbt/type_hints.py
 
 Generates jinja-lsp context stubs for every .prompt model so that VS Code
 (via the jinja-lsp extension) can provide autocomplete and type checking
@@ -29,7 +29,7 @@ Called automatically by the ``pbt type-hints`` CLI command:
 
 Or imported directly:
 
-    from cli_helpful_type_hints import generate_stubs, update_pyproject_toml
+    from pbt.type_hints import generate_stubs, update_pyproject_toml
     written = generate_stubs("models", "validation")
     update_pyproject_toml("models", "validation")
 """
