@@ -16,14 +16,14 @@ INIT_FILES = {
 
 | Directory | Purpose |
 |-----------|---------|
-| `models/` | <- START HERE: Prompt files — see `models/basic-usage.md` |
-| `tests/` | LLM-as-judge tests — see `tests/basic-usage.md` |
-| `validation/` | Pre-pass quality gates — see `validation/basic-usage.md` |
+| `models/` | <- START HERE: Prompt files — see `models/0-basic-usage.md` |
+| `tests/` | LLM-as-judge tests — see `tests/0-basic-usage.md` |
+| `validation/` | Pre-pass quality gates — see `validation/0-basic-usage.md` |
 | `outputs/` | Generated outputs from `pbt run` (auto-created) |
 
 Run: `pbt run` or `pbt run --promptdata topic="your topic"`
 """,
-    "tests/basic-usage.md": """\
+    "tests/0-basic-usage.md": """\
 # Tests
 
 Used when you change prompts to make sure everything still works and passes quality standards.
@@ -42,7 +42,7 @@ Example test file `tests/summary_has_bullets.prompt`:
 
     Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
 """,
-    "models/basic-usage.md": """\
+    "models/0-basic-usage.md": """\
 # Models
 
 Write your prompts here. Each `.prompt` file defines one step in your pipeline.
@@ -72,7 +72,7 @@ Gemini implementation.
 
 Run with: `pbt run` or `pbt run --promptdata topic="your topic"`
 """,
-    "validation/basic-usage.md": """\
+    "validation/0-basic-usage.md": """\
 # Validation
 
 Optional Python code that runs *before* an LLM prompt output is passed to the next prompt.
@@ -120,7 +120,7 @@ from google import genai
 def llm_call(prompt: str) -> str:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return client.models.generate_content(
-        model=os.environ.get("GEMINI_MODEL", "gemini-3-flash"),
+        model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
         contents=prompt,
     ).text
 """,
