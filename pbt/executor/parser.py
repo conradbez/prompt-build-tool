@@ -221,9 +221,7 @@ def render_prompt(
         "was_skipped": was_skipped,
         "skip_this_model": SKIP_SENTINEL,
         "config": lambda **_: "",   # no-op during real render; config already parsed
-        # Also inject model outputs as direct variables so jinja-lsp typed stubs work.
-        # e.g. {{ articles.content }} is equivalent to {{ ref('articles') }}
-        **model_outputs,
+
     }
 
     template = env.from_string(template_source)

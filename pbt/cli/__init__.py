@@ -337,7 +337,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
         sys.exit(1)
 
     try:
-        _generate_stubs(models_dir, validation_dir)
+        _generate_stubs(validation_dir)
     except Exception:
         pass  # type-hint generation is best-effort; never block a run
 
