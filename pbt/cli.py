@@ -783,33 +783,73 @@ Does the following text contain at least 3 bullet points (lines starting with - 
 
 Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
 """,
-    "models/client.py": """\
+}
+
+_CLIENT_PY: dict[str, str] = {
+    "gemini": """\
 import os
 from google import genai
 
 def llm_call(prompt: str) -> str:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return client.models.generate_content(
-        model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
+        model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
         contents=prompt,
     ).text
 """,
-    "validation/article.py": """\
-def validate(prompt: str, result: str) -> bool:
-    \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
-    return len(result) >= 200 and "#" in result
+    "openai": """\
+import os
+from openai import OpenAI
+
+def llm_call(prompt: str) -> str:
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    response = client.chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
+""",
+    "anthropic": """\
+import os
+import anthropic
+
+def llm_call(prompt: str) -> str:
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    message = client.messages.create(
+        model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        max_tokens=8096,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text
 """,
 }
+
+_PROVIDERS = ("gemini", "openai", "anthropic")
 
 @main.command("init")
 @click.argument("project_name", default="generate_articles_example")
 @click.option("--force", is_flag=True, default=False, help="Overwrite existing files.")
-def init(project_name: str, force: bool) -> None:
+@click.option(
+    "--provider",
+    type=click.Choice(_PROVIDERS, case_sensitive=False),
+    default="gemini",
+    show_default=True,
+    help="LLM provider to use in the generated client.py.",
+)
+def init(project_name: str, force: bool, provider: str) -> None:
     """Scaffold a starter pbt project inside PROJECT_NAME/."""
+    files = dict(_INIT_FILES)
+    files["models/client.py"] = _CLIENT_PY[provider.lower()]
+    files["validation/article.py"] = """\
+def validate(prompt: str, result: str) -> bool:
+    \"\"\"Article must be at least 200 characters and contain a markdown header.\"\"\"
+    return len(result) >= 200 and "#" in result
+"""
+
     root = Path(project_name)
     created, skipped = [], []
 
-    for rel_path, content in _INIT_FILES.items():
+    for rel_path, content in files.items():
         path = root / rel_path
         if path.exists() and not force:
             skipped.append(str(path))
