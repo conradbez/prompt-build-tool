@@ -868,6 +868,52 @@ def validate(prompt: str, result: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# pbt type-hints
+# ---------------------------------------------------------------------------
+
+@main.command("type-hints")
+@click.option("--models-dir", default="models", show_default=True,
+              help="Directory containing *.prompt files.")
+@click.option("--validation-dir", default="validation", show_default=True,
+              help="Directory containing per-model validation Python files.")
+@click.option("--gen-dir", default=".pbt/gen", show_default=True,
+              help="Output directory for generated context stubs.")
+@click.option("--pyproject", "pyproject_path", default="pyproject.toml", show_default=True,
+              help="Path to pyproject.toml to update with jinja-lsp config.")
+def type_hints(models_dir: str, validation_dir: str, gen_dir: str, pyproject_path: str) -> None:
+    """Generate jinja-lsp context stubs for autocomplete in .prompt templates.
+
+    Creates one <model>_context.py stub per model in GEN_DIR, importing
+    the validation class of each upstream dependency so that jinja-lsp can
+    offer typed autocomplete inside the template.
+
+    Also ensures pyproject.toml contains a [tool.jinja-lsp] section pointing
+    at your models/, validation/, and the generated stubs directory.
+    """
+    from cli_helpful_type_hints import generate_stubs, update_pyproject_toml
+
+    try:
+        written = generate_stubs(models_dir, validation_dir, gen_dir)
+    except FileNotFoundError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
+    for path in written:
+        console.print(f"  [green]wrote[/green]  {path}")
+
+    toml_updated = update_pyproject_toml(models_dir, validation_dir, gen_dir, pyproject_path)
+    if toml_updated:
+        console.print(f"  [green]wrote[/green]  {pyproject_path}  [dim](added [tool.jinja-lsp] section)[/dim]")
+    else:
+        console.print(f"  [dim]skipped[/dim] {pyproject_path}  [dim]([tool.jinja-lsp] already present)[/dim]")
+
+    console.print(
+        f"\n[bold]Done.[/bold] Install the [cyan]jinja-lsp[/cyan] VS Code extension "
+        f"to activate autocomplete in your .prompt files."
+    )
+
+
+# ---------------------------------------------------------------------------
 # pbt serve
 # ---------------------------------------------------------------------------
 
