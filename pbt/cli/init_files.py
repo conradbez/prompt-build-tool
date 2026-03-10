@@ -216,7 +216,6 @@ def register_command(main) -> None:
         files["models/client.py"] = CLIENT_PY[provider.lower()]
         files["validation/articles.py"] = """\
 import json
-from typing import Any
 from pydantic import BaseModel, ValidationError
 
 
@@ -226,7 +225,7 @@ class Article(BaseModel):
     audience: str
 
 
-def validate(prompt: str, result: str) -> Any:
+def validate(prompt: str, result: str) -> Article | bool:
     \"\"\"Validate and return the parsed Article dict, or False on failure.\"\"\"
     try:
         data = json.loads(result)
@@ -239,7 +238,6 @@ def validate(prompt: str, result: str) -> Any:
 """
         files["validation/summaries.py"] = """\
 import json
-from typing import Any
 from pydantic import BaseModel, ValidationError
 
 
@@ -253,7 +251,7 @@ class Summaries(BaseModel):
     summaries: list[SummaryItem]
 
 
-def validate(prompt: str, result: str) -> Any:
+def validate(prompt: str, result: str) -> Summaries | bool:
     \"\"\"Validate and return the parsed Summaries dict, or False on failure.\"\"\"
     try:
         data = json.loads(result)
