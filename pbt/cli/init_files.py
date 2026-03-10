@@ -16,9 +16,9 @@ INIT_FILES = {
 
 | Directory | Purpose |
 |-----------|---------|
-| `models/` | <- START HERE: Prompt files — see `models/0-basic-usage.md` |
-| `tests/` | LLM-as-judge tests — see `tests/0-basic-usage.md` |
-| `validation/` | Pre-pass quality gates — see `validation/0-basic-usage.md` |
+| `models/` | <- START HERE: Prompt files |
+| `tests/` | LLM-as-judge tests |
+| `validation/` | Pre-pass quality gates |
 | `outputs/` | Generated outputs from `pbt run` (auto-created) |
 
 Run: `pbt run` or `pbt run --promptdata topic="your topic"`
