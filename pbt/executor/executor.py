@@ -18,6 +18,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from pbt import db
@@ -67,6 +68,7 @@ def execute_run(
     promptdata: dict | None = None,
     promptfiles: dict[str, PromptFile] | None = None,
     validators: dict | None = None,
+    templates_dir: Path | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in sequence (dependency order).
@@ -135,7 +137,7 @@ def execute_run(
         db.mark_model_running(run_id, model.name)
 
         try:
-            rendered = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call)
+            rendered = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, templates_dir=templates_dir)
 
             # Resolve file paths declared in this model's config block
             model_files: list[str] | None = None

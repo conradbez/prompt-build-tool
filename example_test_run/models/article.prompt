@@ -1,5 +1,5 @@
 {{ config(promptfiles="style_guide") }}
-You are an expert technical blogger writing for a developer audience.
+{% include 'expert_persona.j2' %}
 
 Follow the attached style guide when writing this post.
 

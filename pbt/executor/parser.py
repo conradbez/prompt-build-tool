@@ -17,9 +17,10 @@ are available in addition to ref() and promptdata().
 """
 
 import re
+from pathlib import Path
 from typing import Callable
 
-from jinja2 import Environment, StrictUndefined, Undefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, Undefined
 
 
 SKIP_SENTINEL = "SKIP THIS MODEL"
@@ -172,6 +173,7 @@ def render_prompt(
     model_outputs: dict[str, str],
     promptdata: dict | None = None,
     rag_call: "Callable[..., list[str]] | None" = None,
+    templates_dir: "Path | None" = None,
 ) -> str:
     """
     Render *template_source* as a Jinja2 template.
@@ -185,12 +187,15 @@ def render_prompt(
     promptdata:
         Optional dict of runtime variables, injected via promptdata("name").
         Returns None for missing keys so {% if promptdata('x') %} is safe.
+    templates_dir:
+        Optional path to the global templates directory. When provided,
+        templates can include shared snippets via ``{% include 'name.j2' %}``.
 
     The ``ref(model_name)`` function is available inside templates and
     returns the corresponding entry from *model_outputs*.
     The ``promptdata(name)`` function returns runtime variables.
     """
-    env = _make_env()
+    env = _make_env(templates_dir)
     _promptdata = promptdata or {}
 
     def ref(model_name: str) -> str:
@@ -232,9 +237,21 @@ def render_prompt(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _make_env() -> Environment:
-    """Return a Jinja2 Environment configured for prompt files."""
+def _make_env(templates_dir: "Path | None" = None) -> Environment:
+    """Return a Jinja2 Environment configured for prompt files.
+
+    If *templates_dir* is provided and exists, a ``FileSystemLoader`` is
+    configured so templates can include shared snippets::
+
+        {% include 'system_prompt.j2' %}
+    """
+    loader = (
+        FileSystemLoader(str(templates_dir))
+        if templates_dir is not None and templates_dir.is_dir()
+        else None
+    )
     return Environment(
+        loader=loader,
         # Keep newlines in templates so multi-paragraph prompts render cleanly
         keep_trailing_newline=True,
         # Raise on unknown variables so typos are caught early

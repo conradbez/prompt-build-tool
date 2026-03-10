@@ -19,6 +19,7 @@ class ModelStatus(Enum):
 
 def run(
     models_dir: str = "models",
+    templates_dir: str = "templates",
     select: list[str] | None = None,
     dag_id: str | None = None,
     llm_call: Callable[[str], str] | None = None,
@@ -35,6 +36,11 @@ def run(
     ----------
     models_dir:
         Path to the directory containing *.prompt files.
+    templates_dir:
+        Path to the directory containing reusable Jinja2 snippets.
+        Templates here can be included in any model via
+        ``{% include 'snippet.j2' %}``.  Defaults to ``"templates"``
+        (silently ignored if the directory does not exist).
     select:
         Optional list of model names to run. All upstream dependencies are
         also executed fresh; the prompt cache makes unchanged nodes instant.
@@ -70,6 +76,7 @@ def run(
     import subprocess
     import time
     from datetime import datetime
+    from pathlib import Path
 
     import networkx as nx
     from rich.console import Console
@@ -204,6 +211,7 @@ def run(
         promptdata=promptdata,
         promptfiles=promptfiles,
         validators=validators or None,
+        templates_dir=Path(templates_dir) if templates_dir else None,
     )
 
     errors = sum(1 for r in results if r.status == "error")

@@ -116,7 +116,16 @@ def main() -> None:
     show_default=True,
     help="Directory containing per-model validation Python files.",
 )
-def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
+@click.option(
+    "--templates-dir",
+    default="templates",
+    show_default=True,
+    help=(
+        "Directory containing reusable Jinja2 snippets. "
+        "Include them in any model with {% include 'name.j2' %}."
+    ),
+)
+def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, templates_dir: str) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
 
@@ -259,6 +268,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
             promptdata=promptdata_vars or None,
             promptfiles=promptfiles_dict or None,
             validators=validators or None,
+            templates_dir=Path(templates_dir) if templates_dir else None,
         )
     except EnvironmentError as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")
