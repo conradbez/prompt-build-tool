@@ -1,3 +1,4 @@
+{% if ref('model_to_skip') | trim == 'yes' %}{{ skip_this_model }}{% else %}
 You are a technical writer.
 
 Based on the following blog topic, create a detailed outline with 4–5 sections.
@@ -8,3 +9,4 @@ Each section should have a heading and 2–3 bullet points describing what it co
 --- End Topic ---
 
 Return the outline in Markdown format.
+{% endif %}
