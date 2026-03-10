@@ -19,8 +19,6 @@ from pathlib import Path
 import click
 import networkx as nx
 from rich.console import Console
-from rich.table import Table
-from rich import box
 
 from pbt import db
 from pbt.executor.graph import (
@@ -34,18 +32,17 @@ from pbt.executor.graph import (
     models_to_json,
     models_from_json,
 )
-from pbt.executor.executor import execute_run, ModelRunResult
+from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
-from pbt.tester import load_tests, execute_tests, TestResult
+from pbt.tester import load_tests, execute_tests
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
 from pbt.cli.type_hints import register_command as _register_type_hints, generate_stubs as _generate_stubs
 from pbt.cli.init_files import register_command as _register_init
-
-console = Console()
-err_console = Console(stderr=True, style="bold red")
+from pbt.cli import pretty_print
+from pbt.cli.pretty_print import console, err_console
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +130,6 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
         promptdata_vars[k] = val
 
     # Parse --promptfile NAME=PATH pairs into a dict of open file objects.
-    # Opening here (rather than passing paths) lets llm_call receive a ready-to-
-    # read binary stream regardless of whether the caller is the CLI or the API.
     promptfiles_dict: dict = {}
     for f in promptfiles:
         if "=" not in f:
@@ -179,7 +174,6 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
 
     # ------------------------------------------------------------------
     # --select: run chosen models AND their full upstream dependency chain.
-    # Unchanged nodes are served from the prompt cache automatically.
     # ------------------------------------------------------------------
     if select:
         for name in select:
@@ -206,37 +200,13 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
         git_sha=git_sha,
     )
 
-    c.rule("[bold cyan]pbt run[/bold cyan]")
-    c.print(f"  Run ID   : [dim]{run_id}[/dim]")
-    c.print(f"  DAG hash : [dim]{dag_hash}[/dim]")
-    c.print(f"  Models   : {len(ordered)}", end="")
-    if select:
-        c.print(f"  [dim](select: {sorted(select)})[/dim]")
-    else:
-        c.print()
-    if git_sha:
-        c.print(f"  Git SHA  : [dim]{git_sha}[/dim]")
-    c.print()
+    pretty_print.print_run_header(c, run_id, dag_hash, ordered, select, git_sha)
 
     # ------------------------------------------------------------------
     # Execute
     # ------------------------------------------------------------------
-    results: list[ModelRunResult] = []
-    total = len(ordered)
-
-    def on_start(name: str) -> None:
-        idx = len(results) + 1
-        c.print(f"  [{idx}/{total}] [bold]{name}[/bold] … ", end="")
-
-    def on_done(result: ModelRunResult) -> None:
-        results.append(result)
-        if result.status == "success":
-            c.print(f"[green]OK[/green] [dim]({result.execution_ms} ms)[/dim]")
-        elif result.status == "skipped":
-            c.print("[yellow]SKIPPED[/yellow]")
-        else:
-            c.print("[red]ERROR[/red]")
-            c.print(f"    [dim]{result.error}[/dim]")
+    results: list = []
+    on_start, on_done = pretty_print.make_run_callbacks(c, results, total=len(ordered))
 
     # Discover user-provided client.py and rag.py from models_dir
     try:
@@ -298,16 +268,13 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
+    errors = sum(1 for r in all_results if r.status == "error")
     successes = sum(1 for r in all_results if r.status == "success")
-    errors    = sum(1 for r in all_results if r.status == "error")
-    skipped   = sum(1 for r in all_results if r.status == "skipped")
 
     final_status = "success" if errors == 0 else ("partial" if successes > 0 else "error")
     db.finish_run(run_id, final_status)
 
-    # ------------------------------------------------------------------
     # Write outputs/ directory — one .md file per successful model
-    # ------------------------------------------------------------------
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(exist_ok=True)
     written: list[str] = []
@@ -317,21 +284,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
             out_file.write_text(result.llm_output, encoding="utf-8")
             written.append(result.model_name)
 
-    c.print()
-    c.rule()
-
-    summary = Table(box=box.SIMPLE, show_header=False)
-    summary.add_row("Done    :", f"[green]{successes}[/green] succeeded")
-    if errors:
-        summary.add_row("        :", f"[red]{errors}[/red] errored")
-    if skipped:
-        summary.add_row("        :", f"[yellow]{skipped}[/yellow] skipped")
-    if written:
-        summary.add_row("Outputs :", f"[dim]{outputs_dir}/[/dim]  {', '.join(written)}")
-    summary.add_row("Run ID  :", f"[dim]{run_id}[/dim]")
-    summary.add_row("DAG hash:", f"[dim]{dag_hash}[/dim]")
-    summary.add_row("DB      :", f"[dim]{db.db_path()}[/dim]")
-    c.print(summary)
+    pretty_print.print_run_summary(c, all_results, outputs_dir, written, run_id, dag_hash)
 
     if errors:
         sys.exit(1)
@@ -429,15 +382,7 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
     model_names = [m.name for m in ordered]
     model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
 
-    # ------------------------------------------------------------------
-    # Print header
-    # ------------------------------------------------------------------
-    c.rule("[bold cyan]pbt test[/bold cyan]")
-    c.print(f"  Tests dir  : [dim]{tests_dir}[/dim]")
-    c.print(f"  Tests      : {len(tests)}")
-    c.print(f"  Using run  : [dim]{target_run['run_id']}[/dim]  ({target_run['run_date']})")
-    c.print(f"  DAG hash   : [dim]{dag_hash}[/dim]")
-    c.print()
+    pretty_print.print_test_header(c, tests_dir, tests, target_run, dag_hash)
 
     # ------------------------------------------------------------------
     # Resolve LLM backend
@@ -451,23 +396,8 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
     # ------------------------------------------------------------------
     # Execute tests
     # ------------------------------------------------------------------
-    test_results: list[TestResult] = []
-    total = len(tests)
-
-    def on_start(name: str) -> None:
-        idx = len(test_results) + 1
-        c.print(f"  [{idx}/{total}] [bold]{name}[/bold] … ", end="")
-
-    def on_done(result: TestResult) -> None:
-        test_results.append(result)
-        if result.status == "pass":
-            c.print(f"[green]PASS[/green] [dim]({result.execution_ms} ms)[/dim]")
-        elif result.status == "fail":
-            c.print("[red]FAIL[/red]")
-            c.print(f"    LLM returned: [dim]{result.llm_output!r}[/dim]")
-        else:
-            c.print("[red]ERROR[/red]")
-            c.print(f"    [dim]{result.error}[/dim]")
+    test_results: list = []
+    on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=len(tests))
 
     execute_tests(
         run_id=target_run["run_id"],
@@ -478,25 +408,10 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         llm_call=llm_call,
     )
 
-    # ------------------------------------------------------------------
-    # Summary
-    # ------------------------------------------------------------------
-    passed  = sum(1 for r in test_results if r.status == "pass")
+    pretty_print.print_test_summary(c, test_results, target_run)
+
     failed  = sum(1 for r in test_results if r.status == "fail")
     errored = sum(1 for r in test_results if r.status == "error")
-
-    c.print()
-    c.rule()
-
-    summary = Table(box=box.SIMPLE, show_header=False)
-    summary.add_row("Passed  :", f"[green]{passed}[/green]")
-    if failed:
-        summary.add_row("Failed  :", f"[red]{failed}[/red]")
-    if errored:
-        summary.add_row("Errors  :", f"[red]{errored}[/red]")
-    summary.add_row("Run ID  :", f"[dim]{target_run['run_id']}[/dim]")
-    c.print(summary)
-
     if failed or errored:
         sys.exit(1)
 
@@ -517,23 +432,7 @@ def list_models(models_dir: str) -> None:
         sys.exit(1)
 
     dag_hash = compute_dag_hash(models)
-
-    table = Table(
-        title=f"Prompt Models  [dim](DAG hash: {dag_hash})[/dim]",
-        box=box.ROUNDED,
-    )
-    table.add_column("#", style="dim", justify="right")
-    table.add_column("Model", style="bold cyan")
-    table.add_column("Depends on")
-    table.add_column("promptdata() used", style="dim")
-    table.add_column("File", style="dim")
-
-    for i, model in enumerate(ordered, 1):
-        deps = ", ".join(model.depends_on) if model.depends_on else "[dim]—[/dim]"
-        promptdata_str = ", ".join(model.promptdata_used) if model.promptdata_used else "[dim]—[/dim]"
-        table.add_row(str(i), model.name, deps, promptdata_str, str(model.path))
-
-    console.print(table)
+    console.print(pretty_print.models_table(ordered, dag_hash))
 
 
 # ---------------------------------------------------------------------------
@@ -551,35 +450,7 @@ def show_runs(limit: int) -> None:
         console.print("[dim]No runs recorded yet. Run `pbt run` first.[/dim]")
         return
 
-    table = Table(title="Recent Runs", box=box.ROUNDED)
-    table.add_column("Run ID", style="dim", no_wrap=True)
-    table.add_column("Date")
-    table.add_column("Status")
-    table.add_column("Models", justify="right")
-    table.add_column("DAG hash", style="dim")
-    table.add_column("Created at")
-    table.add_column("Completed at")
-
-    status_styles = {
-        "success": "green",
-        "error": "red",
-        "partial": "yellow",
-        "running": "cyan",
-    }
-
-    for row in rows:
-        style = status_styles.get(row["status"], "")
-        table.add_row(
-            row["run_id"],
-            row["run_date"] or "—",
-            f"[{style}]{row['status']}[/{style}]",
-            str(row["model_count"]),
-            row["dag_hash"] or "—",
-            _fmt_ts(row["created_at"]),
-            _fmt_ts(row["completed_at"]) if row["completed_at"] else "—",
-        )
-
-    console.print(table)
+    console.print(pretty_print.runs_table(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -665,13 +536,11 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
 
     db.init_db()
 
-    # Load all runs and their model results
     all_runs = db.get_latest_runs(limit=10_000)
     run_results: dict = {}
     for run in all_runs:
         run_results[run["run_id"]] = db.get_run_results(run["run_id"])
 
-    # Try to load models for DAG diagram (optional)
     models = None
     try:
         models = load_models(models_dir)
@@ -691,10 +560,6 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
     if open_browser:
         webbrowser.open(output_path.resolve().as_uri())
 
-
-# ---------------------------------------------------------------------------
-# pbt init
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # pbt init  (command and scaffold templates defined in pbt/cli/init_files.py)
@@ -743,7 +608,6 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
     app = create_app(models_dir=models_dir, validation_dir=validation_dir)
 
-    # Mount the pre-generated docs HTML as a static route if the file exists
     docs_path = Path(docs_output)
     if docs_path.exists():
         from fastapi.responses import HTMLResponse
@@ -775,7 +639,7 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
     console.print(f"[bold cyan]pbt serve[/bold cyan] → http://{host}:{port}")
 
     def _open_browser():
-        time.sleep(0.8)  # give uvicorn a moment to start
+        time.sleep(0.8)
         webbrowser.open(docs_url)
 
     threading.Thread(target=_open_browser, daemon=True).start()
@@ -795,9 +659,3 @@ def _git_sha() -> str | None:
         ).decode().strip()
     except Exception:
         return None
-
-
-def _fmt_ts(ts: str | None) -> str:
-    if not ts:
-        return "—"
-    return str(ts)[:19].replace("T", " ")
