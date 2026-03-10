@@ -149,8 +149,8 @@ pbt.run(
 |---|---|---|
 | `models_dir` | `str` | Directory containing `*.prompt` files |
 | `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
-| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `models/client.py` then Gemini |
-| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `models/rag.py::do_RAG` |
+| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `client.py` (next to models/) then Gemini |
+| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `rag.py` (next to models/) `do_RAG` |
 | `promptdata` | `dict \| None` | Variables injected into every template, accessed via `{{ promptdata('key') }}` |
 | `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` via `config()` |
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
@@ -195,18 +195,18 @@ prompt-build-tool-for-LLMs/
 │   │   ├── graph.py     # DAG builder + topological sort (networkx) + serialisation
 │   │   ├── parser.py    # Jinja2 renderer with ref(), config() parsing
 │   │   └── executor.py  # LLM calls + SQLite writes + validation hooks
-│   ├── llm.py           # LLM backend resolver (built-in Gemini or models/client.py)
-│   ├── rag.py           # RAG resolver (models/rag.py → do_RAG)
+│   ├── llm.py           # LLM backend resolver (built-in Gemini or client.py)
+│   ├── rag.py           # RAG resolver (rag.py → do_RAG)
 │   ├── db.py            # SQLite schema + query helpers
 │   ├── docs.py          # HTML report generator (pbt docs)
 │   ├── tester.py        # Test runner (pbt test)
 │   └── validator.py     # Validation framework (validation/*.py)
+├── client.py            # optional: custom LLM backend
+├── rag.py               # optional: RAG function (do_RAG)
 ├── models/
 │   ├── topic.prompt     # example: no dependencies
 │   ├── outline.prompt   # example: depends on topic
-│   ├── article.prompt   # example: depends on topic + outline
-│   ├── client.py        # optional: custom LLM backend
-│   └── rag.py           # optional: RAG function (do_RAG)
+│   └── article.prompt   # example: depends on topic + outline
 ├── validation/          # optional: per-model validate(prompt, result)->bool files
 ├── utils/
 │   └── server/          # FastAPI HTTP server (POST /run, GET /health)
@@ -220,7 +220,7 @@ prompt-build-tool-for-LLMs/
 
 | Environment variable | Default | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | — | **Required** (unless using `models/client.py`). Gemini API key. |
+| `GEMINI_API_KEY` | — | **Required** (unless using `client.py`). Gemini API key. |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Override the Gemini model. |
 
 

@@ -2,7 +2,7 @@
 Demonstrates running pbt programmatically from Python.
 
 Shows four usage patterns:
-  1. Default run — uses models/client.py or built-in Gemini + models/rag.py
+  1. Default run — uses client.py (next to models/) or built-in Gemini + rag.py
   2. Inline llm_call — swap in any LLM without touching the models directory
   3. Inline rag_call — provide a custom RAG function at call time
   4. Files — pass a file to a model that declares it in its config block
@@ -19,7 +19,7 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), "example_test_run", "models
 
 
 # ---------------------------------------------------------------------------
-# Example 1 — default: picks up models/rag.py and GEMINI_API_KEY
+# Example 1 — default: picks up rag.py (next to models/) and GEMINI_API_KEY
 # ---------------------------------------------------------------------------
 
 def example_default():

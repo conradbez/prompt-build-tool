@@ -16,13 +16,14 @@ _DEFAULT_MODEL = "gemini-3-flash-preview"
 
 def resolve_llm_call(models_dir: str) -> Callable[[str], str]:
     """
-    Search for client.py in *models_dir* then its parent directory.
+    Search for client.py alongside models_dir (i.e. in its parent), then
+    inside models_dir itself for backwards compatibility.
     If found and it defines ``llm_call``, return that function.
     Otherwise return the built-in Gemini implementation.
     """
     for candidate in [
-        os.path.join(models_dir, "client.py"),
         os.path.join(os.path.dirname(models_dir), "client.py"),
+        os.path.join(models_dir, "client.py"),
     ]:
         if os.path.isfile(candidate):
             spec = importlib.util.spec_from_file_location("_pbt_user_client", candidate)

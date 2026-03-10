@@ -172,8 +172,8 @@ pbt.run(
 |---|---|---|
 | `models_dir` | `str` | Directory containing `*.prompt` files |
 | `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
-| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `models/client.py` then Gemini |
-| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `models/rag.py::do_RAG` |
+| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `client.py` (next to models/) then Gemini |
+| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `rag.py` (next to models/) `do_RAG` |
 | `promptdata` | `dict \| None` | Variables injected into every template, accessed via `{{ promptdata('key') }}` |
 | `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` in their config block |
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
@@ -210,13 +210,13 @@ Choose a fascinating topic of your choice.
 
 ---
 
-## Customising the LLM backend (`models/client.py`)
+## Customising the LLM backend (`client.py`)
 
-Built to be unopinionated on how you do your LLM calls, by default pbt uses Gemini but expects you to implement your 
-own LLM calls (usually 5 lines of code). To do so, edit or create `models/client.py` and define an `llm_call` function:
+Built to be unopinionated on how you do your LLM calls, by default pbt uses Gemini but expects you to implement your
+own LLM calls (usually 5 lines of code). To do so, create `client.py` at the project root (alongside your `models/` directory) and define an `llm_call` function:
 
 ```python
-# models/client.py
+# client.py
 import anthropic
 
 def llm_call(prompt: str) -> str:
@@ -235,14 +235,14 @@ pbt raises an error at startup.
 
 ---
 
-## RAG inside prompts (`models/rag.py`)
+## RAG inside prompts (`rag.py`)
 
-`pbt` has very little to say about RAG and leaves that up to you - you do this through the 
-`return_list_RAG_results(*args)` function `pbt` give you access to in the .prompt template. `pbt` will pass this call to 
-the  `do_RAG` function you define in  `models/rag.py`:
+`pbt` has very little to say about RAG and leaves that up to you - you do this through the
+`return_list_RAG_results(*args)` function `pbt` give you access to in the .prompt template. `pbt` will pass this call to
+the `do_RAG` function you define in `rag.py` (at the project root, alongside your `models/` directory):
 
 ```python
-# models/rag.py
+# rag.py
 def do_RAG(*args) -> list[str] | str:
     query = args[0]
     # your vector search, keyword lookup, etc.
@@ -268,7 +268,7 @@ Write a paragraph introducing this topic as a fresh subject:
 {% endif %}
 ```
 
-If `models/rag.py` is absent and a template calls `return_list_RAG_results`,
+If `rag.py` is absent and a template calls `return_list_RAG_results`,
 pbt raises a clear error at render time.
 
 ---
@@ -305,10 +305,10 @@ pbt.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"})
 
 **3. Custom `llm_call` with file and config support:**
 
-Accept optional `files` and/or `config` parameters in your `models/client.py` — pbt passes them if the signature declares them:
+Accept optional `files` and/or `config` parameters in your `client.py` — pbt passes them if the signature declares them:
 
 ```python
-# models/client.py
+# client.py
 def llm_call(prompt: str, files: list[str] | None = None, config: dict | None = None) -> str:
     # files  — resolved file paths declared via config(promptfiles=...)
     # config — the full config dict for this model, e.g. {"output_format": "json"}

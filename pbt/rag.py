@@ -1,7 +1,7 @@
 """
 RAG call resolution.
 
-Looks for a user-provided rag.py in *models_dir* exposing
+Looks for a user-provided rag.py alongside models_dir exposing
 ``do_RAG(*args) -> list[str] | str``.
 
 If found, returns that function wrapped so the result is always a list[str].
@@ -17,13 +17,14 @@ from typing import Callable
 
 def resolve_rag_call(models_dir: str) -> Callable[..., list[str]]:
     """
-    Search for rag.py in *models_dir* then its parent directory.
+    Search for rag.py alongside models_dir (i.e. in its parent), then
+    inside models_dir itself for backwards compatibility.
     If found and it defines ``do_RAG``, return a wrapper that always
     returns list[str].  Otherwise return a stub that raises on call.
     """
     for candidate in [
-        os.path.join(models_dir, "rag.py"),
         os.path.join(os.path.dirname(models_dir), "rag.py"),
+        os.path.join(models_dir, "rag.py"),
     ]:
         if os.path.isfile(candidate):
             spec = importlib.util.spec_from_file_location("_pbt_user_rag", candidate)
@@ -49,7 +50,7 @@ def resolve_rag_call(models_dir: str) -> Callable[..., list[str]]:
     def _missing(*args) -> list[str]:
         raise RuntimeError(
             "return_list_RAG_results() was called but no rag.py was found.\n"
-            "Create models/rag.py with a 'do_RAG(*args) -> list[str] | str' function."
+            "Create rag.py (alongside your models/ directory) with a 'do_RAG(*args) -> list[str] | str' function."
         )
 
     return _missing

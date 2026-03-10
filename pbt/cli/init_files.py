@@ -14,8 +14,9 @@ INIT_FILES = {
     "0-basic-usage.md": """\
 # Getting Started
 
-| Directory | Purpose |
-|-----------|---------|
+| File / Directory | Purpose |
+|-----------------|---------|
+| `client.py` | <- LLM backend (which model/API to call) |
 | `models/` | <- START HERE: Prompt files |
 | `tests/` | LLM-as-judge tests |
 | `validation/` | Pre-pass quality gates |
@@ -66,7 +67,7 @@ Example chain — `models/topic.prompt` → `models/article.prompt` → `models/
     {{ ref('article') }}
 
 ## client.py
-Add a `models/client.py` to configure which LLM to call. It must expose a
+The `client.py` at the project root configures which LLM to call. It must expose a
 `llm_call(prompt: str) -> str` function. See the scaffolded example for a
 Gemini implementation.
 
@@ -151,6 +152,7 @@ CLIENT_PY: dict[str, str] = {
 import os
 from google import genai
 
+# This function is automaticaaly picked up by `pbt` and used to run .prompt files
 def llm_call(prompt: str) -> str:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return client.models.generate_content(
@@ -213,7 +215,7 @@ def register_command(main) -> None:
     def init(project_name: str, force: bool, provider: str) -> None:
         """Scaffold a starter pbt project inside PROJECT_NAME/."""
         files = dict(INIT_FILES)
-        files["models/client.py"] = CLIENT_PY[provider.lower()]
+        files["client.py"] = CLIENT_PY[provider.lower()]
         files["validation/articles.py"] = """\
 import json
 from pydantic import BaseModel, ValidationError
