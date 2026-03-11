@@ -230,7 +230,7 @@ def run(
             return ModelStatus.SKIPPED
         if r.status == "error":
             return ModelStatus.ERROR
-        if r.llm_output == "":
+        if r.prompt_skipped:
             return ModelStatus.PROMPT_SKIPPED
         return r.llm_output
 
