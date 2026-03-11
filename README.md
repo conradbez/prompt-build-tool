@@ -14,6 +14,11 @@ Write modular prompts in Jinja2, reference the output of other prompts with
 
 ```bash
 pip install prompt-build-tool
+
+# Also install the SDK for your LLM provider:
+# pip install google-genai      # Gemini
+# pip install openai            # OpenAI
+# pip install anthropic         # Anthropic
 ```
 
 ### 2. Generate example

@@ -29,7 +29,12 @@ dev = [
     "fastapi>=0.135.1",
     "uvicorn>=0.41.0",
     "pytest>=8.0",
+    "openai>=2.26.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: tests that call real LLM APIs (deselected by default)",
+]
+addopts = "-m 'not integration'"
