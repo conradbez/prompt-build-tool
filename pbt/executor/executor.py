@@ -23,7 +23,7 @@ from typing import Callable
 from pbt import db
 from pbt.executor.graph import PromptModel
 from pbt.types import PromptFile
-from pbt.executor.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT, SKIP_AND_SET_PREFIX
+from pbt.executor.parser import render_prompt, _SKIP_OUTPUT
 from pbt.validator import run_validator
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -135,7 +135,7 @@ def execute_run(
         db.mark_model_running(run_id, model.name)
 
         try:
-            rendered = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call)
+            rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call)
 
             # Resolve file paths declared in this model's config block
             model_files: list[str] | None = None
@@ -154,11 +154,8 @@ def execute_run(
             # output_format: json) correctly busts the cache.
             cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
 
-            if rendered.strip() == SKIP_SENTINEL:
-                llm_output = _SKIP_OUTPUT
-                elapsed_ms = 0
-            elif rendered.strip().startswith(SKIP_AND_SET_PREFIX):
-                llm_output = rendered.strip()[len(SKIP_AND_SET_PREFIX):]
+            if skip_state.skip:
+                llm_output = skip_state.skip_value if skip_state.skip_value is not None else _SKIP_OUTPUT
                 elapsed_ms = 0
             elif (cached := db.get_cached_llm_output(cache_key)) is not None:
                 llm_output = cached
