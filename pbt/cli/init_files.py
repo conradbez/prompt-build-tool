@@ -151,6 +151,7 @@ Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
 
 CLIENT_PY: dict[str, str] = {
     "gemini": """\
+import mimetypes
 import os
 from google import genai
 
@@ -160,7 +161,13 @@ from google import genai
 #   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
 def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> str:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    uploaded = [client.files.upload(file=f) for f in (files or [])]
+    uploaded = []
+    for f in (files or []):
+        mime, _ = mimetypes.guess_type(f.name)
+        uploaded.append(client.files.upload(
+            file=f,
+            config={"mime_type": mime or "text/plain"},
+        ))
     contents = [prompt] + uploaded if uploaded else prompt
     return client.models.generate_content(
         model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),

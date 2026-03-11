@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import run_pbt, init_project, STUB_CLIENT_JSON_PY, STUB_CLIENT_FILES_PY
+from tests.conftest import run_pbt, init_project, init_project_with_real_client, STUB_CLIENT_JSON_PY, STUB_CLIENT_FILES_PY
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +111,46 @@ def test_run_with_file_upload(tmp_path: Path) -> None:
         cwd=proj,
     )
     assert result.returncode == 0
+    assert "succeeded" in result.stdout
+
+
+def test_default_client_file_upload(tmp_path: Path) -> None:
+    """
+    Integration test: the real scaffolded Gemini client.py uploads a .txt file
+    and runs the pipeline end-to-end using the GEMINI_API_KEY from .env.
+    Skipped if no API key is available.
+    """
+    import os
+    from dotenv import dotenv_values
+
+    env_file = Path(__file__).parent.parent / ".env"
+    env_vars = dotenv_values(env_file) if env_file.exists() else {}
+    api_key = env_vars.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        pytest.skip("GEMINI_API_KEY not found in .env or environment")
+
+    proj = init_project_with_real_client(tmp_path, provider="gemini")
+
+    (proj / "models" / "summarise_doc.prompt").write_text(
+        '{{ config(promptfiles="doc") }}\n'
+        "In one sentence, what is this document about?\n",
+        encoding="utf-8",
+    )
+
+    doc = tmp_path / "sample.txt"
+    doc.write_text(
+        "The quick brown fox jumped over the lazy dog.",
+        encoding="utf-8",
+    )
+
+    result = run_pbt(
+        "run", "--select", "summarise_doc",
+        "--promptfile", f"doc={doc}",
+        cwd=proj,
+        env={**os.environ, "GEMINI_API_KEY": api_key},
+    )
+
+    assert result.returncode == 0, result.stderr
     assert "succeeded" in result.stdout
 
 

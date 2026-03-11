@@ -1,7 +1,7 @@
 """
 Run the pbt server from the command line:
 
-    python -m utils.server --models-dir models --port 8000
+    python -m pbt.server --models-dir models --port 8000
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def main() -> None:
         print("uvicorn is required. Install with: pip install uvicorn")
         raise SystemExit(1)
 
-    from utils.server.app import create_app
+    from pbt.server.app import create_app
 
     app = create_app(
         models_dir=args.models_dir,

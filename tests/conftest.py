@@ -67,6 +67,17 @@ STUB_CLIENT_FILES_PY = textwrap.dedent("""\
 """)
 
 
+def init_project_with_real_client(
+    tmp_path: Path, provider: str = "gemini", name: str = "proj"
+) -> Path:
+    """
+    Run `pbt init` keeping the real scaffolded client.py untouched.
+    Returns the project root.
+    """
+    run_pbt("init", name, "--provider", provider, cwd=tmp_path)
+    return tmp_path / name
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

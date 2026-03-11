@@ -3,7 +3,7 @@ pbt server — run pbt models via a lightweight FastAPI HTTP server.
 
 Usage
 -----
-    from utils.server import create_app
+    from pbt.server import create_app
     import uvicorn
 
     app = create_app(models_dir="models")
@@ -11,7 +11,7 @@ Usage
 
 Or from the command line::
 
-    python -m utils.server --models-dir models --port 8000
+    python -m pbt.server --models-dir models --port 8000
 
 API
 ---
@@ -23,6 +23,6 @@ GET /health
     Returns: { "status": "ok" }
 """
 
-from utils.server.app import create_app
+from pbt.server.app import create_app
 
 __all__ = ["create_app"]

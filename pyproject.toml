@@ -22,7 +22,7 @@ pbt = "pbt.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pbt*", "utils*"]
+include = ["pbt*"]
 
 [dependency-groups]
 dev = [
