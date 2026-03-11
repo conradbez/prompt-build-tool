@@ -122,7 +122,6 @@ def _load_env() -> dict:
     return {**os.environ, **(dotenv_values(env_file) if env_file.exists() else {})}
 
 
-@pytest.mark.integration
 def test_default_client_file_upload_gemini(tmp_path: Path) -> None:
     """Integration test: scaffolded Gemini client uploads a .txt file end-to-end."""
     env = _load_env()
@@ -146,7 +145,6 @@ def test_default_client_file_upload_gemini(tmp_path: Path) -> None:
     assert "succeeded" in result.stdout
 
 
-@pytest.mark.integration
 def test_default_client_file_upload_openai(tmp_path: Path) -> None:
     """Integration test: scaffolded OpenAI client uploads a .txt file end-to-end."""
     env = _load_env()

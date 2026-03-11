@@ -34,7 +34,3 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "integration: tests that call real LLM APIs (deselected by default)",
-]
-addopts = "-m 'not integration'"
