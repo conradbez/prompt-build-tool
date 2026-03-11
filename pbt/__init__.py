@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Callable
 
 from pbt.types import PromptFile
+from pbt.executor.graph import models_from_dict
 
 __version__ = "0.1.0"
 
@@ -19,6 +20,7 @@ class ModelStatus(Enum):
 
 def run(
     models_dir: str = "models",
+    models: dict[str, str] | None = None,
     select: list[str] | None = None,
     dag_id: str | None = None,
     llm_call: Callable[[str], str] | None = None,
@@ -82,6 +84,7 @@ def run(
     from pbt.executor.parser import _SKIP_OUTPUT
     from pbt.executor.graph import (
         load_models,
+        models_from_dict,
         execution_order,
         build_dag,
         compute_dag_hash,
@@ -109,6 +112,10 @@ def run(
             )
         all_models = models_from_json(dag_json)
         dag_hash = dag_id
+    elif models is not None:
+        all_models = models_from_dict(models)
+        dag_hash = compute_dag_hash(all_models)
+        db.save_dag(dag_hash, models_to_json(all_models))
     else:
         all_models = load_models(models_dir)
         dag_hash = compute_dag_hash(all_models)

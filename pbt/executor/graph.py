@@ -197,6 +197,28 @@ def get_dag_promptfiles(models: dict[str, PromptModel]) -> list[str]:
     return list(seen)
 
 
+def models_from_dict(models: dict[str, str]) -> dict[str, PromptModel]:
+    """Build a models dict from {name: template_source} without the filesystem."""
+    result: dict[str, PromptModel] = {}
+    for name, source in models.items():
+        deps = extract_dependencies(source)
+        config = parse_model_config(source)
+        promptdata_used = detect_used_promptdata(source)
+        promptfiles_used = [
+            f.strip() for f in config.get("promptfiles", "").split(",") if f.strip()
+        ]
+        result[name] = PromptModel(
+            name=name,
+            path=Path("<inline>"),
+            source=source,
+            depends_on=deps,
+            config=config,
+            promptdata_used=promptdata_used,
+            promptfiles_used=promptfiles_used,
+        )
+    return result
+
+
 def compute_dag_hash(models: dict[str, PromptModel]) -> str:
     """
     Return a short, deterministic hash of the DAG structure *and* content —
