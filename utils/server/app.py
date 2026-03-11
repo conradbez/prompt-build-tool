@@ -10,6 +10,7 @@ from typing import Any, List, Optional
 
 try:
     from fastapi import FastAPI, File, Form, Query, UploadFile
+    from fastapi.responses import Response
     from pydantic import BaseModel
 except ImportError as exc:
     raise ImportError(
@@ -18,6 +19,33 @@ except ImportError as exc:
     ) from exc
 
 import pbt
+
+# Maps output_extension config values to HTTP Content-Type headers.
+_EXTENSION_CONTENT_TYPE: dict[str, str] = {
+    "html": "text/html; charset=utf-8",
+    "json": "application/json",
+    "md":   "text/markdown; charset=utf-8",
+    "txt":  "text/plain; charset=utf-8",
+    "csv":  "text/csv; charset=utf-8",
+    "xml":  "application/xml; charset=utf-8",
+}
+
+
+def _raw_response(
+    serialised: dict[str, Any],
+    output_model: str | None,
+    model_extensions: dict[str, str],
+) -> "Response | None":
+    """Return a raw Response with the correct Content-Type when ``output_model``
+    is set and that model has ``output_extension`` configured.  Returns None
+    otherwise (caller should fall back to the normal RunResponse JSON path)."""
+    if output_model is None or output_model not in model_extensions:
+        return None
+    if output_model not in serialised:
+        return None
+    ext = model_extensions[output_model]
+    content_type = _EXTENSION_CONTENT_TYPE.get(ext, "text/plain; charset=utf-8")
+    return Response(content=str(serialised[output_model]), media_type=content_type)
 
 
 class RunResponse(BaseModel):
@@ -87,6 +115,7 @@ def _build_run_endpoint(
     validation_dir: str,
     dag_promptdata: list[str],
     dag_promptfiles: list[str],
+    model_extensions: dict[str, str] | None = None,
 ):
     """
     Dynamically build a /run function whose signature lists each detected
@@ -96,6 +125,8 @@ def _build_run_endpoint(
     promptfiles cannot be passed via GET (no file uploads), but they are
     documented in the endpoint description.
     """
+
+    _model_extensions = model_extensions or {}
 
     def _run(**kwargs: Any) -> RunResponse:
         output_model = kwargs.pop("output_model", None)
@@ -110,6 +141,9 @@ def _build_run_endpoint(
         except Exception as exc:
             return RunResponse(outputs={}, errors=[str(exc)])
         serialised, errors = _serialise(outputs)
+        raw = _raw_response(serialised, output_model, _model_extensions)
+        if raw is not None:
+            return raw
         try:
             serialised = _filter_output(serialised, output_model)
         except KeyError:
@@ -181,9 +215,15 @@ def create_app(
         models = load_models(models_dir)
         dag_promptdata = get_dag_promptdata(models)
         dag_promptfiles = get_dag_promptfiles(models)
+        model_extensions = {
+            name: m.config["output_extension"]
+            for name, m in models.items()
+            if "output_extension" in m.config
+        }
     except Exception:
         dag_promptdata = []
         dag_promptfiles = []
+        model_extensions = {}
 
     app = FastAPI(
         title="pbt server",
@@ -273,6 +313,9 @@ def create_app(
         except Exception as exc:
             return RunResponse(outputs={}, errors=[str(exc)])
         serialised, errors = _serialise(outputs)
+        raw = _raw_response(serialised, output_model, model_extensions)
+        if raw is not None:
+            return raw
         try:
             serialised = _filter_output(serialised, output_model)
         except KeyError:
@@ -281,7 +324,7 @@ def create_app(
 
     # GET /run — dynamic query params per detected promptdata key (for the docs UI).
     # File uploads are not possible via GET; use POST /run for promptfiles.
-    run_get = _build_run_endpoint(models_dir, validation_dir, dag_promptdata, dag_promptfiles)
+    run_get = _build_run_endpoint(models_dir, validation_dir, dag_promptdata, dag_promptfiles, model_extensions)
     app.get("/run", response_model=RunResponse, summary="Run models (query params)")(run_get)
 
     return app

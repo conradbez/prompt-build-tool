@@ -23,7 +23,7 @@ from typing import Callable
 from pbt import db
 from pbt.executor.graph import PromptModel
 from pbt.types import PromptFile
-from pbt.executor.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT
+from pbt.executor.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT, SKIP_AND_SET_PREFIX
 from pbt.validator import run_validator
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -156,6 +156,9 @@ def execute_run(
 
             if rendered.strip() == SKIP_SENTINEL:
                 llm_output = _SKIP_OUTPUT
+                elapsed_ms = 0
+            elif rendered.strip().startswith(SKIP_AND_SET_PREFIX):
+                llm_output = rendered.strip()[len(SKIP_AND_SET_PREFIX):]
                 elapsed_ms = 0
             elif (cached := db.get_cached_llm_output(cache_key)) is not None:
                 llm_output = cached

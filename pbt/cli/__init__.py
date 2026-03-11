@@ -274,13 +274,15 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
     final_status = "success" if errors == 0 else ("partial" if successes > 0 else "error")
     db.finish_run(run_id, final_status)
 
-    # Write outputs/ directory — one .md file per successful model
+    # Write outputs/ directory — one file per successful model.
+    # Extension comes from {{ config(output_extension="html") }}; defaults to "md".
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(exist_ok=True)
     written: list[str] = []
     for result in all_results:
         if result.status == "success" and result.llm_output:
-            out_file = outputs_dir / f"{result.model_name}.md"
+            ext = all_models[result.model_name].config.get("output_extension", "md")
+            out_file = outputs_dir / f"{result.model_name}.{ext}"
             out_file.write_text(result.llm_output, encoding="utf-8")
             written.append(result.model_name)
 

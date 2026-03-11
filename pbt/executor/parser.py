@@ -25,6 +25,10 @@ from jinja2 import Environment, StrictUndefined, Undefined
 SKIP_SENTINEL = "SKIP THIS MODEL"
 _SKIP_OUTPUT  = "SKIPPED THIS MODEL"
 
+# Sentinel prefix for skip-and-set: rendered output starts with this prefix
+# followed by the value to use as the model output.
+SKIP_AND_SET_PREFIX = "SKIP LLM AND SET TO: "
+
 # Regex that finds every ref('...') or ref("...") call in raw template text.
 # Used for static dependency extraction WITHOUT executing the template.
 _REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)['"]\s*\)""")
@@ -122,6 +126,7 @@ def extract_jinja_config(template_source: str) -> dict[str, str]:
         "return_list_RAG_results": lambda *a, **kw: [],
         "was_skipped": lambda *a, **kw: False,
         "skip_this_model": "",
+        "skip_and_set_to_value": lambda value="": "",
     }
 
     try:
@@ -214,14 +219,18 @@ def render_prompt(
     def was_skipped(model_name: str) -> bool:
         return model_outputs.get(model_name) == _SKIP_OUTPUT
 
+    def skip_and_set_to_value(value) -> str:
+        """Skip the LLM call and use *value* directly as this model's output."""
+        return SKIP_AND_SET_PREFIX + str(value)
+
     context: dict = {
         "ref": ref,
         "promptdata": _promptdata_fn,
         "return_list_RAG_results": return_list_RAG_results,
         "was_skipped": was_skipped,
         "skip_this_model": SKIP_SENTINEL,
+        "skip_and_set_to_value": skip_and_set_to_value,
         "config": lambda **_: "",   # no-op during real render; config already parsed
-
     }
 
     template = env.from_string(template_source)
