@@ -14,7 +14,16 @@ class ModelStatus(Enum):
     """Returned in the pbt.run() dict for models that produced no LLM output."""
     SKIPPED = "skipped"          # upstream dependency failed → model was not run
     PROMPT_SKIPPED = "prompt_skipped"  # prompt rendered to "SKIP THIS MODEL"
-    ERROR = "error"              # LLM call or render raised an exception
+    ERROR = "error"              # LLM call or render raised an exception (legacy)
+
+
+class ModelError:
+    """Returned by pbt.run() when a model fails; carries the exception message."""
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"error: {self.message}"
 
 
 def run(
@@ -82,7 +91,7 @@ def run(
     from pbt.validator import load_validators
     from pbt.executor.graph import (
         load_models,
-        _build_models_from_dict,
+        build_models_from_dict,
         execution_order,
         build_dag,
         compute_dag_hash,
@@ -112,7 +121,7 @@ def run(
         dag_hash = dag_id
     elif models_from_dict is not None:
         raw = models_from_dict.root if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
-        all_models = _build_models_from_dict(raw)
+        all_models = build_models_from_dict(raw)
         dag_hash = compute_dag_hash(all_models)
         db.save_dag(dag_hash, models_to_json(all_models))
     else:

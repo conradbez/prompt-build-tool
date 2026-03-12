@@ -197,7 +197,7 @@ def get_dag_promptfiles(models: dict[str, PromptModel]) -> list[str]:
     return list(seen)
 
 
-def _build_models_from_dict(models: dict[str, str]) -> dict[str, PromptModel]:
+def build_models_from_dict(models: dict[str, str]) -> dict[str, PromptModel]:
     """Build a models dict from {name: template_source} without the filesystem."""
     result: dict[str, PromptModel] = {}
     for name, source in models.items():
