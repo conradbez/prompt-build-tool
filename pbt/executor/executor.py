@@ -23,7 +23,7 @@ from typing import Callable
 from pbt import db
 from pbt.executor.graph import PromptModel
 from pbt.types import PromptFile
-from pbt.executor.parser import render_prompt, SKIP_SENTINEL, _SKIP_OUTPUT, SKIP_AND_SET_PREFIX
+from pbt.executor.parser import render_prompt
 from pbt.validator import run_validator
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -53,6 +53,7 @@ class ModelRunResult:
     error: str = ""
     execution_ms: int = 0
     cached: bool = False
+    prompt_skipped: bool = False  # True when a skip function fired during rendering
 
 
 
@@ -100,6 +101,8 @@ def execute_run(
 
     # Seed model_outputs with any preloaded results from a previous run.
     model_outputs: dict[str, str] = dict(preloaded_outputs or {})
+    # Tracks models whose LLM call was skipped via a skip function in the template.
+    prompt_skipped_models: set[str] = set()
 
     # Register all models as 'pending' up front (mirrors dbt's deferred state).
     for model in ordered_models:
@@ -135,7 +138,7 @@ def execute_run(
         db.mark_model_running(run_id, model.name)
 
         try:
-            rendered = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call)
+            rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
 
             # Resolve file paths declared in this model's config block
             model_files: list[str] | None = None
@@ -154,12 +157,10 @@ def execute_run(
             # output_format: json) correctly busts the cache.
             cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
 
-            if rendered.strip() == SKIP_SENTINEL:
-                llm_output = _SKIP_OUTPUT
+            if skip_state.skip_value is not None:
+                llm_output = skip_state.skip_value
                 elapsed_ms = 0
-            elif rendered.strip().startswith(SKIP_AND_SET_PREFIX):
-                llm_output = rendered.strip()[len(SKIP_AND_SET_PREFIX):]
-                elapsed_ms = 0
+                prompt_skipped_models.add(model.name)
             elif (cached := db.get_cached_llm_output(cache_key)) is not None:
                 llm_output = cached
                 elapsed_ms = 0
@@ -178,7 +179,7 @@ def execute_run(
             # If model declares output_format: json, validate and parse output.
             # Downstream ref() will receive a Python dict/list instead of a string.
             output_format = model.config.get("output_format", "text")
-            if llm_output != _SKIP_OUTPUT and output_format == "json":
+            if skip_state.skip_value is None and output_format == "json":
                 parsed = _parse_json_output(llm_output)
                 model_outputs[model.name] = parsed
                 # Normalise to canonical JSON for DB storage
@@ -188,7 +189,7 @@ def execute_run(
 
             # Run user-defined validator as a post-processing step.
             # Its return value becomes the model's output; False → error.
-            if llm_output != _SKIP_OUTPUT and validators:
+            if skip_state.skip_value is None and validators:
                 validated = run_validator(model.name, validators, rendered, llm_output)
                 if isinstance(validated, (dict, list)):
                     model_outputs[model.name] = validated
@@ -206,6 +207,7 @@ def execute_run(
                 llm_output=llm_output,
                 execution_ms=elapsed_ms,
                 cached=cached is not None,
+                prompt_skipped=skip_state.skip_value is not None,
             )
 
         except Exception as exc:  # noqa: BLE001

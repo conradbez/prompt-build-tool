@@ -80,7 +80,6 @@ def run(
     from pbt.llm import resolve_llm_call
     from pbt.rag import resolve_rag_call
     from pbt.validator import load_validators
-    from pbt.executor.parser import _SKIP_OUTPUT
     from pbt.executor.graph import (
         load_models,
         _build_models_from_dict,
@@ -238,7 +237,7 @@ def run(
             return ModelStatus.SKIPPED
         if r.status == "error":
             return ModelStatus.ERROR
-        if r.llm_output == _SKIP_OUTPUT:
+        if r.prompt_skipped:
             return ModelStatus.PROMPT_SKIPPED
         return r.llm_output
 

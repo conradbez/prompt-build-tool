@@ -17,17 +17,40 @@ are available in addition to ref() and promptdata().
 """
 
 import re
+from dataclasses import dataclass
 from typing import Callable
 
 from jinja2 import Environment, StrictUndefined, Undefined
 
 
-SKIP_SENTINEL = "SKIP THIS MODEL"
-_SKIP_OUTPUT  = "SKIPPED THIS MODEL"
 
-# Sentinel prefix for skip-and-set: rendered output starts with this prefix
-# followed by the value to use as the model output.
-SKIP_AND_SET_PREFIX = "SKIP LLM AND SET TO: "
+@dataclass
+class _RenderState:
+    """Mutable state set by skip functions during template rendering.
+
+    ``skip_value is None``  → model runs normally.
+    ``skip_value is not None``  → skip the LLM call; use the value as output.
+    """
+    skip_value: str | None = None
+
+
+class _SkipMarker:
+    """Object injected as ``skip_this_model`` in templates.
+
+    When Jinja2 renders ``{{ skip_this_model }}``, it marks the model for
+    skipping via ``_RenderState`` and contributes nothing to the prompt text.
+    """
+
+    def __init__(self, state: _RenderState) -> None:
+        self._state = state
+
+    def __str__(self) -> str:
+        self._state.skip_value = ""
+        return ""
+
+    def __format__(self, spec: str) -> str:
+        self._state.skip_value = ""
+        return ""
 
 # Regex that finds every ref('...') or ref("...") call in raw template text.
 # Used for static dependency extraction WITHOUT executing the template.
@@ -177,7 +200,8 @@ def render_prompt(
     model_outputs: dict[str, str],
     promptdata: dict | None = None,
     rag_call: "Callable[..., list[str]] | None" = None,
-) -> str:
+    prompt_skipped_models: "set[str] | None" = None,
+) -> "tuple[str, _RenderState]":
     """
     Render *template_source* as a Jinja2 template.
 
@@ -191,12 +215,19 @@ def render_prompt(
         Optional dict of runtime variables, injected via promptdata("name").
         Returns None for missing keys so {% if promptdata('x') %} is safe.
 
+    Returns
+    -------
+    A ``(rendered_prompt, render_state)`` tuple.  ``render_state.skip_value``
+    is ``None`` when the model should run normally, or a string to use as the
+    model output directly without calling the LLM.
+
     The ``ref(model_name)`` function is available inside templates and
     returns the corresponding entry from *model_outputs*.
     The ``promptdata(name)`` function returns runtime variables.
     """
     env = _make_env()
     _promptdata = promptdata or {}
+    state = _RenderState()
 
     def ref(model_name: str) -> str:
         if model_name not in model_outputs:
@@ -217,24 +248,25 @@ def render_prompt(
         return rag_call(*args)
 
     def was_skipped(model_name: str) -> bool:
-        return model_outputs.get(model_name) == _SKIP_OUTPUT
+        return model_name in (prompt_skipped_models or set())
 
     def skip_and_set_to_value(value) -> str:
-        """Skip the LLM call and use *value* directly as this model's output."""
-        return SKIP_AND_SET_PREFIX + str(value)
+        """Skip the LLM call and set this model's output to *value*."""
+        state.skip_value = str(value)
+        return ""
 
     context: dict = {
         "ref": ref,
         "promptdata": _promptdata_fn,
         "return_list_RAG_results": return_list_RAG_results,
         "was_skipped": was_skipped,
-        "skip_this_model": SKIP_SENTINEL,
+        "skip_this_model": _SkipMarker(state),
         "skip_and_set_to_value": skip_and_set_to_value,
         "config": lambda **_: "",   # no-op during real render; config already parsed
     }
 
     template = env.from_string(template_source)
-    return template.render(**context)
+    return template.render(**context), state
 
 
 # ---------------------------------------------------------------------------
