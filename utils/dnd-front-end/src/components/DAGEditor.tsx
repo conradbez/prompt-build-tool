@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -32,6 +32,19 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { submitDag, runDag } from '../api';
+
+// ── localStorage persistence ──────────────────────────────────────────────────
+
+const STORAGE_KEY = 'pbt_dag_state';
+
+const _initialSavedState: Record<string, unknown> | null = (() => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+})();
 
 // ── Module-level constants (stable across renders) ────────────────────────────
 
@@ -80,11 +93,20 @@ function computeEdges(nodes: Node[], nodeRefs: Record<string, string[]>): Edge[]
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DAGEditor() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [nodePrompts, setNodePrompts] = useState<Record<string, string>>({});
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(
+    (_initialSavedState?.nodes as Node[] | undefined)?.map((n) => ({
+      ...n,
+      data: { ...(n.data as PromptNodeData), hasOutput: false, isRunning: false },
+    })) ?? [],
+  );
+  const [nodePrompts, setNodePrompts] = useState<Record<string, string>>(
+    (_initialSavedState?.nodePrompts as Record<string, string> | undefined) ?? {},
+  );
   // Per-node extracted ref list — updated whenever a prompt changes (avoids
   // running the regex over every node on every keystroke).
-  const [nodeRefs, setNodeRefs] = useState<Record<string, string[]>>({});
+  const [nodeRefs, setNodeRefs] = useState<Record<string, string[]>>(
+    (_initialSavedState?.nodeRefs as Record<string, string[]> | undefined) ?? {},
+  );
 
   const [dagId, setDagId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -98,10 +120,36 @@ export default function DAGEditor() {
   // Manager dialogs
   const [showDataManager, setShowDataManager] = useState(false);
   const [showFileManager, setShowFileManager] = useState(false);
-  const [promptDataRows, setPromptDataRows] = useState<PromptDataRow[]>([]);
-  const [promptFileRows, setPromptFileRows] = useState<PromptFileRow[]>([]);
+  const [promptDataRows, setPromptDataRows] = useState<PromptDataRow[]>(
+    (_initialSavedState?.promptDataRows as PromptDataRow[] | undefined) ?? [],
+  );
+  const [promptFileRows, setPromptFileRows] = useState<PromptFileRow[]>(
+    // Files can't be serialised — restore id+name only, file stays null
+    ((_initialSavedState?.promptFileRows as Array<{ id: string; name: string }> | undefined) ?? [])
+      .map((r) => ({ ...r, file: null })),
+  );
 
   const rfInstance = useRef<ReactFlowInstance | null>(null);
+
+  // ── Persist to localStorage ───────────────────────────────────────────────
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          nodes: nodes.map((n) => ({
+            ...n,
+            data: { label: (n.data as PromptNodeData).label },
+          })),
+          nodePrompts,
+          nodeRefs,
+          promptDataRows,
+          promptFileRows: promptFileRows.map(({ id, name }) => ({ id, name })),
+        }),
+      );
+    } catch {}
+  }, [nodes, nodePrompts, nodeRefs, promptDataRows, promptFileRows]);
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
@@ -216,6 +264,10 @@ export default function DAGEditor() {
   const confirmAddNode = useCallback(() => {
     const name = addNodeName.trim();
     if (!name) return;
+    if (/\s/.test(name)) {
+      alert('Model name cannot contain spaces.');
+      return;
+    }
     if (modelNameSet.has(name)) {
       alert(`A model named "${name}" already exists.`);
       return;
@@ -263,6 +315,10 @@ export default function DAGEditor() {
 
   const handleRename = useCallback(
     (nodeId: string, newName: string) => {
+      if (/\s/.test(newName)) {
+        alert('Model name cannot contain spaces.');
+        return;
+      }
       if (modelNameSet.has(newName)) {
         alert(`A model named "${newName}" already exists.`);
         return;
@@ -293,12 +349,10 @@ export default function DAGEditor() {
   // ── Model run ─────────────────────────────────────────────────────────────
 
   const runMutation = useMutation({
-    // TanStack Query v5 always calls the latest closure, so promptDataForApi
-    // and promptFilesForApi are current at the time .mutate() is invoked.
-    mutationFn: (modelName: string) =>
-      runDag(dagId!, [modelName], promptDataForApi, promptFilesForApi),
+    mutationFn: ({ modelName, id }: { modelName: string; id: string }) =>
+      runDag(id, [modelName], promptDataForApi, promptFilesForApi),
 
-    onMutate: (modelName) => {
+    onMutate: ({ modelName }) => {
       const nodeId = nodes.find((n) => (n.data as PromptNodeData).label === modelName)?.id;
       if (nodeId) updateNodeData(nodeId, { isRunning: true });
     },
@@ -307,7 +361,6 @@ export default function DAGEditor() {
       setNodeOutputs((prev) => ({ ...prev, ...data.outputs }));
       if (data.errors.length > 0) setRunErrors(data.errors);
 
-      // Single setNodes call to update all affected nodes atomically
       const updatedLabels = new Set(Object.keys(data.outputs));
       setNodes((nds) =>
         nds.map((n) =>
@@ -318,17 +371,29 @@ export default function DAGEditor() {
       );
     },
 
-    onError: (err, modelName) => {
+    onError: (err, { modelName }) => {
       setRunErrors([(err as Error).message]);
       const nodeId = nodes.find((n) => (n.data as PromptNodeData).label === modelName)?.id;
       if (nodeId) updateNodeData(nodeId, { isRunning: false });
     },
   });
 
-  const handleRunModel = useCallback(() => {
-    if (!selectedNode || !dagId) return;
-    runMutation.mutate((selectedNode.data as PromptNodeData).label);
-  }, [selectedNode, dagId, runMutation]);
+  const handleRunModel = useCallback(async () => {
+    if (!selectedNode) return;
+    let currentDagId = dagId;
+    if (!currentDagId) {
+      try {
+        const result = await submitMutation.mutateAsync();
+        currentDagId = result.dag_id;
+      } catch {
+        return; // submit error already shown in UI
+      }
+    }
+    runMutation.mutate({
+      modelName: (selectedNode.data as PromptNodeData).label,
+      id: currentDagId,
+    });
+  }, [selectedNode, dagId, submitMutation, runMutation]);
 
   // ── Derived panel props ───────────────────────────────────────────────────
 
@@ -338,7 +403,7 @@ export default function DAGEditor() {
 
   // Derived from mutation state — eliminates separate runningModel state variable
   const isSelectedRunning =
-    runMutation.isPending && runMutation.variables === selectedModelName;
+    runMutation.isPending && runMutation.variables?.modelName === selectedModelName;
 
   // ── Status bar ────────────────────────────────────────────────────────────
 
