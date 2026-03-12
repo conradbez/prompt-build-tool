@@ -485,6 +485,8 @@ export default function DAGEditor() {
             errors={runErrors}
             isRunning={isSelectedRunning}
             otherNodeNames={otherNodeNames}
+            promptDataNames={promptDataRows.filter(r => r.name.trim()).map(r => r.name.trim())}
+            promptFileNames={promptFileRows.filter(r => r.name.trim()).map(r => r.name.trim())}
             onPromptChange={(value) => handlePromptChange(selectedNode.id, value)}
             onRename={(newName) => handleRename(selectedNode.id, newName)}
             onClose={() => setSelectedNodeId(null)}

@@ -15,17 +15,75 @@ interface NodePanelProps {
   errors: string[];
   isRunning: boolean;
   otherNodeNames: string[];
+  promptDataNames: string[];
+  promptFileNames: string[];
   onPromptChange: (value: string) => void;
   onRename: (newName: string) => void;
   onClose: () => void;
   onRun: () => void;
 }
 
-/** Return the partial node name being typed after `ref('` at the cursor, or null. */
-function getRefPartial(text: string, cursorPos: number): string | null {
-  const before = text.slice(0, cursorPos);
-  const match = before.match(/ref\(['"]?([^'")\s]*)$/);
-  return match ? match[1] : null;
+interface AcSuggestion {
+  display: string;
+  insert: string;
+  replaceFrom: number;
+}
+
+/**
+ * Return autocomplete suggestions for ref(), promptdata(), and promptfiles() calls.
+ * Triggers on:
+ *   - partial function name at a word boundary (e.g. "re" → ref(...))
+ *   - open paren with no quote (e.g. "ref(par")
+ *   - inside quotes with a partial name (e.g. "ref('par", "promptdata(\"key")
+ * Quote style is normalised to single quotes on insertion.
+ */
+function getAcSuggestions(
+  text: string,
+  cursor: number,
+  nodeNames: string[],
+  promptDataNames: string[],
+  promptFileNames: string[],
+): AcSuggestion[] {
+  const before = text.slice(0, cursor);
+
+  const make = (func: string, name: string, from: number): AcSuggestion => ({
+    display: `${func}('${name}')`,
+    insert: `${func}('${name}')`,
+    replaceFrom: from,
+  });
+
+  // Case 1: inside quotes — ref('partial | promptdata("partial
+  const m1 = before.match(/(ref|promptdata|promptfiles)\(['"]([^'")\s]*)$/);
+  if (m1) {
+    const [full, func, partial] = m1;
+    const from = cursor - full.length;
+    const pool = func === 'ref' ? nodeNames : func === 'promptdata' ? promptDataNames : promptFileNames;
+    return pool
+      .filter(n => n.toLowerCase().startsWith(partial.toLowerCase()))
+      .map(n => make(func, n, from));
+  }
+
+  // Case 2: open paren, no quote yet — ref(partial | promptdata(
+  const m2 = before.match(/(ref|promptdata|promptfiles)\(([^'")\s]*)$/);
+  if (m2) {
+    const [full, func, partial] = m2;
+    const from = cursor - full.length;
+    const pool = func === 'ref' ? nodeNames : func === 'promptdata' ? promptDataNames : promptFileNames;
+    return pool
+      .filter(n => !partial || n.toLowerCase().startsWith(partial.toLowerCase()))
+      .map(n => make(func, n, from));
+  }
+
+  // Case 3: partial function name at word boundary — "re", "promptd", etc.
+  const m3 = before.match(/(?:^|[\s{%(\[,\n])([a-z][a-z]*)$/);
+  if (!m3) return [];
+  const typed = m3[1];
+  const from = cursor - typed.length;
+  const results: AcSuggestion[] = [];
+  if ('ref'.startsWith(typed))        nodeNames.forEach(n => results.push(make('ref', n, from)));
+  if ('promptdata'.startsWith(typed))  promptDataNames.forEach(n => results.push(make('promptdata', n, from)));
+  if ('promptfiles'.startsWith(typed)) promptFileNames.forEach(n => results.push(make('promptfiles', n, from)));
+  return results;
 }
 
 export default function NodePanel({
@@ -35,13 +93,15 @@ export default function NodePanel({
   errors,
   isRunning,
   otherNodeNames,
+  promptDataNames,
+  promptFileNames,
   onPromptChange,
   onRename,
   onClose,
   onRun,
 }: NodePanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<AcSuggestion[]>([]);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [promptHeight, setPromptHeight] = useState(240);
   const dragStart = useRef<{ y: number; h: number } | null>(null);
@@ -74,30 +134,26 @@ export default function NodePanel({
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const value = e.target.value;
       onPromptChange(value);
-      const partial = getRefPartial(value, e.target.selectionStart ?? value.length);
-      if (partial !== null) {
-        setSuggestions(
-          otherNodeNames.filter((n) => n.toLowerCase().startsWith(partial.toLowerCase())),
-        );
-        setActiveSuggestion(0);
-      } else {
-        setSuggestions([]);
-      }
+      const cursor = e.target.selectionStart ?? value.length;
+      const next = getAcSuggestions(value, cursor, otherNodeNames, promptDataNames, promptFileNames);
+      setSuggestions(next);
+      setActiveSuggestion(0);
     },
-    [onPromptChange, otherNodeNames],
+    [onPromptChange, otherNodeNames, promptDataNames, promptFileNames],
   );
 
   const insertSuggestion = useCallback(
-    (name: string) => {
+    (suggestion: AcSuggestion) => {
       const textarea = textareaRef.current;
       if (!textarea) return;
       const cursorPos = textarea.selectionStart ?? prompt.length;
-      const newBefore = prompt.slice(0, cursorPos).replace(/ref\(['"]?[^'")\s]*$/, `ref('${name}')`);
-      onPromptChange(newBefore + prompt.slice(cursorPos));
+      const newText = prompt.slice(0, suggestion.replaceFrom) + suggestion.insert + prompt.slice(cursorPos);
+      const newCursor = suggestion.replaceFrom + suggestion.insert.length;
+      onPromptChange(newText);
       setSuggestions([]);
       setTimeout(() => {
         textarea.focus();
-        textarea.selectionStart = textarea.selectionEnd = newBefore.length;
+        textarea.selectionStart = textarea.selectionEnd = newCursor;
       }, 0);
     },
     [prompt, onPromptChange],
@@ -193,16 +249,16 @@ export default function NodePanel({
           {/* Autocomplete dropdown */}
           {suggestions.length > 0 && (
             <div className="autocomplete-list">
-              {suggestions.map((name, idx) => (
+              {suggestions.map((s, idx) => (
                 <div
-                  key={name}
+                  key={s.display + idx}
                   className={`autocomplete-item ${idx === activeSuggestion ? 'selected' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    insertSuggestion(name);
+                    insertSuggestion(s);
                   }}
                 >
-                  {`ref('${name}')`}
+                  {s.display}
                 </div>
               ))}
             </div>
