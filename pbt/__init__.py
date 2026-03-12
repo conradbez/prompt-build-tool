@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Callable
 
+from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
 
 __version__ = "0.1.0"
@@ -35,7 +36,8 @@ def run(
     verbose: bool = True,
     promptdata: dict | None = None,
     promptfiles: dict[str, PromptFile] | None = None,
-    validation_dir: str = "validation",
+    validation_dir: str | None = "validation",
+    storage_backend: StorageBackend | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -76,18 +78,10 @@ def run(
     -------
     List of ``ModelRunResult`` (one per model executed).
     """
-    import subprocess
     import time
     from datetime import datetime
 
-    import networkx as nx
-    from rich.console import Console
-
-    from pbt import db
     from pbt.executor.executor import execute_run, ModelRunResult
-    from pbt.llm import resolve_llm_call
-    from pbt.rag import resolve_rag_call
-    from pbt.validator import load_validators
     from pbt.executor.graph import (
         load_models,
         build_models_from_dict,
@@ -98,7 +92,14 @@ def run(
         models_from_json,
     )
 
-    console = Console(highlight=False, soft_wrap=True)
+    if storage_backend is None:
+        from pbt.storage.sqlite import SQLiteStorageBackend
+        storage_backend = SQLiteStorageBackend()
+
+    console = None
+    if verbose:
+        from rich.console import Console
+        console = Console(highlight=False, soft_wrap=True)
 
     def ts() -> str:
         return datetime.now().strftime("%H:%M:%S")
@@ -107,10 +108,10 @@ def run(
         if verbose:
             console.print(f"[dim]{ts()}[/dim]  {msg}")
 
-    db.init_db()
+    storage_backend.init_db()
 
     if dag_id:
-        dag_json = db.load_dag(dag_id)
+        dag_json = storage_backend.load_dag(dag_id)
         if dag_json is None:
             raise RuntimeError(
                 f"DAG '{dag_id}' not found in database. "
@@ -119,18 +120,19 @@ def run(
         all_models = models_from_json(dag_json)
         dag_hash = dag_id
     elif models_from_dict is not None:
-        raw = models_from_dict.root if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
+        raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
         all_models = build_models_from_dict(raw)
         dag_hash = compute_dag_hash(all_models)
-        db.save_dag(dag_hash, models_to_json(all_models))
+        storage_backend.save_dag(dag_hash, models_to_json(all_models))
     else:
         all_models = load_models(models_dir)
         dag_hash = compute_dag_hash(all_models)
-        db.save_dag(dag_hash, models_to_json(all_models))
+        storage_backend.save_dag(dag_hash, models_to_json(all_models))
 
     ordered = execution_order(all_models)
 
     if select:
+        import networkx as nx
         selected_set = set(select)
         dag = build_dag(all_models)
 
@@ -142,23 +144,36 @@ def run(
 
         ordered = [m for m in ordered if m.name in to_run]
 
-    try:
-        git_sha = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode().strip()
-    except Exception:
-        git_sha = None
+    git_sha = None
+    if models_from_dict is None:
+        import subprocess
+        try:
+            git_sha = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+            ).decode().strip()
+        except Exception:
+            git_sha = None
 
     # Resolve LLM and RAG backends from user files if not explicitly provided
     if llm_call is None:
+        if models_from_dict is not None:
+            raise ValueError(
+                "llm_call must be provided when using models_from_dict. "
+                "Inline runs do not auto-load client.py from disk."
+            )
+        from pbt.llm import resolve_llm_call
         llm_call = resolve_llm_call(models_dir)
-    if rag_call is None:
+    if rag_call is None and models_from_dict is None:
+        from pbt.rag import resolve_rag_call
         rag_call = resolve_rag_call(models_dir)
 
     # Load per-model validators from validation_dir (optional)
-    validators = load_validators(validation_dir)
+    validators = None
+    if validation_dir is not None and models_from_dict is None:
+        from pbt.validator import load_validators
+        validators = load_validators(validation_dir)
 
-    run_id = db.create_run(
+    run_id = storage_backend.create_run(
         model_count=len(ordered),
         dag_hash=dag_hash,
         git_sha=git_sha,
@@ -211,6 +226,7 @@ def run(
     results = execute_run(
         run_id=run_id,
         ordered_models=ordered,
+        storage_backend=storage_backend,
         llm_call=llm_call,
         rag_call=rag_call,
         on_model_start=on_start,
@@ -224,7 +240,7 @@ def run(
     skipped = sum(1 for r in results if r.status == "skipped")
     successes = sum(1 for r in results if r.status == "success")
     final_status = "success" if errors == 0 else ("partial" if successes > 0 else "error")
-    db.finish_run(run_id, final_status)
+    storage_backend.finish_run(run_id, final_status)
     total_elapsed = time.monotonic() - run_start
 
     if verbose:

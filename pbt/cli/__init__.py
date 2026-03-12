@@ -252,6 +252,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
         all_results = execute_run(
             run_id=run_id,
             ordered_models=ordered,
+            storage_backend=db,
             on_model_start=on_start,
             on_model_done=on_done,
             llm_call=llm_call,
@@ -405,6 +406,7 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         run_id=target_run["run_id"],
         tests=tests,
         model_outputs=model_outputs,
+        storage_backend=db,
         on_test_start=on_start,
         on_test_done=on_done,
         llm_call=llm_call,

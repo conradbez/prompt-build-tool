@@ -2,7 +2,6 @@
   "packages": [
     "jinja2",
     "networkx",
-    "pydantic",
     "rich",
     "click",
     "python-dotenv"
@@ -14,6 +13,10 @@
     "../../pbt/llm.py": "./pbt/llm.py",
     "../../pbt/rag.py": "./pbt/rag.py",
     "../../pbt/validator.py": "./pbt/validator.py",
+    "../../pbt/storage/__init__.py": "./pbt/storage/__init__.py",
+    "../../pbt/storage/base.py": "./pbt/storage/base.py",
+    "../../pbt/storage/memory.py": "./pbt/storage/memory.py",
+    "../../pbt/storage/sqlite.py": "./pbt/storage/sqlite.py",
     "../../pbt/executor/__init__.py": "./pbt/executor/__init__.py",
     "../../pbt/executor/executor.py": "./pbt/executor/executor.py",
     "../../pbt/executor/graph.py": "./pbt/executor/graph.py",

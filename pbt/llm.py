@@ -14,15 +14,11 @@ from typing import Callable
 
 def resolve_llm_call(models_dir: str) -> Callable[[str], str]:
     """
-    Search for client.py alongside models_dir (i.e. in its parent), then
-    inside models_dir itself for backwards compatibility.
+    Search for client.py alongside models_dir (i.e. in its parent).
     If found and it defines ``llm_call``, return that function.
     Otherwise raise a FileNotFoundError with a helpful message.
     """
-    for candidate in [
-        os.path.join(os.path.dirname(models_dir), "client.py"),
-        os.path.join(models_dir, "client.py"),
-    ]:
+    for candidate in [os.path.join(os.path.dirname(models_dir), "client.py")]:
         if os.path.isfile(candidate):
             spec = importlib.util.spec_from_file_location("_pbt_user_client", candidate)
             mod = importlib.util.module_from_spec(spec)

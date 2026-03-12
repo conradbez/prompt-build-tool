@@ -17,15 +17,11 @@ from typing import Callable
 
 def resolve_rag_call(models_dir: str) -> Callable[..., list[str]]:
     """
-    Search for rag.py alongside models_dir (i.e. in its parent), then
-    inside models_dir itself for backwards compatibility.
+    Search for rag.py alongside models_dir (i.e. in its parent).
     If found and it defines ``do_RAG``, return a wrapper that always
     returns list[str].  Otherwise return a stub that raises on call.
     """
-    for candidate in [
-        os.path.join(os.path.dirname(models_dir), "rag.py"),
-        os.path.join(models_dir, "rag.py"),
-    ]:
+    for candidate in [os.path.join(os.path.dirname(models_dir), "rag.py")]:
         if os.path.isfile(candidate):
             spec = importlib.util.spec_from_file_location("_pbt_user_rag", candidate)
             mod = importlib.util.module_from_spec(spec)

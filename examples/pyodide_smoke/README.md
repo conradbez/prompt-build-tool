@@ -3,8 +3,8 @@
 This is a minimal PyScript page that:
 
 - loads the local `pbt` package into the browser
-- patches the `pbt.db` layer with an in-memory shim so SQLite is not required
 - sends an inline model to `pbt.run(models_from_dict=...)`
+- uses `MemoryStorageBackend` so SQLite is not required
 - returns the run results in the page
 
 The default model source is:
@@ -19,12 +19,11 @@ The example also loads the core Python dependencies used by `pbt`:
 
 - `jinja2`
 - `networkx`
-- `pydantic`
 - `rich`
 - `click`
 - `python-dotenv`
 
-It does not try to run the full CLI or server stack. It is a browser-safe `pbt.run()` example around `models_from_dict`.
+It does not try to run the full CLI or server stack. It is a browser-safe `pbt.run()` example around `models_from_dict` using `pbt.storage.MemoryStorageBackend`.
 
 ## Run it
 
@@ -49,4 +48,4 @@ The page should show:
 
 ## What this is for
 
-Use this as the first interactive browser check for `pbt`. If this page fails, the failure is in local package loading, PyScript configuration, or the browser-safe shim around `pbt` persistence.
+Use this as the first interactive browser check for `pbt`. If this page fails, the failure is in local package loading, PyScript configuration, or the browser-safe in-memory storage path.

@@ -28,8 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from pbt import db
 from pbt.executor.parser import render_prompt
+from pbt.storage.base import StorageBackend
 
 
 @dataclass
@@ -86,6 +86,7 @@ def execute_tests(
     run_id: str,
     tests: dict[str, str],
     model_outputs: dict[str, str],
+    storage_backend: StorageBackend,
     on_test_start: Callable[[str], None] | None = None,
     on_test_done: Callable[[TestResult], None] | None = None,
     llm_call: Callable[[str], str] | None = None,
@@ -120,7 +121,7 @@ def execute_tests(
             on_test_start(test_name)
 
         try:
-            rendered = render_prompt(source, model_outputs)
+            rendered, _ = render_prompt(source, model_outputs)
             t0 = time.monotonic()
             llm_output = llm_call(rendered)
             elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -141,7 +142,7 @@ def execute_tests(
                 error=str(exc),
             )
 
-        db.record_test_result(run_id, result)
+        storage_backend.record_test_result(run_id, result)
         results.append(result)
 
         if on_test_done:

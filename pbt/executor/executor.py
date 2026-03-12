@@ -20,10 +20,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from pbt import db
 from pbt.executor.graph import PromptModel
-from pbt.types import PromptFile
+from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
+from pbt.types import PromptFile
 from pbt.validator import run_validator
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -60,6 +60,7 @@ class ModelRunResult:
 def execute_run(
     run_id: str,
     ordered_models: list[PromptModel],
+    storage_backend: StorageBackend,
     preloaded_outputs: dict[str, str] | None = None,
     on_model_start: Callable[[str], None] | None = None,
     on_model_done: Callable[[ModelRunResult], None] | None = None,
@@ -106,7 +107,7 @@ def execute_run(
 
     # Register all models as 'pending' up front (mirrors dbt's deferred state).
     for model in ordered_models:
-        db.upsert_model_pending(
+        storage_backend.upsert_model_pending(
             run_id=run_id,
             model_name=model.name,
             prompt_template=model.source,
@@ -120,7 +121,7 @@ def execute_run(
         # Skip if any dependency failed *in this run* (preloaded deps are fine)
         blocked_by = [d for d in model.depends_on if d in failed_upstream]
         if blocked_by:
-            db.mark_model_skipped(run_id, model.name)
+            storage_backend.mark_model_skipped(run_id, model.name)
             result = ModelRunResult(
                 model_name=model.name,
                 status="skipped",
@@ -135,7 +136,7 @@ def execute_run(
         if on_model_start:
             on_model_start(model.name)
 
-        db.mark_model_running(run_id, model.name)
+        storage_backend.mark_model_running(run_id, model.name)
 
         try:
             rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
@@ -162,7 +163,7 @@ def execute_run(
                 llm_output = skip_state.skip_value
                 elapsed_ms = 0
                 prompt_skipped_models.add(model.name)
-            elif (cached := db.get_cached_llm_output(cache_key)) is not None:
+            elif (cached := storage_backend.get_cached_llm_output(cache_key)) is not None:
                 llm_output = cached
                 elapsed_ms = 0
             else:
@@ -199,7 +200,7 @@ def execute_run(
                     llm_output = validated if isinstance(validated, str) else str(validated)
                     model_outputs[model.name] = llm_output
 
-            db.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+            storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
 
             result = ModelRunResult(
                 model_name=model.name,
@@ -213,7 +214,7 @@ def execute_run(
 
         except Exception as exc:  # noqa: BLE001
             error_msg = str(exc)
-            db.mark_model_error(run_id, model.name, error_msg)
+            storage_backend.mark_model_error(run_id, model.name, error_msg)
             failed_upstream.add(model.name)
             result = ModelRunResult(
                 model_name=model.name,

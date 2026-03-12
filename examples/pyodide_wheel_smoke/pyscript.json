@@ -1,0 +1,10 @@
+{
+  "packages": [
+    "jinja2",
+    "networkx",
+    "rich",
+    "click",
+    "python-dotenv",
+    "../../dist/prompt_build_tool-0.1.10-py3-none-any.whl"
+  ]
+}

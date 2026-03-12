@@ -1,10 +1,13 @@
 """Tests for `pbt run`."""
 
 import textwrap
+import sys
+import types
 from pathlib import Path
 
 import pytest
 import pbt
+from pbt.storage import MemoryStorageBackend
 
 from tests.conftest import run_pbt, init_project, init_project_with_real_client, STUB_CLIENT_JSON_PY, STUB_CLIENT_FILES_PY
 
@@ -203,3 +206,29 @@ def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch: pyte
     result = pbt.run(models_dir="models", verbose=False)
 
     assert result["articles"] == "precomputed value"
+
+
+def test_python_api_inline_models_support_memory_storage_without_disk_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+    failing_llm_module = types.ModuleType("pbt.llm")
+    failing_rag_module = types.ModuleType("pbt.rag")
+    failing_validator_module = types.ModuleType("pbt.validator")
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("disk-backed resolver should not be used for inline browser-safe runs")
+
+    failing_llm_module.resolve_llm_call = _fail
+    failing_rag_module.resolve_rag_call = _fail
+    failing_validator_module.load_validators = _fail
+
+    monkeypatch.setitem(sys.modules, "pbt.llm", failing_llm_module)
+    monkeypatch.setitem(sys.modules, "pbt.rag", failing_rag_module)
+    monkeypatch.setitem(sys.modules, "pbt.validator", failing_validator_module)
+
+    result = pbt.run(
+        models_from_dict={"topic": '{{ skip_and_set_to_value("browser-safe") }}'},
+        llm_call=lambda prompt, **kwargs: prompt,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert result["topic"] == "browser-safe"
