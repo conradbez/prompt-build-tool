@@ -9,7 +9,8 @@ import json
 from typing import Any, List, Optional
 
 try:
-    from fastapi import FastAPI, File, Form, Query, UploadFile
+    from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import Response
     from pydantic import BaseModel
 except ImportError as exc:
@@ -51,6 +52,24 @@ def _raw_response(
 class RunResponse(BaseModel):
     outputs: dict[str, Any]
     errors: list[str] = []
+
+
+class _DagNode(BaseModel):
+    name: str
+    source: str
+
+
+class _DagSubmit(BaseModel):
+    nodes: List[_DagNode]
+
+
+class _DagResponse(BaseModel):
+    dag_id: str
+
+
+class _DagRunRequest(BaseModel):
+    select: Optional[List[str]] = None
+    promptdata: Optional[dict] = None
 
 
 def _filter_output(serialised: dict[str, Any], output_model: str | None) -> dict[str, Any]:
@@ -236,6 +255,14 @@ def create_app(
         version=pbt.__version__,
     )
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.get("/health")
     def health() -> dict:
         return {
@@ -326,5 +353,65 @@ def create_app(
     # File uploads are not possible via GET; use POST /run for promptfiles.
     run_get = _build_run_endpoint(models_dir, validation_dir, dag_promptdata, dag_promptfiles, model_extensions)
     app.get("/run", response_model=RunResponse, summary="Run models (query params)")(run_get)
+
+    # -----------------------------------------------------------------------
+    # DAG endpoints — used by the drag-and-drop front-end (utils/dnd-front-end)
+    # -----------------------------------------------------------------------
+
+    @app.post(
+        "/dag",
+        response_model=_DagResponse,
+        summary="Register a DAG from the front-end editor",
+        tags=["DAG editor"],
+    )
+    def submit_dag(body: _DagSubmit) -> _DagResponse:
+        """
+        Receive a list of nodes ``{name, source}`` from the drag-and-drop UI,
+        build a PromptModel DAG, persist it in the database, and return the
+        stable ``dag_id`` that the front-end can use for subsequent ``/run``
+        calls.
+
+        The ``source`` field of each node is a raw Jinja2 prompt template
+        (identical to a ``.prompt`` file) including any ``ref()`` and
+        ``promptdata()`` calls.
+        """
+        from pbt.executor.graph import models_from_dict, compute_dag_hash, models_to_json
+        from pbt import db as _db
+
+        models_dict = {node.name: node.source for node in body.nodes}
+        try:
+            models_map = models_from_dict(models_dict)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        dag_hash = compute_dag_hash(models_map)
+        _db.init_db()
+        _db.save_dag(dag_hash, models_to_json(models_map))
+        return _DagResponse(dag_id=dag_hash)
+
+    @app.post(
+        "/dag/{dag_id}/run",
+        response_model=RunResponse,
+        summary="Run one or more models from a registered DAG",
+        tags=["DAG editor"],
+    )
+    def run_dag(dag_id: str, body: _DagRunRequest) -> RunResponse:
+        """
+        Execute the models listed in ``select`` (and all their upstream
+        dependencies) from the DAG previously registered via ``POST /dag``.
+
+        Pass ``promptdata`` to supply runtime template variables.
+        """
+        try:
+            outputs = pbt.run(
+                dag_id=dag_id,
+                select=body.select or None,
+                promptdata=body.promptdata or None,
+                verbose=False,
+            )
+        except Exception as exc:
+            return RunResponse(outputs={}, errors=[str(exc)])
+        serialised, errors = _serialise(outputs)
+        return RunResponse(outputs=serialised, errors=errors)
 
     return app

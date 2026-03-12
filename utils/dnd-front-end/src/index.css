@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, sans-serif;
+  }
+}
+
+/* React Flow edge label override */
+.react-flow__edge-textbg {
+  fill: #f8fafc;
+}
+
+/* Autocomplete dropdown */
+.autocomplete-list {
+  position: absolute;
+  z-index: 50;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  min-width: 160px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.autocomplete-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+  background: #eff6ff;
+  color: #2563eb;
+}
