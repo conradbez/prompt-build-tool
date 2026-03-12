@@ -3,7 +3,7 @@
 This is a minimal PyScript page that:
 
 - loads the local `pbt` package into the browser
-- sends an inline model to `pbt.run(models_from_dict=...)`
+- sends an inline model to `await pbt.run(models_from_dict=...)`
 - uses `MemoryStorageBackend` so SQLite is not required
 - returns the run results in the page
 
@@ -23,7 +23,7 @@ The example also loads the core Python dependencies used by `pbt`:
 - `click`
 - `python-dotenv`
 
-It does not try to run the full CLI or server stack. It is a browser-safe `pbt.run()` example around `models_from_dict` using `pbt.storage.MemoryStorageBackend`.
+It does not try to run the full CLI or server stack. It is a browser-safe `await pbt.run()` example around `models_from_dict` using `pbt.storage.MemoryStorageBackend`.
 
 ## Run it
 
@@ -44,7 +44,7 @@ The page should show:
 - a green success message
 - a textarea containing the inline `modelinclude` source
 - a working `Run in pbt` button
-- JSON output from `pbt.run(models_from_dict={"modelinclude": ...})`
+- JSON output from `await pbt.run(models_from_dict={"modelinclude": ...})`
 
 ## What this is for
 

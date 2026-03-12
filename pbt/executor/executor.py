@@ -14,11 +14,12 @@ The model can be overridden with GEMINI_MODEL (default: gemini-3-flash-preview).
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from pbt.executor.graph import PromptModel
 from pbt.storage.base import StorageBackend
@@ -57,14 +58,14 @@ class ModelRunResult:
 
 
 
-def execute_run(
+async def execute_run(
     run_id: str,
     ordered_models: list[PromptModel],
     storage_backend: StorageBackend,
     preloaded_outputs: dict[str, str] | None = None,
     on_model_start: Callable[[str], None] | None = None,
     on_model_done: Callable[[ModelRunResult], None] | None = None,
-    llm_call: Callable[[str], str] | None = None,
+    llm_call: Callable[[str], str | Awaitable[str]] | None = None,
     rag_call: Callable[..., list] | None = None,
     promptdata: dict | None = None,
     promptfiles: dict[str, PromptFile] | None = None,
@@ -167,15 +168,18 @@ def execute_run(
                 llm_output = cached
                 elapsed_ms = 0
             else:
-                import inspect as _inspect
                 t0 = time.monotonic()
-                _sig = _inspect.signature(llm_call).parameters
+                _sig = inspect.signature(llm_call).parameters
                 _kwargs: dict = {}
                 if model_files and "files" in _sig:
                     _kwargs["files"] = model_files
                 if "config" in _sig:
                     _kwargs["config"] = model.config
-                llm_output = llm_call(rendered, **_kwargs)
+                result = llm_call(rendered, **_kwargs)
+                if inspect.isawaitable(result):
+                    llm_output = await result
+                else:
+                    llm_output = result
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
 
             # If model declares output_format: json, validate and parse output.

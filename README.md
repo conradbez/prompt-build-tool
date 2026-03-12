@@ -149,25 +149,28 @@ pbt docs --output my/report.html
 pbt can be used directly from Python without the CLI:
 
 ```python
+import asyncio
 import pbt
 
-results = pbt.run("path/to/models")
+results = asyncio.run(pbt.run("path/to/models"))
 
-for r in results:
-    print(r.model_name, r.status, r.llm_output)
+for name, output in results.items():
+    print(name, output)
 ```
 
 ### `pbt.run()`
 
 ```python
-pbt.run(
+import asyncio
+
+results = asyncio.run(pbt.run(
     models_dir="models",       # path to *.prompt files
     select=["article"],        # optional: run only these models
     llm_call=my_llm_fn,        # optional: custom LLM backend
     rag_call=my_rag_fn,        # optional: custom RAG function
     promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
     validation_dir="validation", # optional: per-model validation functions
-)
+))
 ```
 
 | Parameter | Type | Description |
@@ -193,7 +196,7 @@ pbt run --promptdata tone=formal --promptdata audience=engineers
 ```
 
 ```python
-pbt.run("models", promptdata={"tone": "formal", "audience": "engineers"})
+asyncio.run(pbt.run("models", promptdata={"tone": "formal", "audience": "engineers"}))
 ```
 
 Access them in any `.prompt` file:
@@ -298,8 +301,8 @@ pbt run --promptfile report=annual.pdf --promptfile chart_image=q4.png
 ```
 
 ```python
-pbt.run("models", promptfiles={"my_document": "report.pdf"})
-pbt.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"})
+asyncio.run(pbt.run("models", promptfiles={"my_document": "report.pdf"}))
+asyncio.run(pbt.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"}))
 ```
 
 **3. Custom `llm_call` with file and config support:**

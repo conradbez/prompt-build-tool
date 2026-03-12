@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import traceback
 from types import ModuleType
 from pyodide.ffi import create_proxy
 from js import document
-import json
-import traceback
 
 status_el = document.getElementById("status")
 output_el = document.getElementById("output")
@@ -27,7 +28,7 @@ def llm_stub(prompt: str, **kwargs) -> str:
     return f"UNUSED::{prompt}"
 
 
-def run_model(event=None) -> None:
+async def run_model(event=None) -> None:
     import pbt
     from pbt.storage import MemoryStorageBackend
 
@@ -43,7 +44,7 @@ def run_model(event=None) -> None:
                 "{{ skip_and_set_to_value(value if value else '<empty string>') }}\n"
             ),
         }
-        results = pbt.run(
+        results = await pbt.run(
             models_from_dict=models,
             llm_call=llm_stub,
             verbose=False,
@@ -69,7 +70,10 @@ def run_model(event=None) -> None:
 try:
     import pbt
 
-    button_proxy = create_proxy(run_model)
+    def _schedule_run(event=None) -> None:
+        asyncio.create_task(run_model(event))
+
+    button_proxy = create_proxy(_schedule_run)
     button_el.addEventListener("click", button_proxy)
     button_el.disabled = False
     output_el.textContent = json.dumps(

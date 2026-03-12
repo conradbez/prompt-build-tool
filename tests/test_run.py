@@ -195,7 +195,8 @@ def test_run_skip_and_set_to_value_does_not_crash(tmp_path: Path) -> None:
     assert (proj / "outputs" / "articles.md").read_text(encoding="utf-8").startswith("# Precomputed article")
 
 
-def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     proj = init_project(tmp_path)
     (proj / "models" / "articles.prompt").write_text(
         '{{ skip_and_set_to_value("precomputed value") }}\n',
@@ -203,12 +204,13 @@ def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch: pyte
     )
 
     monkeypatch.chdir(proj)
-    result = pbt.run(models_dir="models", verbose=False)
+    result = await pbt.run(models_dir="models", verbose=False)
 
     assert result["articles"] == "precomputed value"
 
 
-def test_python_api_inline_models_support_memory_storage_without_disk_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_python_api_inline_models_support_memory_storage_without_disk_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
     failing_llm_module = types.ModuleType("pbt.llm")
     failing_rag_module = types.ModuleType("pbt.rag")
     failing_validator_module = types.ModuleType("pbt.validator")
@@ -224,7 +226,7 @@ def test_python_api_inline_models_support_memory_storage_without_disk_helpers(mo
     monkeypatch.setitem(sys.modules, "pbt.rag", failing_rag_module)
     monkeypatch.setitem(sys.modules, "pbt.validator", failing_validator_module)
 
-    result = pbt.run(
+    result = await pbt.run(
         models_from_dict={"topic": '{{ skip_and_set_to_value("browser-safe") }}'},
         llm_call=lambda prompt, **kwargs: prompt,
         verbose=False,
@@ -232,3 +234,33 @@ def test_python_api_inline_models_support_memory_storage_without_disk_helpers(mo
     )
 
     assert result["topic"] == "browser-safe"
+
+
+@pytest.mark.asyncio
+async def test_python_api_supports_async_llm_call() -> None:
+    async def llm_call(prompt: str) -> str:
+        return "ok"
+
+    result = await pbt.run(
+        models_from_dict={"topic": "Return ok"},
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert result["topic"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_python_api_supports_sync_llm_call_under_async_run() -> None:
+    def llm_call(prompt: str) -> str:
+        return "ok"
+
+    result = await pbt.run(
+        models_from_dict={"topic": "Return ok"},
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert result["topic"] == "ok"

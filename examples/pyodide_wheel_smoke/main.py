@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import traceback
 
@@ -32,24 +33,31 @@ try:
         "summary": '{{ skip_and_set_to_value(ref("topic")) }}',
     }
 
-    results = pbt.run(
-        models_from_dict=models,
-        llm_call=llm_stub,
-        verbose=False,
-        storage_backend=MemoryStorageBackend(),
-    )
+    async def _main() -> None:
+        try:
+            results = await pbt.run(
+                models_from_dict=models,
+                llm_call=llm_stub,
+                verbose=False,
+                storage_backend=MemoryStorageBackend(),
+            )
 
-    output_el.textContent = json.dumps(
-        {
-            "pbt_version": pbt.__version__,
-            "results": results,
-            "expected_summary": "LLM::Return exactly the word browser",
-            "passed": results.get("summary") == "LLM::Return exactly the word browser",
-        },
-        indent=2,
-        sort_keys=True,
-    )
-    set_status("Wheel import and models_from_dict smoke test passed.", True)
+            output_el.textContent = json.dumps(
+                {
+                    "pbt_version": pbt.__version__,
+                    "results": results,
+                    "expected_summary": "LLM::Return exactly the word browser",
+                    "passed": results.get("summary") == "LLM::Return exactly the word browser",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            set_status("Wheel import and models_from_dict smoke test passed.", True)
+        except Exception:
+            output_el.textContent = traceback.format_exc()
+            set_status("Wheel smoke test failed.", False)
+
+    asyncio.create_task(_main())
 except Exception:
     output_el.textContent = traceback.format_exc()
     set_status("Wheel smoke test failed.", False)

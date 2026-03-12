@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Callable
+from typing import Awaitable, Callable
 
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
@@ -26,12 +26,12 @@ class ModelError:
         return f"error: {self.message}"
 
 
-def run(
+async def run(
     models_dir: str = "models",
     models_from_dict: PromptModelsDict | dict[str, str] | None = None,
     select: list[str] | None = None,
     dag_id: str | None = None,
-    llm_call: Callable[[str], str] | None = None,
+    llm_call: Callable[[str], str | Awaitable[str]] | None = None,
     rag_call: Callable[..., list] | None = None,
     verbose: bool = True,
     promptdata: dict | None = None,
@@ -223,7 +223,7 @@ def run(
 
     run_start = time.monotonic()
 
-    results = execute_run(
+    results = await execute_run(
         run_id=run_id,
         ordered_models=ordered,
         storage_backend=storage_backend,

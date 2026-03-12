@@ -124,25 +124,28 @@ sqlite3 .pbt/pbt.db "SELECT model_name, status, execution_ms FROM model_results 
 pbt can be used directly from Python without the CLI:
 
 ```python
+import asyncio
 import pbt
 
-results = pbt.run("path/to/models")
+results = asyncio.run(pbt.run("path/to/models"))
 
-for r in results:
-    print(r.model_name, r.status, r.llm_output)
+for name, output in results.items():
+    print(name, output)
 ```
 
 ### `pbt.run()`
 
 ```python
-pbt.run(
+import asyncio
+
+results = asyncio.run(pbt.run(
     models_dir="models",       # path to *.prompt files
     select=["article"],        # optional: run only these models
     llm_call=my_llm_fn,        # optional: custom LLM backend
     rag_call=my_rag_fn,        # optional: custom RAG function
     promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
     validation_dir="validation", # optional: per-model validation functions
-)
+))
 ```
 
 | Parameter | Type | Description |
@@ -179,7 +182,7 @@ def my_rag(*args) -> list[str]:
     # your vector search here
     return ["Relevant doc 1", "Relevant doc 2"]
 
-results = pbt.run("models", llm_call=my_llm, rag_call=my_rag)
+results = asyncio.run(pbt.run("models", llm_call=my_llm, rag_call=my_rag))
 ```
 
 ---

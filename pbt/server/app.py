@@ -49,10 +49,10 @@ def _build_run_endpoint(models_dir: str, validation_dir: str, dag_promptdata: li
     """
 
     # The actual handler — receives promptdata values as keyword arguments
-    def _run(**kwargs: Any) -> RunResponse:
+    async def _run(**kwargs: Any) -> RunResponse:
         provided = {k: v for k, v in kwargs.items() if v is not None}
         try:
-            outputs = pbt.run(
+            outputs = await pbt.run(
                 models_dir=models_dir,
                 promptdata=provided or None,
                 validation_dir=validation_dir,
@@ -123,10 +123,10 @@ def create_app(
 
     # POST /run — generic JSON body (for programmatic use)
     @app.post("/run", response_model=RunResponse, summary="Run models (JSON body)")
-    def run_post(request: RunRequest) -> RunResponse:
+    async def run_post(request: RunRequest) -> RunResponse:
         """Run pbt models with a JSON body. Useful for programmatic access."""
         try:
-            outputs = pbt.run(
+            outputs = await pbt.run(
                 models_dir=models_dir,
                 select=request.select,
                 promptdata=request.promptdata,

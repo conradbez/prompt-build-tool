@@ -12,6 +12,7 @@ pbt show-result  Print the stored output for a specific model + run.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
@@ -249,7 +250,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
         c.print()
 
     try:
-        all_results = execute_run(
+        all_results = asyncio.run(execute_run(
             run_id=run_id,
             ordered_models=ordered,
             storage_backend=db,
@@ -260,7 +261,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
             promptdata=promptdata_vars or None,
             promptfiles=promptfiles_dict or None,
             validators=validators or None,
-        )
+        ))
     except EnvironmentError as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")
         db.finish_run(run_id, "error")

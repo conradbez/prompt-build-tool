@@ -6,7 +6,7 @@ It does three things:
 
 - installs the built `prompt-build-tool` wheel from `dist/`
 - imports `pbt` inside PyScript
-- runs a minimal `pbt.run(models_from_dict=...)` graph automatically with `MemoryStorageBackend`
+- runs a minimal `await pbt.run(models_from_dict=...)` graph automatically with `MemoryStorageBackend`
 
 There is no JS-to-Python button bridge. The page runs once at load time and writes the result to the page.
 
