@@ -4,6 +4,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import pbt
 
 from tests.conftest import run_pbt, init_project, init_project_with_real_client, STUB_CLIENT_JSON_PY, STUB_CLIENT_FILES_PY
 
@@ -189,3 +190,16 @@ def test_run_skip_and_set_to_value_does_not_crash(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert (proj / "outputs" / "articles.md").read_text(encoding="utf-8").startswith("# Precomputed article")
+
+
+def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    proj = init_project(tmp_path)
+    (proj / "models" / "articles.prompt").write_text(
+        '{{ skip_and_set_to_value("precomputed value") }}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(proj)
+    result = pbt.run(models_dir="models", verbose=False)
+
+    assert result["articles"] == "precomputed value"

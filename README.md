@@ -422,16 +422,14 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 ## How to dynamically skip a model
 
-Use the built-in `{{ skip_this_model }}` variable to skip the LLM call during Jinja rendering. When rendered, it contributes no prompt text and marks the model as prompt-skipped:
+Use `{{ skip_and_set_to_value("value") }}` to skip the LLM call during Jinja rendering and provide the output directly:
 
 ```jinja
 {% if "no action needed" in ref('previous_model') %}
-{{ skip_this_model }}
+{{ skip_and_set_to_value("No action needed.") }}
 {% else %}
 Summarise the following: {{ ref('previous_model') }}
 {% endif %}
 ```
 
-The model is recorded as a successful run with `prompt_skipped=True`, and downstream templates can detect it with `was_skipped('model_name')`.
-
-If you want to skip the LLM call and set an explicit output value, use `{{ skip_and_set_to_value("value") }}`.
+The model is recorded as a successful run, downstream templates can detect it with `was_skipped('model_name')`, and downstream `ref()` calls receive the value you provided.

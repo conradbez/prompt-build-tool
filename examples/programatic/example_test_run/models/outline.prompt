@@ -1,4 +1,4 @@
-{% if ref('model_to_skip') | trim == 'yes' %}{{ skip_this_model }}{% else %}
+{% if ref('model_to_skip') | trim == 'yes' %}{{ skip_and_set_to_value("") }}{% else %}
 You are a technical writer.
 
 Based on the following blog topic, create a detailed outline with 4–5 sections.

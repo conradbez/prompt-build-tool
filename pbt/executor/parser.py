@@ -13,7 +13,7 @@ Special template functions
     works safely).
 
 All standard Jinja2 features (loops, conditionals, filters, macros, etc.)
-are available in addition to ref() and promptdata().
+are available in addition to ref(), promptdata(), and skip helpers.
 """
 
 import re
@@ -32,25 +32,6 @@ class _RenderState:
     ``skip_value is not None``  → skip the LLM call; use the value as output.
     """
     skip_value: str | None = None
-
-
-class _SkipMarker:
-    """Object injected as ``skip_this_model`` in templates.
-
-    When Jinja2 renders ``{{ skip_this_model }}``, it marks the model for
-    skipping via ``_RenderState`` and contributes nothing to the prompt text.
-    """
-
-    def __init__(self, state: _RenderState) -> None:
-        self._state = state
-
-    def __str__(self) -> str:
-        self._state.skip_value = ""
-        return ""
-
-    def __format__(self, spec: str) -> str:
-        self._state.skip_value = ""
-        return ""
 
 # Regex that finds every ref('...') or ref("...") call in raw template text.
 # Used for static dependency extraction WITHOUT executing the template.
@@ -148,7 +129,6 @@ def extract_jinja_config(template_source: str) -> dict[str, str]:
         "promptdata": lambda *a, **kw: None,
         "return_list_RAG_results": lambda *a, **kw: [],
         "was_skipped": lambda *a, **kw: False,
-        "skip_this_model": "",
         "skip_and_set_to_value": lambda value="": "",
     }
 
@@ -260,7 +240,6 @@ def render_prompt(
         "promptdata": _promptdata_fn,
         "return_list_RAG_results": return_list_RAG_results,
         "was_skipped": was_skipped,
-        "skip_this_model": _SkipMarker(state),
         "skip_and_set_to_value": skip_and_set_to_value,
         "config": lambda **_: "",   # no-op during real render; config already parsed
     }

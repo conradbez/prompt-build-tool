@@ -1,5 +1,5 @@
 {% if was_skipped('topic') %}
-{{ skip_this_model }}
+{{ skip_and_set_to_value("") }}
 {% else %}
 The following topic was generated: {{ ref('topic') }}
 
