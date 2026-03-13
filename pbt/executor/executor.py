@@ -117,117 +117,138 @@ async def execute_run(
 
     results: list[ModelRunResult] = []
     failed_upstream: set[str] = set()
+    completed: set[str] = set(model_outputs)  # preloaded outputs count as completed
 
-    for model in ordered_models:
-        # Skip if any dependency failed *in this run* (preloaded deps are fine)
-        blocked_by = [d for d in model.depends_on if d in failed_upstream]
-        if blocked_by:
-            storage_backend.mark_model_skipped(run_id, model.name)
-            result = ModelRunResult(
-                model_name=model.name,
-                status="skipped",
-                error=f"Skipped because upstream models failed: {blocked_by}",
-            )
-            results.append(result)
-            failed_upstream.add(model.name)
-            if on_model_done:
-                on_model_done(result)
-            continue
+    pending = list(ordered_models)
+    while pending:
+        still_waiting = []
+        made_progress = False
 
-        if on_model_start:
-            on_model_start(model.name)
+        for model in pending:
+            # Deps still running — come back to this model next iteration
+            waiting_deps = [d for d in model.depends_on if d not in completed and d not in failed_upstream]
+            if waiting_deps:
+                still_waiting.append(model)
+                continue
 
-        storage_backend.mark_model_running(run_id, model.name)
+            made_progress = True
 
-        try:
-            rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
+            # Skip if any dependency failed *in this run* (preloaded deps are fine)
+            blocked_by = [d for d in model.depends_on if d in failed_upstream]
+            if blocked_by:
+                storage_backend.mark_model_skipped(run_id, model.name)
+                result = ModelRunResult(
+                    model_name=model.name,
+                    status="skipped",
+                    error=f"Skipped because upstream models failed: {blocked_by}",
+                )
+                results.append(result)
+                failed_upstream.add(model.name)
+                if on_model_done:
+                    on_model_done(result)
+                continue
 
-            # Resolve file paths declared in this model's config block
-            model_files: list[str] | None = None
-            if model.promptfiles_used and promptfiles:
-                model_files = []
-                for name in model.promptfiles_used:
-                    if name not in promptfiles:
-                        raise ValueError(
-                            f"Model '{model.name}' declares promptfile '{name}' in config "
-                            f"but it was not provided. Pass it via --promptfile {name}=path or "
-                            f"the promptfiles= argument."
-                        )
-                    model_files.append(promptfiles[name])
+            if on_model_start:
+                on_model_start(model.name)
 
-            # Cache key includes config so a config-only change (e.g. adding
-            # output_format: json) correctly busts the cache.
-            cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+            storage_backend.mark_model_running(run_id, model.name)
 
-            cached = None
-            if skip_state.skip_value is not None:
-                llm_output = skip_state.skip_value
-                elapsed_ms = 0
-                prompt_skipped_models.add(model.name)
-            elif (cached := storage_backend.get_cached_llm_output(cache_key)) is not None:
-                llm_output = cached
-                elapsed_ms = 0
-            else:
-                t0 = time.monotonic()
-                _sig = inspect.signature(llm_call).parameters
-                _kwargs: dict = {}
-                if model_files and "files" in _sig:
-                    _kwargs["files"] = model_files
-                if "config" in _sig:
-                    _kwargs["config"] = model.config
-                result = llm_call(rendered, **_kwargs)
-                if inspect.isawaitable(result):
-                    llm_output = await result
+            try:
+                rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
+
+                # Resolve file paths declared in this model's config block
+                model_files: list[str] | None = None
+                if model.promptfiles_used and promptfiles:
+                    model_files = []
+                    for name in model.promptfiles_used:
+                        if name not in promptfiles:
+                            raise ValueError(
+                                f"Model '{model.name}' declares promptfile '{name}' in config "
+                                f"but it was not provided. Pass it via --promptfile {name}=path or "
+                                f"the promptfiles= argument."
+                            )
+                        model_files.append(promptfiles[name])
+
+                # Cache key includes config so a config-only change (e.g. adding
+                # output_format: json) correctly busts the cache.
+                cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+
+                cached = None
+                if skip_state.skip_value is not None:
+                    llm_output = skip_state.skip_value
+                    elapsed_ms = 0
+                    prompt_skipped_models.add(model.name)
+                elif (cached := storage_backend.get_cached_llm_output(cache_key)) is not None:
+                    llm_output = cached
+                    elapsed_ms = 0
                 else:
-                    llm_output = result
-                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    t0 = time.monotonic()
+                    _sig = inspect.signature(llm_call).parameters
+                    _kwargs: dict = {}
+                    if model_files and "files" in _sig:
+                        _kwargs["files"] = model_files
+                    if "config" in _sig:
+                        _kwargs["config"] = model.config
+                    result = llm_call(rendered, **_kwargs)
+                    if inspect.isawaitable(result):
+                        llm_output = await result
+                    else:
+                        llm_output = result
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-            # If model declares output_format: json, validate and parse output.
-            # Downstream ref() will receive a Python dict/list instead of a string.
-            output_format = model.config.get("output_format", "text")
-            if skip_state.skip_value is None and output_format == "json":
-                parsed = _parse_json_output(llm_output)
-                model_outputs[model.name] = parsed
-                # Normalise to canonical JSON for DB storage
-                llm_output = json.dumps(parsed)
-            else:
-                model_outputs[model.name] = llm_output
-
-            # Run user-defined validator as a post-processing step.
-            # Its return value becomes the model's output; False → error.
-            if skip_state.skip_value is None and validators:
-                validated = run_validator(model.name, validators, rendered, llm_output)
-                if isinstance(validated, (dict, list)):
-                    model_outputs[model.name] = validated
-                    llm_output = json.dumps(validated)
+                # If model declares output_format: json, validate and parse output.
+                # Downstream ref() will receive a Python dict/list instead of a string.
+                output_format = model.config.get("output_format", "text")
+                if skip_state.skip_value is None and output_format == "json":
+                    parsed = _parse_json_output(llm_output)
+                    model_outputs[model.name] = parsed
+                    # Normalise to canonical JSON for DB storage
+                    llm_output = json.dumps(parsed)
                 else:
-                    llm_output = validated if isinstance(validated, str) else str(validated)
                     model_outputs[model.name] = llm_output
 
-            storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+                # Run user-defined validator as a post-processing step.
+                # Its return value becomes the model's output; False → error.
+                if skip_state.skip_value is None and validators:
+                    validated = run_validator(model.name, validators, rendered, llm_output)
+                    if isinstance(validated, (dict, list)):
+                        model_outputs[model.name] = validated
+                        llm_output = json.dumps(validated)
+                    else:
+                        llm_output = validated if isinstance(validated, str) else str(validated)
+                        model_outputs[model.name] = llm_output
 
-            result = ModelRunResult(
-                model_name=model.name,
-                status="success",
-                prompt_rendered=rendered,
-                llm_output=llm_output,
-                execution_ms=elapsed_ms,
-                cached=cached is not None,
-                prompt_skipped=skip_state.skip_value is not None,
-            )
+                storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
 
-        except Exception as exc:  # noqa: BLE001
-            error_msg = str(exc)
-            storage_backend.mark_model_error(run_id, model.name, error_msg)
-            failed_upstream.add(model.name)
-            result = ModelRunResult(
-                model_name=model.name,
-                status="error",
-                error=error_msg,
-            )
+                result = ModelRunResult(
+                    model_name=model.name,
+                    status="success",
+                    prompt_rendered=rendered,
+                    llm_output=llm_output,
+                    execution_ms=elapsed_ms,
+                    cached=cached is not None,
+                    prompt_skipped=skip_state.skip_value is not None,
+                )
 
-        results.append(result)
-        if on_model_done:
-            on_model_done(result)
+            except Exception as exc:  # noqa: BLE001
+                error_msg = str(exc)
+                storage_backend.mark_model_error(run_id, model.name, error_msg)
+                failed_upstream.add(model.name)
+                result = ModelRunResult(
+                    model_name=model.name,
+                    status="error",
+                    error=error_msg,
+                )
+            else:
+                completed.add(model.name)
+
+            results.append(result)
+            if on_model_done:
+                on_model_done(result)
+
+        pending = still_waiting
+        if not made_progress:
+            # No model could run this pass — unresolvable (e.g. circular deps)
+            break
 
     return results
