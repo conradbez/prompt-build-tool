@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-build-tool"
-version = "0.1.16"
+version = "0.1.18"
 description = "A dbt-inspired prompt orchestration tool for LLMs"
 readme = "README.md"
 requires-python = ">=3.10"

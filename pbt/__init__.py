@@ -50,7 +50,7 @@ class ModelError:
         return f"error: {self.message}"
 
 
-async def run(
+async def async_run(
     models_dir: str = "models",
     models_from_dict: PromptModelsDict | dict[str, str] | None = None,
     select: list[str] | None = None,
@@ -284,7 +284,38 @@ async def run(
         if r.status == "skipped":
             return ModelStatus.SKIPPED
         if r.status == "error":
-            return ModelStatus.ERROR
+            return ModelError(r.error or "error")
         return r.llm_output
 
     return {r.model_name: _value(r) for r in results}
+
+
+def run(
+    models_dir: str = "models",
+    models_from_dict: "PromptModelsDict | dict[str, str] | None" = None,
+    select: "list[str] | None" = None,
+    dag_id: "str | None" = None,
+    llm_call: "Callable[[str], str | Awaitable[str]] | None" = None,
+    rag_call: "Callable[..., list] | None" = None,
+    verbose: bool = True,
+    promptdata: "dict | None" = None,
+    promptfiles: "dict[str, PromptFile] | None" = None,
+    validation_dir: "str | None" = "validation",
+    storage_backend: "StorageBackend | None" = None,
+):
+    """Run prompt models synchronously."""
+    import asyncio
+
+    return asyncio.run(async_run(
+        models_dir=models_dir,
+        models_from_dict=models_from_dict,
+        select=select,
+        dag_id=dag_id,
+        llm_call=llm_call,
+        rag_call=rag_call,
+        verbose=verbose,
+        promptdata=promptdata,
+        promptfiles=promptfiles,
+        validation_dir=validation_dir,
+        storage_backend=storage_backend,
+    ))
