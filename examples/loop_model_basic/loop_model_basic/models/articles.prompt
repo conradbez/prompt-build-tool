@@ -1,0 +1,9 @@
+{{ config(output_format="json") }}
+
+Return a JSON array of 3 short article topics about technology.
+Each item should be a plain string — just the topic title, nothing else.
+
+Example format:
+["Topic one", "Topic two", "Topic three"]
+
+Return only the JSON array, no extra text.

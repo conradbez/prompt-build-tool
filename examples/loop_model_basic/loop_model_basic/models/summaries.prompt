@@ -1,0 +1,7 @@
+{{ config(model_type="loop") }}
+
+Write a 2-3 sentence summary paragraph about this technology topic:
+
+{{ ref('articles') }}
+
+Be concise and informative.
