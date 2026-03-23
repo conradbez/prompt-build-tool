@@ -5,9 +5,14 @@ Each construct is an async function with the signature::
 
     async def execute(model, model_outputs, model_files, storage_backend,
                       run_id, llm_call, rag_call, promptdata,
-                      prompt_skipped_models) -> ModelRunResult
+                      prompt_skipped_models, parse_json_output) -> ModelRunResult
 
 Constructs mutate *model_outputs* in-place and return a ModelRunResult.
+
+To add a new model_type:
+  1. Define ``async def execute_<type>_model(...)`` in this module.
+  2. Add an entry to ``CONSTRUCT_REGISTRY`` at the bottom of this file.
+  No changes to ``executor.py`` are needed.
 """
 
 from __future__ import annotations
@@ -136,3 +141,50 @@ async def execute_loop_model(
         cached=all_cached,
         prompt_skipped=False,
     )
+
+
+async def execute_template_model(
+    model: "PromptModel",
+    model_outputs: dict,
+    model_files: list | None,
+    storage_backend: "StorageBackend",
+    run_id: str,
+    llm_call: Callable,
+    rag_call: Callable | None,
+    promptdata: dict | None,
+    prompt_skipped_models: set[str],
+    parse_json_output: Callable,
+) -> "ModelRunResult":
+    """Execute a template model: render Jinja2 but skip the LLM call entirely."""
+    from pbt.executor.executor import ModelRunResult
+
+    rendered, _skip_state = render_prompt(
+        model.source,
+        model_outputs,
+        promptdata=promptdata,
+        rag_call=rag_call,
+        prompt_skipped_models=prompt_skipped_models,
+    )
+    llm_output = rendered.strip()
+    model_outputs[model.name] = llm_output
+    prompt_skipped_models.add(model.name)
+    cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+    storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+    return ModelRunResult(
+        model_name=model.name,
+        status="success",
+        prompt_rendered=rendered,
+        llm_output=llm_output,
+        execution_ms=0,
+        cached=False,
+        prompt_skipped=True,
+    )
+
+
+# Registry mapping model_type strings to their handler functions.
+# The executor looks up handlers here; the default (no model_type) is handled
+# separately as it requires additional context (validators, skip_downstream).
+CONSTRUCT_REGISTRY: dict[str, Callable] = {
+    "loop": execute_loop_model,
+    "template": execute_template_model,
+}

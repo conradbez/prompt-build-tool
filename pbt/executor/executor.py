@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from pbt.executor.graph import PromptModel
-from pbt.executor.model_constructs import execute_loop_model
+from pbt.executor.model_constructs import CONSTRUCT_REGISTRY
 from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
 from pbt.types import PromptFile
@@ -188,8 +188,9 @@ async def execute_run(
                             )
                         model_files.append(promptfiles[name])
 
-                if model.config.get("model_type") == "loop":
-                    result = await execute_loop_model(
+                construct = CONSTRUCT_REGISTRY.get(model.config.get("model_type", ""))
+                if construct is not None:
+                    result = await construct(
                         model=model,
                         model_outputs=model_outputs,
                         model_files=model_files,
@@ -200,31 +201,6 @@ async def execute_run(
                         promptdata=promptdata,
                         prompt_skipped_models=prompt_skipped_models,
                         parse_json_output=_parse_json_output,
-                    )
-
-                elif model.config.get("model_type") == "template":
-                    # --- Template model: render Jinja2 but skip LLM call ---
-                    # The rendered source becomes the node's output directly.
-                    rendered, _skip_state = render_prompt(
-                        model.source,
-                        model_outputs,
-                        promptdata=promptdata,
-                        rag_call=rag_call,
-                        prompt_skipped_models=prompt_skipped_models,
-                    )
-                    llm_output = rendered.strip()
-                    model_outputs[model.name] = llm_output
-                    prompt_skipped_models.add(model.name)
-                    cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
-                    storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
-                    result = ModelRunResult(
-                        model_name=model.name,
-                        status="success",
-                        prompt_rendered=rendered,
-                        llm_output=llm_output,
-                        execution_ms=0,
-                        cached=False,
-                        prompt_skipped=True,
                     )
 
                 else:
