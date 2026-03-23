@@ -36,7 +36,7 @@ pbt/
 
 **Validators must not return the raw `result` string when `output_format: json` is set.** The executor parses the LLM output into a Python `dict`/`list` before running validators, storing it in `model_outputs`. If the validator returns the string `result` unchanged, it overwrites the parsed object with a string — breaking any downstream loop model that expects a list. Passthrough validators should either `return True` or return the already-parsed value (e.g. `json.loads(result)`). Validators that don't need to transform JSON output should simply be omitted.
 
-**`model_type` constructs live in `model_constructs.py`.** Specialised execution strategies (e.g. `loop`) are async functions in `pbt/executor/model_constructs.py`, each with the signature `execute_*(model, model_outputs, ...) -> ModelRunResult`. The executor dispatches to them by checking `model.config.get("model_type")` and imports the relevant function. Adding a new construct means adding one function there and one `elif` branch in `executor.py`.
+**`model_type` constructs live in `model_constructs.py`.** Specialised execution strategies (e.g. `loop`, `template`) are async functions in `pbt/executor/model_constructs.py`, each with the signature `execute_*(model, model_outputs, ...) -> ModelRunResult`. They are registered in `CONSTRUCT_REGISTRY` (a plain dict at the bottom of that module). The executor looks up the handler via `CONSTRUCT_REGISTRY.get(model_type)` — no changes to `executor.py` are needed when adding a new construct. Adding a new construct means adding one function and one entry in `CONSTRUCT_REGISTRY`, both in `model_constructs.py`.
 
 ---
 
