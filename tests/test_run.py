@@ -141,7 +141,7 @@ async def test_loop_model_calls_llm_per_item(tmp_path: Path) -> None:
             return json.dumps(["apple", "banana", "cherry"])
         return f"processed: {prompt.split('Process: ')[-1].strip()}"
 
-    outputs = await pbt.run(
+    outputs = await pbt.async_run(
         models_from_dict=models,
         llm_call=fake_llm,
         verbose=False,
@@ -176,7 +176,7 @@ async def test_loop_model_output_available_downstream() -> None:
             return f"done:{prompt.split('Item:')[-1].strip()}"
         return f"summary of {prompt}"
 
-    outputs = await pbt.run(
+    outputs = await pbt.async_run(
         models_from_dict=models,
         llm_call=fake_llm,
         verbose=False,
@@ -202,14 +202,14 @@ async def test_loop_model_error_when_no_list_dep() -> None:
     def fake_llm(prompt: str) -> str:
         return "plain text, not a list"
 
-    outputs = await pbt.run(
+    outputs = await pbt.async_run(
         models_from_dict=models,
         llm_call=fake_llm,
         verbose=False,
         storage_backend=MemoryStorageBackend(),
     )
 
-    assert outputs["processed"] == pbt.ModelStatus.ERROR
+    assert isinstance(outputs["processed"], pbt.ModelError)
 
 
 def _load_env() -> dict:
@@ -298,7 +298,7 @@ async def test_python_api_returns_skip_and_set_value(tmp_path: Path, monkeypatch
     )
 
     monkeypatch.chdir(proj)
-    result = await pbt.run(models_dir="models", verbose=False)
+    result = await pbt.async_run(models_dir="models", verbose=False)
 
     assert result["articles"] == "precomputed value"
 
@@ -308,7 +308,7 @@ async def test_python_api_renders_jinja_inside_skip_and_set_value() -> None:
     def llm_call(prompt: str) -> str:
         raise AssertionError("llm_call should not run when skip_and_set_to_value is used")
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={
             "topic": '{{ skip_and_set_to_value("computed {{ promptdata(\'subject\') }}") }}',
         },
@@ -338,7 +338,7 @@ async def test_python_api_inline_models_support_memory_storage_without_disk_help
     monkeypatch.setitem(sys.modules, "pbt.rag", failing_rag_module)
     monkeypatch.setitem(sys.modules, "pbt.validator", failing_validator_module)
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={"topic": '{{ skip_and_set_to_value("browser-safe") }}'},
         llm_call=lambda prompt, **kwargs: prompt,
         verbose=False,
@@ -353,7 +353,7 @@ async def test_python_api_supports_async_llm_call() -> None:
     async def llm_call(prompt: str) -> str:
         return "ok"
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={"topic": "Return ok"},
         llm_call=llm_call,
         verbose=False,
@@ -372,7 +372,7 @@ async def test_skip_this_and_downstream_skips_current_and_children() -> None:
         llm_called_for.append(prompt)
         return "should not reach"
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={
             "gate": '{{ skip_this_and_downstream("skipped gate") }}',
             "child": "{{ ref('gate') }} — do something",
@@ -395,7 +395,7 @@ async def test_skip_this_and_downstream_does_not_affect_unrelated_models() -> No
     def llm_call(prompt: str) -> str:
         return "ran"
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={
             "gate": '{{ skip_this_and_downstream("") }}',
             "child": "{{ ref('gate') }} — skipped branch",
@@ -415,7 +415,7 @@ async def test_python_api_supports_sync_llm_call_under_async_run() -> None:
     def llm_call(prompt: str) -> str:
         return "ok"
 
-    result = await pbt.run(
+    result = await pbt.async_run(
         models_from_dict={"topic": "Return ok"},
         llm_call=llm_call,
         verbose=False,
@@ -423,3 +423,123 @@ async def test_python_api_supports_sync_llm_call_under_async_run() -> None:
     )
 
     assert result["topic"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Template model tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_template_model_does_not_call_llm() -> None:
+    """model_type='template' renders Jinja2 but never calls the LLM."""
+    llm_called_for: list[str] = []
+
+    def llm_call(prompt: str) -> str:
+        llm_called_for.append(prompt)
+        return "should not be called"
+
+    result = await pbt.async_run(
+        models_from_dict={
+            "fragment": '{{ config(model_type="template") }}\nWrite about {{ promptdata("topic") }}',
+        },
+        llm_call=llm_call,
+        promptdata={"topic": "cats"},
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert llm_called_for == [], "LLM must not be called for a template node"
+    assert result["fragment"] == "Write about cats"
+
+
+@pytest.mark.asyncio
+async def test_template_model_output_available_to_downstream() -> None:
+    """Downstream nodes receive the rendered template text via ref()."""
+    llm_call_prompts: list[str] = []
+
+    def llm_call(prompt: str) -> str:
+        llm_call_prompts.append(prompt)
+        return "summary"
+
+    result = await pbt.async_run(
+        models_from_dict={
+            "style_guide": '{{ config(model_type="template") }}\nBe concise.',
+            "article": 'Write an article. Style: {{ ref("style_guide") }}',
+        },
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    # style_guide output is the rendered template text
+    assert result["style_guide"] == "Be concise."
+    # article prompt contained the style_guide output
+    assert any("Be concise." in p for p in llm_call_prompts)
+    assert result["article"] == "summary"
+
+
+@pytest.mark.asyncio
+async def test_template_model_resolves_ref_to_upstream() -> None:
+    """Template nodes can themselves depend on other nodes via ref()."""
+    def llm_call(prompt: str) -> str:
+        if "Return persona" in prompt:
+            return "formal tone"
+        return "done"
+
+    result = await pbt.async_run(
+        models_from_dict={
+            "persona": "Return persona",
+            "style_guide": '{{ config(model_type="template") }}\nUse this style: {{ ref("persona") }}',
+            "article": 'Write article. {{ ref("style_guide") }}',
+        },
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert result["style_guide"] == "Use this style: formal tone"
+    assert result["article"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_template_model_render_failure_produces_error_status() -> None:
+    """A template node whose Jinja2 rendering fails produces ModelStatus.ERROR (same as any other node)."""
+    def llm_call(prompt: str) -> str:
+        return "ok"
+
+    result = await pbt.async_run(
+        models_from_dict={
+            # StrictUndefined means accessing an undeclared variable raises at render time
+            "fragment": '{{ config(model_type="template") }}\n{{ undefined_variable }}',
+        },
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert isinstance(result["fragment"], pbt.ModelError)
+
+
+@pytest.mark.asyncio
+async def test_template_model_not_counted_as_llm_call() -> None:
+    """Template nodes appear in prompt_skipped set — not as LLM calls."""
+    llm_calls: list[str] = []
+
+    def llm_call(prompt: str) -> str:
+        llm_calls.append(prompt)
+        return "llm output"
+
+    result = await pbt.async_run(
+        models_from_dict={
+            "tmpl": '{{ config(model_type="template") }}\nFragment text',
+            "final": 'Prompt: {{ ref("tmpl") }}',
+        },
+        llm_call=llm_call,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    # Only one real LLM call (for "final"), not two
+    assert len(llm_calls) == 1
+    assert result["tmpl"] == "Fragment text"
+    assert result["final"] == "llm output"

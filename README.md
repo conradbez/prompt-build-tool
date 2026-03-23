@@ -368,6 +368,38 @@ Write a one-paragraph summary for this article title:
 
 ---
 
+## Reusable prompt fragments (`model_type="template"`)
+
+Set `model_type="template"` in `config()` to render a node's Jinja2 source and use the result directly as the node's output — no LLM call is made.
+
+```jinja
+{# models/style_guide.prompt #}
+{{ config(model_type="template") }}
+Always write in a concise, formal tone.
+Prefer bullet points over long paragraphs.
+Audience: {{ promptdata("audience") }}
+```
+
+Downstream models receive the rendered text via `ref()`:
+
+```jinja
+{# models/article.prompt #}
+Write an article about {{ ref('topic') }}.
+
+Style guide:
+{{ ref('style_guide') }}
+```
+
+**Key behaviours:**
+
+- The Jinja2 source is fully rendered — `ref()`, `promptdata()`, and all other template functions work normally
+- The rendered text becomes the node's output; no LLM call is made and the node is not counted toward usage/cost
+- Template nodes participate in the DAG like any other node — they can depend on upstream models and be depended on by downstream models
+
+**Use cases:** reusable prompt fragments, persona/style instructions shared across multiple models, composing a final prompt from several sub-templates before passing it to a single LLM node.
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.

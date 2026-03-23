@@ -202,6 +202,31 @@ async def execute_run(
                         parse_json_output=_parse_json_output,
                     )
 
+                elif model.config.get("model_type") == "template":
+                    # --- Template model: render Jinja2 but skip LLM call ---
+                    # The rendered source becomes the node's output directly.
+                    rendered, _skip_state = render_prompt(
+                        model.source,
+                        model_outputs,
+                        promptdata=promptdata,
+                        rag_call=rag_call,
+                        prompt_skipped_models=prompt_skipped_models,
+                    )
+                    llm_output = rendered.strip()
+                    model_outputs[model.name] = llm_output
+                    prompt_skipped_models.add(model.name)
+                    cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+                    storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+                    result = ModelRunResult(
+                        model_name=model.name,
+                        status="success",
+                        prompt_rendered=rendered,
+                        llm_output=llm_output,
+                        execution_ms=0,
+                        cached=False,
+                        prompt_skipped=True,
+                    )
+
                 else:
                     # --- Normal (non-loop) model ---
                     rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
