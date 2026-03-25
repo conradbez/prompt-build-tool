@@ -43,6 +43,11 @@ class PromptModel:
     promptfiles_used: list[str] = field(default_factory=list)  # promptfiles names declared in config
 
 
+# Sentinel stored as a recursive node's output when validation fails but more
+# depths remain.  The next depth node detects this and retries the LLM call.
+_RETRY_SENTINEL = "__pbt_needs_retry__"
+
+
 class CyclicDependencyError(Exception):
     pass
 
@@ -104,7 +109,101 @@ def load_models(models_dir: str | Path = "models") -> dict[str, PromptModel]:
             f"No *.prompt / *.prompt.jinja files found in '{models_dir}'."
         )
 
-    return models
+    return expand_recursive_models(models)
+
+
+def expand_recursive_models(models: dict[str, PromptModel]) -> dict[str, PromptModel]:
+    """
+    Unroll models with ``max_depth=N`` into N+1 explicit DAG nodes.
+
+    A model named ``article`` with ``{{ config(max_depth=2) }}`` becomes::
+
+        article_0   (depth 0 — original deps)
+        article_1   (depth 1 — original deps + article_0)
+        article_2   (depth 2 — original deps + article_1)
+
+    At runtime each node follows this logic:
+
+    * ``article_0``: call LLM + validator as normal.  If validation fails and
+      this is not the final depth, store ``_RETRY_SENTINEL`` as output (so the
+      model succeeds in the DAG but signals the next depth to retry).
+    * ``article_k`` (k > 0): if the previous depth's output is **not** the
+      sentinel the validator already passed — skip the LLM call and pass the
+      output through unchanged.  Otherwise call LLM + validator normally.
+    * ``article_{max_depth}``: the final node; validation failure raises as a
+      normal model error (no further depths to fall back to).
+
+    Other models that previously ``ref('article')`` are rewritten to
+    ``ref('article_2')`` so downstream deps resolve correctly.
+    """
+    to_expand: dict[str, int] = {
+        name: int(model.config["max_depth"])
+        for name, model in models.items()
+        if "max_depth" in model.config
+    }
+
+    if not to_expand:
+        return models
+
+    result: dict[str, PromptModel] = {}
+
+    # Create the expanded depth-nodes for each recursive model.
+    for orig_name, max_depth in to_expand.items():
+        original = models[orig_name]
+        for k in range(max_depth + 1):
+            node_name = f"{orig_name}_{k}"
+            deps = list(original.depends_on)
+            if k > 0:
+                deps.append(f"{orig_name}_{k - 1}")
+
+            node_config = {
+                **original.config,
+                "_recursive_depth": str(k),
+                "_recursive_max": str(max_depth),
+                "_recursive_base": orig_name,
+            }
+
+            result[node_name] = PromptModel(
+                name=node_name,
+                path=original.path,
+                source=original.source,
+                depends_on=deps,
+                config=node_config,
+                promptdata_used=original.promptdata_used,
+                promptfiles_used=original.promptfiles_used,
+            )
+
+    # Copy all other models, rewriting any ref('orig') → ref('orig_{N}').
+    for name, model in models.items():
+        if name in to_expand:
+            continue  # originals are replaced by their expansions
+
+        new_depends_on = list(model.depends_on)
+        new_source = model.source
+
+        for orig_name, max_depth in to_expand.items():
+            final_node = f"{orig_name}_{max_depth}"
+            # Rewrite depends_on list entry.
+            if orig_name in new_depends_on:
+                new_depends_on[new_depends_on.index(orig_name)] = final_node
+            # Rewrite ref() calls in source (both quote styles).
+            for q in ("'", '"'):
+                new_source = new_source.replace(
+                    f"ref({q}{orig_name}{q})",
+                    f"ref({q}{final_node}{q})",
+                )
+
+        result[name] = PromptModel(
+            name=name,
+            path=model.path,
+            source=new_source,
+            depends_on=new_depends_on,
+            config=model.config,
+            promptdata_used=model.promptdata_used,
+            promptfiles_used=model.promptfiles_used,
+        )
+
+    return result
 
 
 def build_dag(models: dict[str, PromptModel]) -> nx.DiGraph:
@@ -216,7 +315,7 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, PromptModel]:
             promptdata_used=promptdata_used,
             promptfiles_used=promptfiles_used,
         )
-    return result
+    return expand_recursive_models(result)
 
 
 def compute_dag_hash(models: dict[str, PromptModel]) -> str:

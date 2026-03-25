@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from pbt.executor.graph import PromptModel
+from pbt.executor.graph import PromptModel, _RETRY_SENTINEL
 from pbt.executor.model_constructs import execute_loop_model
 from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
@@ -213,6 +213,20 @@ async def execute_run(
                     output_format = model.config.get("output_format", "text")
                     cached = None
 
+                    # Recursive expansion metadata (set by expand_recursive_models).
+                    # _rbase is the original model name used for validator lookup.
+                    _rdepth_raw = model.config.get("_recursive_depth")
+                    _is_rec = _rdepth_raw is not None
+                    if _is_rec:
+                        _rdepth = int(_rdepth_raw)
+                        _rmax = int(model.config["_recursive_max"])
+                        _rbase = model.config["_recursive_base"]
+                        _rprev = f"{_rbase}_{_rdepth - 1}" if _rdepth > 0 else None
+                    else:
+                        _rdepth = _rmax = 0
+                        _rbase = model.name
+                        _rprev = None
+
                     if skip_state.skip_value is not None:
                         llm_output = skip_state.skip_value
                         model_outputs[model.name] = llm_output
@@ -232,13 +246,22 @@ async def execute_run(
                         else:
                             model_outputs[model.name] = llm_output
                         if validators:
-                            validated = run_validator(model.name, validators, rendered, llm_output)
+                            validated = run_validator(_rbase, validators, rendered, llm_output)
                             if isinstance(validated, (dict, list)):
                                 model_outputs[model.name] = validated
                                 llm_output = json.dumps(validated)
                             else:
                                 llm_output = validated if isinstance(validated, str) else str(validated)
                                 model_outputs[model.name] = llm_output
+
+                    elif _rprev is not None and model_outputs.get(_rprev) != _RETRY_SENTINEL:
+                        # Previous recursive depth passed validation — pass its output
+                        # through without calling the LLM.
+                        _prev_val = model_outputs[_rprev]
+                        llm_output = _prev_val if isinstance(_prev_val, str) else json.dumps(_prev_val)
+                        model_outputs[model.name] = _prev_val
+                        elapsed_ms = 0
+                        prompt_skipped_models.add(model.name)
 
                     else:
                         # LLM call path — retry up to max_retries times if validator fails.
@@ -271,7 +294,7 @@ async def execute_run(
                                     model_outputs[model.name] = llm_output
 
                                 if validators:
-                                    validated = run_validator(model.name, validators, rendered, llm_output)
+                                    validated = run_validator(_rbase, validators, rendered, llm_output)
                                     if isinstance(validated, (dict, list)):
                                         model_outputs[model.name] = validated
                                         llm_output = json.dumps(validated)
@@ -285,7 +308,15 @@ async def execute_run(
                                 _last_error = exc  # will retry on next attempt
 
                         if _last_error is not None:
-                            raise _last_error
+                            if _is_rec and _rdepth < _rmax:
+                                # Not the final depth — store sentinel so the next
+                                # depth node knows to retry.  The model itself
+                                # is recorded as success (not error) so the DAG
+                                # continues.
+                                llm_output = _RETRY_SENTINEL
+                                model_outputs[model.name] = llm_output
+                            else:
+                                raise _last_error
 
                     storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
 
