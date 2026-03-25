@@ -115,6 +115,7 @@ async def async_run(
         models_to_json,
         models_from_json,
     )
+    from pbt.executor.quality import inject_quality_intermediate_models
 
     if storage_backend is None:
         from pbt.storage.sqlite import SQLiteStorageBackend
@@ -146,10 +147,12 @@ async def async_run(
     elif models_from_dict is not None:
         raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
         all_models = build_models_from_dict(raw)
+        all_models = inject_quality_intermediate_models(all_models)
         dag_hash = compute_dag_hash(all_models)
         storage_backend.save_dag(dag_hash, models_to_json(all_models))
     else:
         all_models = load_models(models_dir)
+        all_models = inject_quality_intermediate_models(all_models)
         dag_hash = compute_dag_hash(all_models)
         storage_backend.save_dag(dag_hash, models_to_json(all_models))
 
