@@ -84,11 +84,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, PromptModel]:
         deps = extract_dependencies(source)
         config = parse_model_config(source)
         promptdata_used = detect_used_promptdata(source)
-        _pf = config.get("promptfiles", "[]")
-        try:
-            promptfiles_used = json.loads(_pf)
-        except (json.JSONDecodeError, ValueError):
-            promptfiles_used = [f.strip() for f in _pf.split(",") if f.strip()]
+        promptfiles_used = json.loads(config.get("promptfiles", "[]"))
         models[name] = PromptModel(
             name=name,
             path=prompt_file.resolve(),
@@ -204,11 +200,7 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, PromptModel]:
         deps = extract_dependencies(source)
         config = parse_model_config(source)
         promptdata_used = detect_used_promptdata(source)
-        _pf = config.get("promptfiles", "[]")
-        try:
-            promptfiles_used = json.loads(_pf)
-        except (json.JSONDecodeError, ValueError):
-            promptfiles_used = [f.strip() for f in _pf.split(",") if f.strip()]
+        promptfiles_used = json.loads(config.get("promptfiles", "[]"))
         result[name] = PromptModel(
             name=name,
             path=Path("<inline>"),
