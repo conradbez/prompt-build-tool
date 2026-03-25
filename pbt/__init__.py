@@ -144,14 +144,9 @@ async def async_run(
             )
         all_models = models_from_json(dag_json)
         dag_hash = dag_id
-    elif models_from_dict is not None:
-        raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
-        all_models = build_models_from_dict(raw)
-        all_models = inject_quality_intermediate_models(all_models)
-        dag_hash = compute_dag_hash(all_models)
-        storage_backend.save_dag(dag_hash, models_to_json(all_models))
     else:
-        all_models = load_models(models_dir)
+        raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
+        all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)
         all_models = inject_quality_intermediate_models(all_models)
         dag_hash = compute_dag_hash(all_models)
         storage_backend.save_dag(dag_hash, models_to_json(all_models))
