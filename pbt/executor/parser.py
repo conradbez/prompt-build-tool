@@ -16,6 +16,7 @@ All standard Jinja2 features (loops, conditionals, filters, macros, etc.)
 are available in addition to ref(), promptdata(), and skip helpers.
 """
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -85,7 +86,7 @@ def extract_jinja_config(template_source: str) -> dict[str, str]:
 
     def _config(**kwargs) -> str:
         for k, v in kwargs.items():
-            captured[k] = str(v) if not isinstance(v, list) else ",".join(str(i) for i in v)
+            captured[k] = json.dumps(v) if isinstance(v, list) else str(v)
         return ""
 
     env = Environment(
