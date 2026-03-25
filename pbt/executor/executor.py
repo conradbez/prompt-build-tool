@@ -31,6 +31,28 @@ from pbt.validator import run_validator
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
 
+def _completion_check_passed(output) -> bool:
+    """Return True if a completion_check model's output signals 'pass'.
+
+    Accepts:
+    * dict/list already parsed from JSON — checks ``output.get("pass")``
+    * string that parses as JSON — same check
+    * plain text starting with PASS / YES / TRUE (case-insensitive)
+    """
+    if isinstance(output, dict):
+        return bool(output.get("pass", output.get("passed", False)))
+    if isinstance(output, list):
+        return False
+    s = str(output).strip()
+    try:
+        d = json.loads(s)
+        if isinstance(d, dict):
+            return bool(d.get("pass", d.get("passed", False)))
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        pass
+    return s.upper().startswith(("PASS", "YES", "TRUE", "APPROVED", "GOOD"))
+
+
 def _parse_json_output(raw: str) -> dict | list:
     """Strip optional ```json fences and parse as JSON. Raises ValueError on failure."""
     stripped = raw.strip()
@@ -226,6 +248,11 @@ async def execute_run(
                         _rdepth = _rmax = 0
                         _rbase = model.name
                         _rprev = None
+                    # True for both article_k and quality_k nodes in checker mode.
+                    _is_checker_mode = (
+                        "_completion_check_name" in model.config
+                        or "_completion_check_for" in model.config
+                    )
 
                     if skip_state.skip_value is not None:
                         llm_output = skip_state.skip_value
@@ -254,11 +281,26 @@ async def execute_run(
                                 llm_output = validated if isinstance(validated, str) else str(validated)
                                 model_outputs[model.name] = llm_output
 
-                    elif _rprev is not None and model_outputs.get(_rprev) != _RETRY_SENTINEL:
-                        # Previous recursive depth passed validation — pass its output
-                        # through without calling the LLM.
+                    elif (
+                        _rprev is not None
+                        and not _is_checker_mode
+                        and model_outputs.get(_rprev) != _RETRY_SENTINEL
+                    ):
+                        # Sentinel mode: previous depth passed — pass its output through.
                         _prev_val = model_outputs[_rprev]
                         llm_output = _prev_val if isinstance(_prev_val, str) else json.dumps(_prev_val)
+                        model_outputs[model.name] = _prev_val
+                        elapsed_ms = 0
+                        prompt_skipped_models.add(model.name)
+
+                    elif "_prev_check" in model.config and _completion_check_passed(
+                        model_outputs.get(model.config["_prev_check"])
+                    ):
+                        # Checker mode: previous quality check passed — skip this node
+                        # and propagate the designated pass-through value.
+                        _pass_from = model.config["_pass_through_from"]
+                        _prev_val = model_outputs.get(_pass_from)
+                        llm_output = _prev_val if isinstance(_prev_val, str) else json.dumps(_prev_val) if _prev_val is not None else ""
                         model_outputs[model.name] = _prev_val
                         elapsed_ms = 0
                         prompt_skipped_models.add(model.name)
@@ -308,11 +350,11 @@ async def execute_run(
                                 _last_error = exc  # will retry on next attempt
 
                         if _last_error is not None:
-                            if _is_rec and _rdepth < _rmax:
-                                # Not the final depth — store sentinel so the next
-                                # depth node knows to retry.  The model itself
-                                # is recorded as success (not error) so the DAG
-                                # continues.
+                            # Sentinel mode only: store a retry marker so the next
+                            # depth node knows to call LLM again.  Checker mode nodes
+                            # let errors propagate normally — the quality model handles
+                            # the pass/fail signal instead.
+                            if _is_rec and _rdepth < _rmax and not _is_checker_mode:
                                 llm_output = _RETRY_SENTINEL
                                 model_outputs[model.name] = llm_output
                             else:

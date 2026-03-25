@@ -116,25 +116,30 @@ def expand_recursive_models(models: dict[str, PromptModel]) -> dict[str, PromptM
     """
     Unroll models with ``max_depth=N`` into N+1 explicit DAG nodes.
 
-    A model named ``article`` with ``{{ config(max_depth=2) }}`` becomes::
+    **Sentinel mode** — ``{{ config(max_depth=2) }}`` on ``article``::
 
-        article_0   (depth 0 — original deps)
-        article_1   (depth 1 — original deps + article_0)
-        article_2   (depth 2 — original deps + article_1)
+        article_0  →  article_1  →  article_2
 
-    At runtime each node follows this logic:
+    Each depth calls the LLM + Python validator. On failure the node stores a
+    ``_RETRY_SENTINEL`` so the next depth retries. The final depth errors
+    normally. Downstream ``ref('article')`` is rewritten to ``ref('article_2')``.
 
-    * ``article_0``: call LLM + validator as normal.  If validation fails and
-      this is not the final depth, store ``_RETRY_SENTINEL`` as output (so the
-      model succeeds in the DAG but signals the next depth to retry).
-    * ``article_k`` (k > 0): if the previous depth's output is **not** the
-      sentinel the validator already passed — skip the LLM call and pass the
-      output through unchanged.  Otherwise call LLM + validator normally.
-    * ``article_{max_depth}``: the final node; validation failure raises as a
-      normal model error (no further depths to fall back to).
+    **Checker mode** — ``{{ config(max_depth=2, completion_check="article_quality") }}``::
 
-    Other models that previously ``ref('article')`` are rewritten to
-    ``ref('article_2')`` so downstream deps resolve correctly.
+        article_0 → article_quality_0
+                           ↓
+                    article_1 → article_quality_1
+                                       ↓
+                               article_2 → article_quality_2
+
+    ``article_quality`` is a regular prompt model (LLM-based). It receives
+    ``ref('article')`` for each depth (rewritten at build time) and should
+    return output that signals pass or fail — either a JSON object with a
+    ``"pass"`` key or plain text starting with ``"PASS"`` / ``"YES"``.
+
+    If a quality check passes, all later article and quality nodes are skipped
+    (no LLM tokens wasted). The original ``article_quality`` model is removed
+    from the graph. Downstream ``ref('article')`` → ``ref('article_2')``.
     """
     to_expand: dict[str, int] = {
         name: int(model.config["max_depth"])
@@ -146,47 +151,131 @@ def expand_recursive_models(models: dict[str, PromptModel]) -> dict[str, PromptM
         return models
 
     result: dict[str, PromptModel] = {}
+    checker_names_used: set[str] = set()
 
-    # Create the expanded depth-nodes for each recursive model.
     for orig_name, max_depth in to_expand.items():
         original = models[orig_name]
-        for k in range(max_depth + 1):
-            node_name = f"{orig_name}_{k}"
-            deps = list(original.depends_on)
-            if k > 0:
-                deps.append(f"{orig_name}_{k - 1}")
+        checker_name = original.config.get("completion_check")
 
-            node_config = {
-                **original.config,
-                "_recursive_depth": str(k),
-                "_recursive_max": str(max_depth),
-                "_recursive_base": orig_name,
-            }
+        if checker_name:
+            # ------------------------------------------------------------------
+            # Checker mode: interleave article_k / article_quality_k pairs.
+            # ------------------------------------------------------------------
+            if checker_name not in models:
+                raise UnknownModelError(
+                    f"Model '{orig_name}' sets completion_check='{checker_name}' "
+                    f"but no '{checker_name}.prompt' file was found."
+                )
+            checker = models[checker_name]
+            checker_names_used.add(checker_name)
 
-            result[node_name] = PromptModel(
-                name=node_name,
-                path=original.path,
-                source=original.source,
-                depends_on=deps,
-                config=node_config,
-                promptdata_used=original.promptdata_used,
-                promptfiles_used=original.promptfiles_used,
-            )
+            for k in range(max_depth + 1):
+                article_node = f"{orig_name}_{k}"
+                quality_node = f"{checker_name}_{k}"
 
-    # Copy all other models, rewriting any ref('orig') → ref('orig_{N}').
+                # article_k — depends on original deps + quality check from previous depth
+                article_deps = list(original.depends_on)
+                if k > 0:
+                    article_deps.append(f"{checker_name}_{k - 1}")
+
+                article_config = {
+                    **original.config,
+                    "_recursive_depth": str(k),
+                    "_recursive_max": str(max_depth),
+                    "_recursive_base": orig_name,
+                    "_completion_check_name": checker_name,
+                }
+                if k > 0:
+                    # Executor uses these to decide whether to skip this depth.
+                    article_config["_prev_check"] = f"{checker_name}_{k - 1}"
+                    article_config["_pass_through_from"] = f"{orig_name}_{k - 1}"
+
+                result[article_node] = PromptModel(
+                    name=article_node,
+                    path=original.path,
+                    source=original.source,
+                    depends_on=article_deps,
+                    config=article_config,
+                    promptdata_used=original.promptdata_used,
+                    promptfiles_used=original.promptfiles_used,
+                )
+
+                # article_quality_k — depends on article_k (+ checker's other deps)
+                quality_source = checker.source
+                for q in ("'", '"'):
+                    quality_source = quality_source.replace(
+                        f"ref({q}{orig_name}{q})",
+                        f"ref({q}{article_node}{q})",
+                    )
+                # Replace orig_name with article_node in deps; keep other deps.
+                quality_deps = [
+                    article_node if dep == orig_name else dep
+                    for dep in checker.depends_on
+                ]
+                if article_node not in quality_deps:
+                    quality_deps.insert(0, article_node)
+
+                quality_config = {
+                    **checker.config,
+                    "_recursive_depth": str(k),
+                    "_recursive_max": str(max_depth),
+                    "_recursive_base": checker_name,
+                    "_completion_check_for": orig_name,
+                }
+                if k > 0:
+                    quality_config["_prev_check"] = f"{checker_name}_{k - 1}"
+                    quality_config["_pass_through_from"] = f"{checker_name}_{k - 1}"
+
+                result[quality_node] = PromptModel(
+                    name=quality_node,
+                    path=checker.path,
+                    source=quality_source,
+                    depends_on=quality_deps,
+                    config=quality_config,
+                    promptdata_used=checker.promptdata_used,
+                    promptfiles_used=checker.promptfiles_used,
+                )
+
+        else:
+            # ------------------------------------------------------------------
+            # Sentinel mode: linear chain, validator determines pass/fail.
+            # ------------------------------------------------------------------
+            for k in range(max_depth + 1):
+                node_name = f"{orig_name}_{k}"
+                deps = list(original.depends_on)
+                if k > 0:
+                    deps.append(f"{orig_name}_{k - 1}")
+
+                node_config = {
+                    **original.config,
+                    "_recursive_depth": str(k),
+                    "_recursive_max": str(max_depth),
+                    "_recursive_base": orig_name,
+                }
+
+                result[node_name] = PromptModel(
+                    name=node_name,
+                    path=original.path,
+                    source=original.source,
+                    depends_on=deps,
+                    config=node_config,
+                    promptdata_used=original.promptdata_used,
+                    promptfiles_used=original.promptfiles_used,
+                )
+
+    # Copy all other models (skip originals + consumed checker models),
+    # rewriting any ref('orig') → ref('orig_{N}') in source and depends_on.
     for name, model in models.items():
-        if name in to_expand:
-            continue  # originals are replaced by their expansions
+        if name in to_expand or name in checker_names_used:
+            continue
 
         new_depends_on = list(model.depends_on)
         new_source = model.source
 
         for orig_name, max_depth in to_expand.items():
             final_node = f"{orig_name}_{max_depth}"
-            # Rewrite depends_on list entry.
             if orig_name in new_depends_on:
                 new_depends_on[new_depends_on.index(orig_name)] = final_node
-            # Rewrite ref() calls in source (both quote styles).
             for q in ("'", '"'):
                 new_source = new_source.replace(
                     f"ref({q}{orig_name}{q})",
