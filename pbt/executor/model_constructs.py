@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import json
 import time
+from contextlib import redirect_stdout
 from typing import TYPE_CHECKING, Callable
 
 from pbt.executor.parser import render_prompt
@@ -134,5 +136,106 @@ async def execute_loop_model(
         llm_output=llm_output,
         execution_ms=total_elapsed_ms,
         cached=all_cached,
+        prompt_skipped=False,
+    )
+
+
+async def execute_python_model(
+    model: "PromptModel",
+    model_outputs: dict,
+    model_files: list | None,
+    storage_backend: "StorageBackend",
+    run_id: str,
+    llm_call: Callable,
+    rag_call: Callable | None,
+    promptdata: dict | None,
+    prompt_skipped_models: set[str],
+    parse_json_output: Callable,
+) -> "ModelRunResult":
+    """Execute a python model: render the template as Python code and exec() it.
+
+    The rendered template must be valid Python. Output is captured from stdout
+    (``print(...)`` calls). Alternatively, assign to a variable named ``output``
+    and that value will be used if stdout is empty.
+
+    Upstream model outputs are available via a ``ref`` callable and as entries
+    in the ``model_outputs`` dict injected into the execution namespace.
+    """
+    from pbt.executor.executor import ModelRunResult
+
+    rendered, skip_state = render_prompt(
+        model.source, model_outputs,
+        promptdata=promptdata, rag_call=rag_call,
+        prompt_skipped_models=prompt_skipped_models,
+    )
+
+    cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
+
+    if skip_state.skip_value is not None:
+        llm_output = skip_state.skip_value
+        prompt_skipped_models.add(model.name)
+        model_outputs[model.name] = llm_output
+        storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+        return ModelRunResult(
+            model_name=model.name,
+            status="success",
+            prompt_rendered=rendered,
+            llm_output=llm_output,
+            execution_ms=0,
+            cached=False,
+            prompt_skipped=True,
+        )
+
+    cached = storage_backend.get_cached_llm_output(cache_key)
+    if cached is not None:
+        output_format = model.config.get("output_format", "text")
+        if output_format == "json":
+            model_outputs[model.name] = parse_json_output(cached)
+        else:
+            model_outputs[model.name] = cached
+        return ModelRunResult(
+            model_name=model.name,
+            status="success",
+            prompt_rendered=rendered,
+            llm_output=cached,
+            execution_ms=0,
+            cached=True,
+            prompt_skipped=False,
+        )
+
+    t0 = time.monotonic()
+
+    stdout_buf = io.StringIO()
+    local_ns: dict = {"model_outputs": model_outputs, "ref": lambda name: model_outputs.get(name)}
+    with redirect_stdout(stdout_buf):
+        exec(compiled := compile(rendered, f"<{model.name}>", "exec"), local_ns)  # noqa: S102
+
+    stdout_output = stdout_buf.getvalue()
+    if stdout_output:
+        llm_output = stdout_output.rstrip("\n")
+    elif "output" in local_ns:
+        raw = local_ns["output"]
+        llm_output = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
+    else:
+        llm_output = ""
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+    output_format = model.config.get("output_format", "text")
+    if output_format == "json":
+        parsed = parse_json_output(llm_output)
+        model_outputs[model.name] = parsed
+        llm_output = json.dumps(parsed)
+    else:
+        model_outputs[model.name] = llm_output
+
+    storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
+    return ModelRunResult(
+        model_name=model.name,
+        status="success",
+        prompt_rendered=rendered,
+        llm_output=llm_output,
+        execution_ms=elapsed_ms,
+        cached=False,
         prompt_skipped=False,
     )
