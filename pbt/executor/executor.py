@@ -210,52 +210,82 @@ async def execute_run(
                     # output_format: json) correctly busts the cache.
                     cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
 
+                    output_format = model.config.get("output_format", "text")
                     cached = None
+
                     if skip_state.skip_value is not None:
                         llm_output = skip_state.skip_value
+                        model_outputs[model.name] = llm_output
                         elapsed_ms = 0
                         prompt_skipped_models.add(model.name)
                         if skip_state.skip_downstream:
                             skip_downstream_models.add(model.name)
+
                     elif (cached := storage_backend.get_cached_llm_output(cache_key)) is not None:
+                        # Cached path: apply JSON parsing + validator once.
                         llm_output = cached
                         elapsed_ms = 0
+                        if output_format == "json":
+                            parsed = _parse_json_output(llm_output)
+                            model_outputs[model.name] = parsed
+                            llm_output = json.dumps(parsed)
+                        else:
+                            model_outputs[model.name] = llm_output
+                        if validators:
+                            validated = run_validator(model.name, validators, rendered, llm_output)
+                            if isinstance(validated, (dict, list)):
+                                model_outputs[model.name] = validated
+                                llm_output = json.dumps(validated)
+                            else:
+                                llm_output = validated if isinstance(validated, str) else str(validated)
+                                model_outputs[model.name] = llm_output
+
                     else:
-                        t0 = time.monotonic()
+                        # LLM call path — retry up to max_retries times if validator fails.
+                        # JSON parsing and validation run inside the loop so any failure
+                        # (bad JSON *or* False validator) triggers a fresh LLM call.
+                        max_retries = int(model.config.get("max_retries", 1))
                         _sig = inspect.signature(llm_call).parameters
                         _kwargs: dict = {}
                         if model_files and "files" in _sig:
                             _kwargs["files"] = model_files
                         if "config" in _sig:
                             _kwargs["config"] = model.config
-                        result = llm_call(rendered, **_kwargs)
-                        if inspect.isawaitable(result):
-                            llm_output = await result
-                        else:
-                            llm_output = result
-                        elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-                    # If model declares output_format: json, validate and parse output.
-                    # Downstream ref() will receive a Python dict/list instead of a string.
-                    output_format = model.config.get("output_format", "text")
-                    if skip_state.skip_value is None and output_format == "json":
-                        parsed = _parse_json_output(llm_output)
-                        model_outputs[model.name] = parsed
-                        # Normalise to canonical JSON for DB storage
-                        llm_output = json.dumps(parsed)
-                    else:
-                        model_outputs[model.name] = llm_output
+                        llm_output = ""
+                        elapsed_ms = 0
+                        _last_error: Exception | None = None
 
-                    # Run user-defined validator as a post-processing step.
-                    # Its return value becomes the model's output; False → error.
-                    if skip_state.skip_value is None and validators:
-                        validated = run_validator(model.name, validators, rendered, llm_output)
-                        if isinstance(validated, (dict, list)):
-                            model_outputs[model.name] = validated
-                            llm_output = json.dumps(validated)
-                        else:
-                            llm_output = validated if isinstance(validated, str) else str(validated)
-                            model_outputs[model.name] = llm_output
+                        for _attempt in range(max_retries):
+                            t0 = time.monotonic()
+                            _raw = llm_call(rendered, **_kwargs)
+                            llm_output = await _raw if inspect.isawaitable(_raw) else _raw
+                            elapsed_ms += int((time.monotonic() - t0) * 1000)
+
+                            try:
+                                if output_format == "json":
+                                    parsed = _parse_json_output(llm_output)
+                                    model_outputs[model.name] = parsed
+                                    llm_output = json.dumps(parsed)
+                                else:
+                                    model_outputs[model.name] = llm_output
+
+                                if validators:
+                                    validated = run_validator(model.name, validators, rendered, llm_output)
+                                    if isinstance(validated, (dict, list)):
+                                        model_outputs[model.name] = validated
+                                        llm_output = json.dumps(validated)
+                                    else:
+                                        llm_output = validated if isinstance(validated, str) else str(validated)
+                                        model_outputs[model.name] = llm_output
+
+                                _last_error = None
+                                break  # success — exit retry loop
+                            except Exception as exc:
+                                _last_error = exc  # will retry on next attempt
+
+                        if _last_error is not None:
+                            raise _last_error
 
                     storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
 
