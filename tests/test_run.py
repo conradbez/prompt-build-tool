@@ -101,7 +101,7 @@ def test_run_validation_failure_marks_model_error(tmp_path: Path) -> None:
 
 #     # Write a standalone prompt that declares a file dependency
 #     (proj / "models" / "summarise_doc.prompt").write_text(
-#         '{{ config(promptfiles="doc") }}\n'
+#         '{{ config(promptfiles=["doc"]) }}\n'
 #         "Summarise the contents of the uploaded document.\n"
 #     )
 
@@ -228,7 +228,7 @@ def test_default_client_file_upload_gemini(tmp_path: Path) -> None:
 
     proj = init_project_with_real_client(tmp_path, provider="gemini")
     (proj / "models" / "summarise_doc.prompt").write_text(
-        '{{ config(promptfiles="doc") }}\n'
+        '{{ config(promptfiles=["doc"]) }}\n'
         "In one sentence, what is this document about?\n",
         encoding="utf-8",
     )
@@ -251,7 +251,7 @@ def test_default_client_file_upload_openai(tmp_path: Path) -> None:
 
     proj = init_project_with_real_client(tmp_path, provider="openai")
     (proj / "models" / "summarise_doc.prompt").write_text(
-        '{{ config(promptfiles="doc") }}\n'
+        '{{ config(promptfiles=["doc"]) }}\n'
         "In one sentence, what is this document about?\n",
         encoding="utf-8",
     )

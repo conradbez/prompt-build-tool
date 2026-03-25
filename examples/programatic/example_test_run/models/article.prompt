@@ -1,4 +1,4 @@
-{{ config(promptfiles="style_guide") }}
+{{ config(promptfiles=["style_guide"]) }}
 You are an expert technical blogger writing for a developer audience.
 
 Follow the attached style guide when writing this post.

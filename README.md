@@ -283,14 +283,14 @@ Models can receive files (PDFs, images, etc.) alongside the text prompt. Declare
 **1. Declare in config:**
 
 ```jinja
-{{ config(promptfiles="my_document") }}
+{{ config(promptfiles=["my_document"]) }}
 Summarise the attached document in 3 bullet points.
 ```
 
-Multiple files are comma-separated:
+Multiple files use a JSON array:
 
 ```jinja
-{{ config(promptfiles="report,chart_image") }}
+{{ config(promptfiles=["report", "chart_image"]) }}
 ```
 
 **2. Provide file paths at runtime:**
