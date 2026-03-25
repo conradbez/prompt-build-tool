@@ -212,6 +212,110 @@ async def test_loop_model_error_when_no_list_dep() -> None:
     assert outputs["processed"] == pbt.ModelStatus.ERROR
 
 
+# ---------------------------------------------------------------------------
+# execute_python model tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_execute_python_basic_stdout() -> None:
+    """execute_python model captures stdout as output."""
+    from pbt.storage import MemoryStorageBackend
+
+    models = {
+        "calc": '{{ config(model_type="execute_python") }}\nprint(1 + 1)',
+    }
+
+    outputs = await pbt.async_run(
+        models_from_dict=models,
+        llm_call=lambda p: "unused",
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert outputs["calc"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_output_variable() -> None:
+    """execute_python model falls back to `output` variable when stdout is empty."""
+    from pbt.storage import MemoryStorageBackend
+
+    models = {
+        "calc": '{{ config(model_type="execute_python") }}\noutput = 6 * 7',
+    }
+
+    outputs = await pbt.async_run(
+        models_from_dict=models,
+        llm_call=lambda p: "unused",
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert outputs["calc"] == "42"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_json_output_format() -> None:
+    """execute_python model with output_format='json' parses output as JSON."""
+    import json
+    from pbt.storage import MemoryStorageBackend
+
+    models = {
+        "data": '{{ config(model_type="execute_python", output_format="json") }}\nprint(\'["a", "b", "c"]\')',
+    }
+
+    outputs = await pbt.async_run(
+        models_from_dict=models,
+        llm_call=lambda p: "unused",
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert json.loads(outputs["data"]) == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_execute_python_accesses_upstream_ref() -> None:
+    """execute_python model can read upstream model outputs via ref()."""
+    from pbt.storage import MemoryStorageBackend
+
+    models = {
+        "name": "Just return a name.",
+        "greeting": '{{ config(model_type="execute_python") }}\nupstream = ref("name")\nprint(f"Hello, {upstream}!")',
+    }
+
+    def fake_llm(prompt: str) -> str:
+        return "World"
+
+    outputs = await pbt.async_run(
+        models_from_dict=models,
+        llm_call=fake_llm,
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert outputs["greeting"] == "Hello, World!"
+
+
+@pytest.mark.asyncio
+async def test_execute_python_syntax_error_marks_model_error() -> None:
+    """execute_python model reports an error on invalid Python."""
+    from pbt.storage import MemoryStorageBackend
+
+    models = {
+        "bad": '{{ config(model_type="execute_python") }}\ndef (bad syntax',
+    }
+
+    outputs = await pbt.async_run(
+        models_from_dict=models,
+        llm_call=lambda p: "unused",
+        verbose=False,
+        storage_backend=MemoryStorageBackend(),
+    )
+
+    assert isinstance(outputs["bad"], pbt.ModelError)
+
+
 def _load_env() -> dict:
     """Load .env from project root, merged with os.environ."""
     import os

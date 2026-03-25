@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from pbt.executor.graph import PromptModel
-from pbt.executor.model_constructs import execute_loop_model
+from pbt.executor.model_constructs import execute_loop_model, execute_python_model
 from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
 from pbt.types import PromptFile
@@ -190,6 +190,20 @@ async def execute_run(
 
                 if model.config.get("model_type") == "loop":
                     result = await execute_loop_model(
+                        model=model,
+                        model_outputs=model_outputs,
+                        model_files=model_files,
+                        storage_backend=storage_backend,
+                        run_id=run_id,
+                        llm_call=llm_call,
+                        rag_call=rag_call,
+                        promptdata=promptdata,
+                        prompt_skipped_models=prompt_skipped_models,
+                        parse_json_output=_parse_json_output,
+                    )
+
+                elif model.config.get("model_type") == "execute_python":
+                    result = await execute_python_model(
                         model=model,
                         model_outputs=model_outputs,
                         model_files=model_files,
