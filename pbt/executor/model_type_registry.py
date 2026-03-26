@@ -1,90 +1,110 @@
 """
-Registry for model-type callbacks.
+Registry for model-type handlers.
 
-Two callback types are supported:
+Define a subclass of ``BaseModelHandler`` for each model type and register an
+instance with ``register_handler()``.  The executor discovers handlers via
+``get_handler()`` at run time.
+
+Two extension points are available on each handler:
 
 replace_node_in_dag
-    Receives one owned node and the full (read-only) models dict and returns a
-    list of PromptModel objects to be substituted in the DAG in place of that
-    node.
-
-    Design constraint: callbacks may only insert *new* nodes owned by that
-    model type — they may NOT modify any other existing node in the DAG.  The
-    owned node is replaced wholesale; its name may appear in the returned list
-    (e.g. as a terminal pass-through) or be omitted entirely.
+    Called during DAG construction.  Return a list of replacement
+    ``PromptModel`` objects to substitute for the owned node, or ``None``
+    to leave the node unchanged.
 
 execute_node
-    Receives the model plus the full executor context and returns a
-    ModelRunResult.  Used for model types that run differently at execution
-    time without transforming the DAG (e.g. ``loop``, ``execute_python``).
-
-    Signature::
-
-        async def handler(
-            model, model_outputs, model_files, storage_backend,
-            run_id, llm_call, rag_call, promptdata,
-            prompt_skipped_models, parse_json_output,
-        ) -> ModelRunResult
+    Called during execution for any model whose ``model_type`` matches this
+    handler.  Must be an ``async`` method that mutates *model_outputs* and
+    returns a ``ModelRunResult``.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from pbt.executor.graph import PromptModel
 
-# Maps model_type string → replace_node_in_dag callback.
-# Signature: (owned_model, all_models_readonly) -> list[PromptModel]
-_REPLACE_NODE_CALLBACKS: dict[
-    str,
-    Callable[[PromptModel, dict[str, PromptModel]], list[PromptModel]],
-] = {}
-
-# Maps model_type string → execute_node callback.
-# See module docstring for the expected async signature.
-_EXECUTE_NODE_CALLBACKS: dict[str, Callable] = {}
+if TYPE_CHECKING:
+    from pbt.executor.executor import ModelRunResult
 
 
-def register_replace_node_callback(
-    model_type: str,
-    callback: Callable[[PromptModel, dict[str, PromptModel]], list[PromptModel]],
-) -> None:
-    """Register a ``replace_node_in_dag`` callback for *model_type*."""
-    _REPLACE_NODE_CALLBACKS[model_type] = callback
+class BaseModelHandler:
+    """Base class for model-type handlers.
 
-
-def register_execute_node_callback(model_type: str, callback: Callable) -> None:
-    """Register an ``execute_node`` callback for *model_type*.
-
-    The callback must be an async function with the signature described in the
-    module docstring.
+    Subclasses must set ``model_type`` and override at least one of
+    ``replace_node_in_dag`` or ``execute_node``.
     """
-    _EXECUTE_NODE_CALLBACKS[model_type] = callback
+
+    model_type: str  # must be set by each subclass
+
+    def replace_node_in_dag(
+        self,
+        model: PromptModel,
+        all_models: dict[str, PromptModel],
+    ) -> list[PromptModel] | None:
+        """Return replacement nodes, or ``None`` to leave this node unchanged.
+
+        Design constraint: only return nodes owned by this handler's
+        ``model_type`` — never modify existing nodes in the DAG.
+        """
+        return None
+
+    async def execute_node(
+        self,
+        model: PromptModel,
+        model_outputs: dict,
+        model_files: list | None,
+        storage_backend,
+        run_id: str,
+        llm_call: Callable,
+        rag_call: Callable | None,
+        promptdata: dict | None,
+        prompt_skipped_models: set[str],
+        parse_json_output: Callable,
+    ) -> "ModelRunResult":
+        """Execute this model and return a ``ModelRunResult``.
+
+        Must mutate ``model_outputs[model.name]`` before returning.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement execute_node"
+        )
 
 
-def get_execute_node_callback(model_type: str) -> Callable | None:
-    """Return the ``execute_node`` callback for *model_type*, or ``None``."""
-    return _EXECUTE_NODE_CALLBACKS.get(model_type)
+# Ordered list of registered handlers.
+_HANDLERS: list[BaseModelHandler] = []
+
+
+def register_handler(handler: BaseModelHandler) -> None:
+    """Add *handler* to the global registry."""
+    _HANDLERS.append(handler)
+
+
+def get_handler(model_type: str) -> BaseModelHandler | None:
+    """Return the handler for *model_type*, or ``None`` if not registered."""
+    return next((h for h in _HANDLERS if h.model_type == model_type), None)
 
 
 def apply_replace_node_callbacks(
     models: dict[str, PromptModel],
 ) -> dict[str, PromptModel]:
-    """
-    For each model whose ``model_type`` has a registered ``replace_node_in_dag``
-    callback, call the callback and replace that node in the DAG with the
-    returned list of nodes.
+    """Expand any model whose type has a ``replace_node_in_dag`` override.
 
-    Callbacks may only insert new nodes owned by that model type — they may
-    NOT modify any other existing node in the DAG.  The owned node is replaced
-    wholesale by the returned list.
+    For each model whose ``model_type`` has a registered handler that returns
+    a non-``None`` value from ``replace_node_in_dag``, the original node is
+    removed and the returned nodes are inserted in its place.
     """
     result = dict(models)
     for model in list(models.values()):
         model_type = model.config.get("model_type")
-        if model_type and model_type in _REPLACE_NODE_CALLBACKS:
-            replacement_nodes = _REPLACE_NODE_CALLBACKS[model_type](model, models)
+        if not model_type:
+            continue
+        handler = get_handler(model_type)
+        if handler is None:
+            continue
+        replacements = handler.replace_node_in_dag(model, models)
+        if replacements is not None:
             del result[model.name]
-            for node in replacement_nodes:
+            for node in replacements:
                 result[node.name] = node
     return result

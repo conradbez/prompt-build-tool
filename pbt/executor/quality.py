@@ -41,7 +41,7 @@ import re
 from pathlib import Path
 
 from pbt.executor.graph import PromptModel
-from pbt.executor.model_type_registry import register_replace_node_callback
+from pbt.executor.model_type_registry import BaseModelHandler
 
 # Matches the bare `parent_model` identifier in templates.
 _PARENT_MODEL_RE = re.compile(r"\bparent_model\b")
@@ -291,6 +291,14 @@ def _substitute_source_ref(
     return result
 
 
-# Register this module's callback with the global registry so that
-# apply_replace_node_callbacks() expands quality_check nodes automatically.
-register_replace_node_callback("quality_check", _quality_replace_node_callback)
+class QualityCheckModelHandler(BaseModelHandler):
+    """Expand ``quality_check`` nodes into retry chains during DAG construction."""
+
+    model_type = "quality_check"
+
+    def replace_node_in_dag(
+        self,
+        model: PromptModel,
+        all_models: dict[str, PromptModel],
+    ) -> list[PromptModel]:
+        return _quality_replace_node_callback(model, all_models)

@@ -22,10 +22,21 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from pbt.executor.graph import PromptModel
-import pbt.executor.model_constructs  # noqa: F401 — registers execute_node callbacks at import time
-from pbt.executor.model_type_registry import get_execute_node_callback
+from pbt.executor.model_type_registry import BaseModelHandler, register_handler, get_handler
+from pbt.executor.model_constructs import LoopModelHandler, ExecutePythonModelHandler
+from pbt.executor.quality import QualityCheckModelHandler
 from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
+
+# All known model-type handlers.  Register here so the executor and DAG
+# expansion both see them without any module-level side-effect imports elsewhere.
+_MODEL_HANDLERS: list[BaseModelHandler] = [
+    LoopModelHandler(),
+    ExecutePythonModelHandler(),
+    QualityCheckModelHandler(),
+]
+for _handler in _MODEL_HANDLERS:
+    register_handler(_handler)
 from pbt.types import PromptFile
 from pbt.validator import run_validator
 
@@ -189,11 +200,9 @@ async def execute_run(
                             )
                         model_files.append(promptfiles[name])
 
-                execute_node_callback = get_execute_node_callback(
-                    model.config.get("model_type", "")
-                )
-                if execute_node_callback is not None:
-                    result = await execute_node_callback(
+                handler = get_handler(model.config.get("model_type", ""))
+                if handler is not None:
+                    result = await handler.execute_node(
                         model=model,
                         model_outputs=model_outputs,
                         model_files=model_files,

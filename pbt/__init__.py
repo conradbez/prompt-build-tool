@@ -115,8 +115,6 @@ async def async_run(
         models_to_json,
         models_from_json,
     )
-    # Import quality module first so its replace_node_in_dag callback is registered.
-    import pbt.executor.quality  # noqa: F401
     from pbt.executor.model_type_registry import apply_replace_node_callbacks
 
     if storage_backend is None:
