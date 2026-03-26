@@ -12,8 +12,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from pbt.executor.model_type_registry import BaseModelHandler
-from pbt.executor.model_constructs import NormalModelHandler, LoopModelHandler, ExecutePythonModelHandler
+from pbt.executor.model_constructs import BaseModelHandler, LoopModelHandler, ExecutePythonModelHandler
 from pbt.executor.parser_initial import (
     extract_dependencies,
     parse_model_config,
@@ -83,7 +82,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, BaseModelHandler
         _pf_parsed = json.loads(_pf) if _pf.startswith("[") else [_pf] if _pf else []
         promptfiles_used = _pf_parsed
         model_type = config.get("model_type", "")
-        cls = _MODEL_CLASS_MAP.get(model_type, NormalModelHandler)
+        cls = _MODEL_CLASS_MAP.get(model_type, BaseModelHandler)
         models[name] = cls(
             name=name,
             path=prompt_file.resolve(),
@@ -171,7 +170,7 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, BaseModelHandler
         _pf_parsed = json.loads(_pf) if _pf.startswith("[") else [_pf] if _pf else []
         promptfiles_used = _pf_parsed
         model_type = config.get("model_type", "")
-        cls = _MODEL_CLASS_MAP.get(model_type, NormalModelHandler)
+        cls = _MODEL_CLASS_MAP.get(model_type, BaseModelHandler)
         result[name] = cls(
             name=name,
             path=Path("<inline>"),

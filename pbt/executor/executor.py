@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from pbt.executor.model_type_registry import BaseModelHandler
+from pbt.executor.model_constructs import BaseModelHandler
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile
 

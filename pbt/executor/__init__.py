@@ -1,5 +1,5 @@
 from pbt.executor.executor import execute_run, ModelRunResult
-from pbt.executor.model_type_registry import BaseModelHandler
+from pbt.executor.model_constructs import BaseModelHandler
 from pbt.executor.graph import (
     CyclicDependencyError,
     UnknownModelError,

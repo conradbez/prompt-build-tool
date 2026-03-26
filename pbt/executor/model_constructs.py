@@ -1,8 +1,9 @@
 """
-Concrete model-type handlers for ``normal``, ``loop``, and ``execute_python``.
+Model handler base class and concrete model-type handlers for ``loop`` and
+``execute_python``.
 
-Each class inherits from ``BaseModelHandler`` and overrides ``execute_node``
-with the appropriate execution strategy.
+``BaseModelHandler`` provides the default (normal LLM-call) execution strategy.
+Subclasses override ``execute_node`` for custom model types.
 """
 
 from __future__ import annotations
@@ -14,9 +15,10 @@ import json
 import re
 import time
 from contextlib import redirect_stdout
-from typing import TYPE_CHECKING, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, ClassVar
 
-from pbt.executor.model_type_registry import BaseModelHandler
 from pbt.executor.parser_model import render_prompt
 
 if TYPE_CHECKING:
@@ -44,10 +46,24 @@ def _parse_json_output(raw: str) -> dict | list:
         ) from exc
 
 
-class NormalModelHandler(BaseModelHandler):
-    """Handles plain LLM calls (the default model type)."""
+@dataclass
+class BaseModelHandler:
+    """Carries model data (source, config, deps) and execution logic.
 
-    model_type: str = ""  # type: ignore[assignment]
+    The default ``execute_node`` performs a plain LLM call (the "normal" model
+    type).  Subclasses override it for custom model types and set ``model_type``
+    to the corresponding config key.
+    """
+
+    name: str
+    path: Path
+    source: str
+    depends_on: list[str] = field(default_factory=list)
+    config: dict = field(default_factory=dict)
+    promptdata_used: list[str] = field(default_factory=list)
+    promptfiles_used: list[str] = field(default_factory=list)
+
+    model_type: ClassVar[str] = ""
 
     async def execute_node(
         self,
@@ -191,7 +207,7 @@ class LoopModelHandler(BaseModelHandler):
             if "config" in _sig:
                 _kwargs["config"] = self.config
 
-            if asyncio.iscoroutinefunction(llm_call):
+            if inspect.iscoroutinefunction(llm_call):
                 result = await llm_call(item_rendered, **_kwargs)
             else:
                 loop = asyncio.get_event_loop()

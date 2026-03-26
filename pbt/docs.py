@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pbt.executor.model_type_registry import BaseModelHandler
+    from pbt.executor.model_constructs import BaseModelHandler
 
 
 _STATUS_COLOUR = {
