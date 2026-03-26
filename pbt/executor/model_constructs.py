@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from pbt.executor.graph import PromptModel
     from pbt.storage.base import StorageBackend
 
+from pbt.executor.model_type_registry import register_execute_node_callback
+
 
 async def execute_loop_model(
     model: "PromptModel",
@@ -239,3 +241,9 @@ async def execute_python_model(
         cached=False,
         prompt_skipped=False,
     )
+
+
+# Register execute_node callbacks at module-load time so that any importer of
+# this module automatically makes these handlers available via the registry.
+register_execute_node_callback("loop", execute_loop_model)
+register_execute_node_callback("execute_python", execute_python_model)

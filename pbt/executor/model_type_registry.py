@@ -1,17 +1,30 @@
 """
-Registry for model-type ``replace_node_in_dag`` callbacks.
+Registry for model-type callbacks.
 
-Each model type may register a callback that receives one owned node and the
-full (read-only) models dict and returns a list of PromptModel objects to be
-substituted in the DAG in place of that node.
+Two callback types are supported:
 
-Design constraint
------------------
-Callbacks may only insert *new* nodes owned by that model type — they may NOT
-modify any other existing node in the DAG.  The owned node is replaced
-wholesale; its name may appear in the returned list (e.g. as a terminal
-pass-through) or be omitted entirely.  This keeps the callback contract simple
-and prevents unintended cross-model side effects.
+replace_node_in_dag
+    Receives one owned node and the full (read-only) models dict and returns a
+    list of PromptModel objects to be substituted in the DAG in place of that
+    node.
+
+    Design constraint: callbacks may only insert *new* nodes owned by that
+    model type — they may NOT modify any other existing node in the DAG.  The
+    owned node is replaced wholesale; its name may appear in the returned list
+    (e.g. as a terminal pass-through) or be omitted entirely.
+
+execute_node
+    Receives the model plus the full executor context and returns a
+    ModelRunResult.  Used for model types that run differently at execution
+    time without transforming the DAG (e.g. ``loop``, ``execute_python``).
+
+    Signature::
+
+        async def handler(
+            model, model_outputs, model_files, storage_backend,
+            run_id, llm_call, rag_call, promptdata,
+            prompt_skipped_models, parse_json_output,
+        ) -> ModelRunResult
 """
 
 from __future__ import annotations
@@ -27,6 +40,10 @@ _REPLACE_NODE_CALLBACKS: dict[
     Callable[[PromptModel, dict[str, PromptModel]], list[PromptModel]],
 ] = {}
 
+# Maps model_type string → execute_node callback.
+# See module docstring for the expected async signature.
+_EXECUTE_NODE_CALLBACKS: dict[str, Callable] = {}
+
 
 def register_replace_node_callback(
     model_type: str,
@@ -34,6 +51,20 @@ def register_replace_node_callback(
 ) -> None:
     """Register a ``replace_node_in_dag`` callback for *model_type*."""
     _REPLACE_NODE_CALLBACKS[model_type] = callback
+
+
+def register_execute_node_callback(model_type: str, callback: Callable) -> None:
+    """Register an ``execute_node`` callback for *model_type*.
+
+    The callback must be an async function with the signature described in the
+    module docstring.
+    """
+    _EXECUTE_NODE_CALLBACKS[model_type] = callback
+
+
+def get_execute_node_callback(model_type: str) -> Callable | None:
+    """Return the ``execute_node`` callback for *model_type*, or ``None``."""
+    return _EXECUTE_NODE_CALLBACKS.get(model_type)
 
 
 def apply_replace_node_callbacks(
