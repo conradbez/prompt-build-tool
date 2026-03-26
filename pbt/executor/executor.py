@@ -24,7 +24,6 @@ from typing import Awaitable, Callable
 from pbt.executor.graph import PromptModel
 from pbt.executor.model_type_registry import BaseModelHandler, register_handler, get_handler
 from pbt.executor.model_constructs import LoopModelHandler, ExecutePythonModelHandler
-from pbt.executor.quality import QualityCheckModelHandler
 from pbt.storage.base import StorageBackend
 from pbt.executor.parser import render_prompt
 
@@ -33,7 +32,6 @@ from pbt.executor.parser import render_prompt
 _MODEL_HANDLERS: list[BaseModelHandler] = [
     LoopModelHandler(),
     ExecutePythonModelHandler(),
-    QualityCheckModelHandler(),
 ]
 for _handler in _MODEL_HANDLERS:
     register_handler(_handler)
