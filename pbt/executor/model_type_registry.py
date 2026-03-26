@@ -7,7 +7,7 @@ instance with ``register_handler()``.  The executor discovers handlers via
 
 Two extension points are available on each handler:
 
-replace_node_in_dag
+inject_nodes_before
     Called during DAG construction.  Return a list of replacement
     ``PromptModel`` objects to substitute for the owned node, or ``None``
     to leave the node unchanged.
@@ -32,12 +32,12 @@ class BaseModelHandler:
     """Base class for model-type handlers.
 
     Subclasses must set ``model_type`` and override at least one of
-    ``replace_node_in_dag`` or ``execute_node``.
+    ``inject_nodes_before`` or ``execute_node``.
     """
 
     model_type: str  # must be set by each subclass
 
-    def replace_node_in_dag(
+    def inject_nodes_before(
         self,
         model: PromptModel,
         all_models: dict[str, PromptModel],
@@ -88,10 +88,10 @@ def get_handler(model_type: str) -> BaseModelHandler | None:
 def apply_replace_node_callbacks(
     models: dict[str, PromptModel],
 ) -> dict[str, PromptModel]:
-    """Expand any model whose type has a ``replace_node_in_dag`` override.
+    """Expand any model whose type has a ``inject_nodes_before`` override.
 
     For each model whose ``model_type`` has a registered handler that returns
-    a non-``None`` value from ``replace_node_in_dag``, the original node is
+    a non-``None`` value from ``inject_nodes_before``, the original node is
     removed and the returned nodes are inserted in its place.
     """
     result = dict(models)
@@ -102,7 +102,7 @@ def apply_replace_node_callbacks(
         handler = get_handler(model_type)
         if handler is None:
             continue
-        replacements = handler.replace_node_in_dag(model, models)
+        replacements = handler.inject_nodes_before(model, models)
         if replacements is not None:
             del result[model.name]
             for node in replacements:

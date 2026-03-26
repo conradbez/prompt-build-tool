@@ -296,7 +296,7 @@ class QualityCheckModelHandler(BaseModelHandler):
 
     model_type = "quality_check"
 
-    def replace_node_in_dag(
+    def inject_nodes_before(
         self,
         model: PromptModel,
         all_models: dict[str, PromptModel],
