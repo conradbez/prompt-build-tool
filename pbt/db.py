@@ -22,16 +22,16 @@ def init_db() -> None:
     _DEFAULT_BACKEND.init_db()
 
 
-def create_run(model_count: int, dag_hash: str, git_sha: Optional[str] = None) -> str:
-    return _DEFAULT_BACKEND.create_run(model_count=model_count, dag_hash=dag_hash, git_sha=git_sha)
+def create_run(model_count: int, git_sha: Optional[str] = None) -> str:
+    return _DEFAULT_BACKEND.create_run(model_count=model_count, git_sha=git_sha)
 
 
 def finish_run(run_id: str, status: str) -> None:
     _DEFAULT_BACKEND.finish_run(run_id, status)
 
 
-def get_latest_run_with_dag_hash(dag_hash: str):
-    return _DEFAULT_BACKEND.get_latest_run_with_dag_hash(dag_hash)
+def get_latest_successful_run():
+    return _DEFAULT_BACKEND.get_latest_successful_run()
 
 
 def record_test_result(run_id: str, result: "TestResult") -> None:  # noqa: F821
@@ -44,14 +44,6 @@ def get_test_results(run_id: str):
 
 def get_model_outputs_from_run(run_id: str, model_names: list[str]) -> dict[str, str]:
     return _DEFAULT_BACKEND.get_model_outputs_from_run(run_id, model_names)
-
-
-def save_dag(dag_hash: str, dag_json: str) -> None:
-    _DEFAULT_BACKEND.save_dag(dag_hash, dag_json)
-
-
-def load_dag(dag_hash: str) -> str | None:
-    return _DEFAULT_BACKEND.load_dag(dag_hash)
 
 
 def get_cached_llm_output(cache_key: str) -> str | None:

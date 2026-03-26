@@ -24,14 +24,10 @@ from rich.console import Console
 from pbt import db
 from pbt.executor.graph import (
     load_models,
-    execution_order,
     build_dag,
-    compute_dag_hash,
     get_dag_promptdata,
     CyclicDependencyError,
     UnknownModelError,
-    models_to_json,
-    models_from_json,
 )
 from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
@@ -78,15 +74,6 @@ def main() -> None:
     ),
 )
 @click.option(
-    "--dag-id",
-    default=None,
-    metavar="HASH",
-    help=(
-        "Load the DAG snapshot from the database instead of reading "
-        "*.prompt files from disk. Use the dag_hash shown after a previous run."
-    ),
-)
-@click.option(
     "--no-color",
     is_flag=True,
     default=False,
@@ -117,7 +104,7 @@ def main() -> None:
     show_default=True,
     help="Directory containing per-model validation Python files.",
 )
-def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
 
@@ -146,33 +133,13 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
     db.init_db()
 
     # ------------------------------------------------------------------
-    # Discover & validate models  (from disk or DB snapshot)
+    # Discover & validate models
     # ------------------------------------------------------------------
-    if dag_id:
-        dag_json = db.load_dag(dag_id)
-        if dag_json is None:
-            err_console.print(
-                f"[red]Error:[/red] DAG '{dag_id}' not found in database.\n"
-                f"Run [bold]pbt run[/bold] without --dag-id first to register it."
-            )
-            sys.exit(1)
-        all_models = models_from_json(dag_json)
-        dag_hash = dag_id
-    else:
-        try:
-            all_models = load_models(models_dir)
-        except FileNotFoundError as exc:
-            err_console.print(f"[red]Error:[/red] {exc}")
-            sys.exit(1)
-        dag_hash = compute_dag_hash(all_models)
-        db.save_dag(dag_hash, models_to_json(all_models))
-
     try:
-        ordered = execution_order(all_models)
-    except (CyclicDependencyError, UnknownModelError) as exc:
-        err_console.print(f"[red]Dependency error:[/red] {exc}")
+        all_models = load_models(models_dir)
+    except FileNotFoundError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
-
     # ------------------------------------------------------------------
     # --select: run chosen models AND their full upstream dependency chain.
     # ------------------------------------------------------------------
@@ -181,15 +148,22 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
             if name not in all_models:
                 err_console.print(f"[red]Unknown model:[/red] '{name}'")
                 sys.exit(1)
-
-        selected_set = set(select)
-        dag = build_dag(all_models)
-
-        to_run: set[str] = set(selected_set)
-        for name in selected_set:
+        try:
+            dag = build_dag(all_models)
+        except (CyclicDependencyError, UnknownModelError) as exc:
+            err_console.print(f"[red]Dependency error:[/red] {exc}")
+            sys.exit(1)
+        to_run: set[str] = set(select)
+        for name in select:
             to_run.update(nx.ancestors(dag, name))
-
-        ordered = [m for m in ordered if m.name in to_run]
+        ordered = [all_models[name] for name in to_run]
+    else:
+        try:
+            build_dag(all_models)  # validate only
+        except (CyclicDependencyError, UnknownModelError) as exc:
+            err_console.print(f"[red]Dependency error:[/red] {exc}")
+            sys.exit(1)
+        ordered = list(all_models.values())
 
     # ------------------------------------------------------------------
     # Print run header
@@ -197,11 +171,10 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
     git_sha = _git_sha()
     run_id = db.create_run(
         model_count=len(ordered),
-        dag_hash=dag_hash,
         git_sha=git_sha,
     )
 
-    pretty_print.print_run_header(c, run_id, dag_hash, ordered, select, git_sha)
+    pretty_print.print_run_header(c, run_id, ordered, select, git_sha)
 
     # ------------------------------------------------------------------
     # Execute
@@ -288,7 +261,7 @@ def run(models_dir: str, select: tuple[str, ...], dag_id: str | None, no_color: 
             out_file.write_text(result.llm_output, encoding="utf-8")
             written.append(result.model_name)
 
-    pretty_print.print_run_summary(c, all_results, outputs_dir, written, run_id, dag_hash)
+    pretty_print.print_run_summary(c, all_results, outputs_dir, written, run_id)
 
     if errors:
         sys.exit(1)
@@ -344,21 +317,13 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         return
 
     # ------------------------------------------------------------------
-    # Load models to compute the DAG hash
+    # Load models (for ref() context in test templates)
     # ------------------------------------------------------------------
     try:
         all_models = load_models(models_dir)
     except FileNotFoundError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
-
-    try:
-        ordered = execution_order(all_models)
-    except (CyclicDependencyError, UnknownModelError) as exc:
-        err_console.print(f"[red]Dependency error:[/red] {exc}")
-        sys.exit(1)
-
-    dag_hash = compute_dag_hash(all_models)
 
     # ------------------------------------------------------------------
     # Find the run whose outputs we'll test against
@@ -372,10 +337,10 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
             err_console.print(f"[red]Error:[/red] Run '{run_id}' not found.")
             sys.exit(1)
     else:
-        target_run = db.get_latest_run_with_dag_hash(dag_hash)
+        target_run = db.get_latest_successful_run()
         if target_run is None:
             err_console.print(
-                f"[red]Error:[/red] No previous run found with DAG hash [bold]{dag_hash}[/bold].\n"
+                f"[red]Error:[/red] No previous successful run found.\n"
                 f"Run [bold]pbt run[/bold] first, then [bold]pbt test[/bold]."
             )
             sys.exit(1)
@@ -383,10 +348,10 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
     # ------------------------------------------------------------------
     # Load model outputs from that run
     # ------------------------------------------------------------------
-    model_names = [m.name for m in ordered]
+    model_names = list(all_models.keys())
     model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
 
-    pretty_print.print_test_header(c, tests_dir, tests, target_run, dag_hash)
+    pretty_print.print_test_header(c, tests_dir, tests, target_run)
 
     # ------------------------------------------------------------------
     # Resolve LLM backend
@@ -431,13 +396,11 @@ def list_models(models_dir: str) -> None:
     """List all discovered models and their dependencies."""
     try:
         models = load_models(models_dir)
-        ordered = execution_order(models)
     except (FileNotFoundError, CyclicDependencyError, UnknownModelError) as exc:
         err_console.print(str(exc))
         sys.exit(1)
 
-    dag_hash = compute_dag_hash(models)
-    console.print(pretty_print.models_table(ordered, dag_hash))
+    console.print(pretty_print.models_table(list(models.values())))
 
 
 # ---------------------------------------------------------------------------

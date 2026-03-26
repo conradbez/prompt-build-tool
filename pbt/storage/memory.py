@@ -11,7 +11,6 @@ from typing import Any
 
 class MemoryStorageBackend:
     def __init__(self) -> None:
-        self._dags: dict[str, str] = {}
         self._runs: dict[str, dict[str, Any]] = {}
         self._results: dict[str, dict[str, dict[str, Any]]] = {}
         self._tests: dict[str, list[dict[str, Any]]] = {}
@@ -20,7 +19,7 @@ class MemoryStorageBackend:
     def init_db(self) -> None:
         return None
 
-    def create_run(self, model_count: int, dag_hash: str, git_sha: str | None = None) -> str:
+    def create_run(self, model_count: int, git_sha: str | None = None) -> str:
         run_id = str(uuid.uuid4())
         now = _now()
         self._runs[run_id] = {
@@ -31,7 +30,6 @@ class MemoryStorageBackend:
             "completed_at": None,
             "model_count": model_count,
             "git_sha": git_sha,
-            "dag_hash": dag_hash,
         }
         self._results[run_id] = {}
         self._tests[run_id] = []
@@ -41,10 +39,10 @@ class MemoryStorageBackend:
         self._runs[run_id]["status"] = status
         self._runs[run_id]["completed_at"] = _now()
 
-    def get_latest_run_with_dag_hash(self, dag_hash: str) -> dict[str, Any] | None:
+    def get_latest_successful_run(self) -> dict[str, Any] | None:
         matches = [
             row for row in self._runs.values()
-            if row["dag_hash"] == dag_hash and row["status"] in {"success", "partial"}
+            if row["status"] in {"success", "partial"}
         ]
         if not matches:
             return None
@@ -74,12 +72,6 @@ class MemoryStorageBackend:
             for name, row in results.items()
             if name in model_names and row["status"] == "success"
         }
-
-    def save_dag(self, dag_hash: str, dag_json: str) -> None:
-        self._dags.setdefault(dag_hash, dag_json)
-
-    def load_dag(self, dag_hash: str) -> str | None:
-        return self._dags.get(dag_hash)
 
     def get_cached_llm_output(self, cache_key: str) -> str | None:
         return self._cache.get(_prompt_hash(cache_key))

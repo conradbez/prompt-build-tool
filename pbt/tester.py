@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from pbt.executor.parser import render_prompt
+from pbt.executor.parser_model import render_prompt
 from pbt.storage.base import StorageBackend
 
 

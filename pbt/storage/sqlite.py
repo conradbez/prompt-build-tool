@@ -45,8 +45,7 @@ class SQLiteStorageBackend:
                     status       TEXT        NOT NULL DEFAULT 'running',
                     completed_at TEXT,
                     model_count  INTEGER     NOT NULL DEFAULT 0,
-                    git_sha      TEXT,
-                    dag_hash     TEXT
+                    git_sha      TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS model_results (
@@ -68,17 +67,8 @@ class SQLiteStorageBackend:
                 CREATE INDEX IF NOT EXISTS idx_model_results_run
                     ON model_results (run_id, model_name);
 
-                CREATE INDEX IF NOT EXISTS idx_runs_dag_hash
-                    ON runs (dag_hash, created_at DESC);
-
                 CREATE INDEX IF NOT EXISTS idx_model_results_prompt_hash
                     ON model_results (prompt_hash, completed_at DESC);
-
-                CREATE TABLE IF NOT EXISTS dags (
-                    dag_hash   TEXT PRIMARY KEY,
-                    dag_json   TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
 
                 CREATE TABLE IF NOT EXISTS test_results (
                     id               INTEGER   PRIMARY KEY AUTOINCREMENT,
@@ -97,14 +87,14 @@ class SQLiteStorageBackend:
                     ON test_results (run_id, test_name);
             """)
 
-    def create_run(self, model_count: int, dag_hash: str, git_sha: Optional[str] = None) -> str:
+    def create_run(self, model_count: int, git_sha: Optional[str] = None) -> str:
         run_id = str(uuid.uuid4())
         now = _now()
         with self.get_conn() as conn:
             conn.execute(
-                "INSERT INTO runs (run_id, run_date, created_at, status, model_count, git_sha, dag_hash) "
-                "VALUES (?, ?, ?, 'running', ?, ?, ?)",
-                (run_id, _today(now), now, model_count, git_sha, dag_hash),
+                "INSERT INTO runs (run_id, run_date, created_at, status, model_count, git_sha) "
+                "VALUES (?, ?, ?, 'running', ?, ?)",
+                (run_id, _today(now), now, model_count, git_sha),
             )
         return run_id
 
@@ -115,15 +105,13 @@ class SQLiteStorageBackend:
                 (status, _now(), run_id),
             )
 
-    def get_latest_run_with_dag_hash(self, dag_hash: str) -> Optional[sqlite3.Row]:
+    def get_latest_successful_run(self) -> Optional[sqlite3.Row]:
         with self.get_conn() as conn:
             return conn.execute(
                 """SELECT * FROM runs
-                   WHERE dag_hash = ?
-                     AND status IN ('success', 'partial')
+                   WHERE status IN ('success', 'partial')
                    ORDER BY created_at DESC
                    LIMIT 1""",
-                (dag_hash,),
             ).fetchone()
 
     def record_test_result(self, run_id: str, result: "TestResult") -> None:  # noqa: F821
@@ -165,21 +153,6 @@ class SQLiteStorageBackend:
                 (run_id, *model_names),
             ).fetchall()
         return {row["model_name"]: row["llm_output"] for row in rows}
-
-    def save_dag(self, dag_hash: str, dag_json: str) -> None:
-        with self.get_conn() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO dags (dag_hash, dag_json, created_at) VALUES (?, ?, ?)",
-                (dag_hash, dag_json, _now()),
-            )
-
-    def load_dag(self, dag_hash: str) -> Optional[str]:
-        with self.get_conn() as conn:
-            row = conn.execute(
-                "SELECT dag_json FROM dags WHERE dag_hash = ?",
-                (dag_hash,),
-            ).fetchone()
-        return row["dag_json"] if row else None
 
     def get_cached_llm_output(self, cache_key: str) -> Optional[str]:
         prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()

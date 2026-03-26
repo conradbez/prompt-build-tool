@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pbt.executor.graph import PromptModel
+    from pbt.executor.model_type_registry import BaseModelHandler
 
 
 _STATUS_COLOUR = {
@@ -43,7 +43,7 @@ def _badge(status: str) -> str:
     )
 
 
-def _mermaid_dag(models: dict[str, "PromptModel"]) -> str:
+def _mermaid_dag(models: dict[str, "BaseModelHandler"]) -> str:
     """Return a Mermaid flowchart string for the model DAG."""
     lines = ["graph LR"]
     for name, model in sorted(models.items()):
@@ -75,7 +75,6 @@ def generate_docs(
         status = run["status"] or "—"
         date = run["run_date"] or "—"
         models_count = run["model_count"] or 0
-        dag_hash = run["dag_hash"] or "—"
         created = (run["created_at"] or "")[:19].replace("T", " ")
         completed = (run["completed_at"] or "")[:19].replace("T", " ") or "—"
         duration = "—"
@@ -110,7 +109,7 @@ def generate_docs(
                 )
             results_html = (
                 f"<tr id='detail-{_esc(rid)}' style='display:none'>"
-                f"<td colspan='7' style='padding:0 16px 16px 16px;background:#f9fafb'>"
+                f"<td colspan='6' style='padding:0 16px 16px 16px;background:#f9fafb'>"
                 f"<table style='width:100%;border-collapse:collapse;font-size:0.9em'>"
                 f"<thead><tr style='text-align:left;color:#6b7280'>"
                 f"<th style='padding:4px 12px'>Model</th>"
@@ -129,7 +128,6 @@ def generate_docs(
             f"<td style='padding:10px 16px'>{date}</td>"
             f"<td style='padding:10px 16px'>{_badge(status)}</td>"
             f"<td style='padding:10px 16px;text-align:right'>{models_count}</td>"
-            f"<td style='padding:10px 16px;font-family:monospace;font-size:0.8em;color:#6b7280'>{_esc(dag_hash[:12])}</td>"
             f"<td style='padding:10px 16px;color:#6b7280;font-size:0.9em'>{created}</td>"
             f"<td style='padding:10px 16px;color:#6b7280;font-size:0.9em'>{duration}</td>"
             f"</tr>"
@@ -137,7 +135,7 @@ def generate_docs(
         )
 
     runs_table_body = "\n".join(runs_rows) if runs_rows else (
-        "<tr><td colspan='7' style='padding:24px;text-align:center;color:#9ca3af'>"
+        "<tr><td colspan='6' style='padding:24px;text-align:center;color:#9ca3af'>"
         "No runs recorded yet. Run <code>pbt run</code> first.</td></tr>"
     )
 
@@ -197,7 +195,6 @@ def generate_docs(
             <th>Date</th>
             <th>Status</th>
             <th style="text-align:right">Models</th>
-            <th>DAG hash</th>
             <th>Started</th>
             <th>Duration</th>
           </tr>

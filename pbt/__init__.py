@@ -54,7 +54,6 @@ async def async_run(
     models_dir: str = "models",
     models_from_dict: PromptModelsDict | dict[str, str] | None = None,
     select: list[str] | None = None,
-    dag_id: str | None = None,
     llm_call: Callable[[str], str | Awaitable[str]] | None = None,
     rag_call: Callable[..., list] | None = None,
     verbose: bool = True,
@@ -73,10 +72,6 @@ async def async_run(
     select:
         Optional list of model names to run. All upstream dependencies are
         also executed fresh; the prompt cache makes unchanged nodes instant.
-    dag_id:
-        Optional DAG hash returned by a previous run. When provided, the DAG
-        (model sources and config) is loaded from the database instead of
-        reading *.prompt files from disk.
     llm_call:
         Optional function ``(prompt: str) -> str`` to use as the LLM backend.
         Falls back to ``models/client.py`` then the built-in Gemini client.
@@ -109,14 +104,8 @@ async def async_run(
     from pbt.executor.graph import (
         load_models,
         build_models_from_dict,
-        execution_order,
         build_dag,
-        compute_dag_hash,
-        models_to_json,
-        models_from_json,
     )
-    from pbt.executor.model_type_registry import apply_replace_node_callbacks
-
     if storage_backend is None:
         from pbt.storage.sqlite import SQLiteStorageBackend
         storage_backend = SQLiteStorageBackend()
@@ -135,36 +124,18 @@ async def async_run(
 
     storage_backend.init_db()
 
-    if dag_id:
-        dag_json = storage_backend.load_dag(dag_id)
-        if dag_json is None:
-            raise RuntimeError(
-                f"DAG '{dag_id}' not found in database. "
-                "Run pbt.run() without dag_id first to register it."
-            )
-        all_models = models_from_json(dag_json)
-        dag_hash = dag_id
-    else:
-        raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
-        all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)
-        all_models = apply_replace_node_callbacks(all_models)
-        dag_hash = compute_dag_hash(all_models)
-        storage_backend.save_dag(dag_hash, models_to_json(all_models))
-
-    ordered = execution_order(all_models)
+    raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
+    all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)
 
     if select:
         import networkx as nx
-        selected_set = set(select)
         dag = build_dag(all_models)
-
-        # Run selected nodes AND all their ancestors fresh.
-        # The prompt cache makes unchanged upstream nodes instant.
-        to_run: set[str] = set(selected_set)
-        for name in selected_set:
+        to_run: set[str] = set(select)
+        for name in select:
             to_run.update(nx.ancestors(dag, name))
-
-        ordered = [m for m in ordered if m.name in to_run]
+        ordered = [all_models[name] for name in to_run if name in all_models]
+    else:
+        ordered = list(all_models.values())
 
     git_sha = None
     if models_from_dict is None:
@@ -197,7 +168,6 @@ async def async_run(
 
     run_id = storage_backend.create_run(
         model_count=len(ordered),
-        dag_hash=dag_hash,
         git_sha=git_sha,
     )
 
@@ -292,7 +262,6 @@ def run(
     models_dir: str = "models",
     models_from_dict: "PromptModelsDict | dict[str, str] | None" = None,
     select: "list[str] | None" = None,
-    dag_id: "str | None" = None,
     llm_call: "Callable[[str], str | Awaitable[str]] | None" = None,
     rag_call: "Callable[..., list] | None" = None,
     verbose: bool = True,
@@ -308,7 +277,6 @@ def run(
         models_dir=models_dir,
         models_from_dict=models_from_dict,
         select=select,
-        dag_id=dag_id,
         llm_call=llm_call,
         rag_call=rag_call,
         verbose=verbose,

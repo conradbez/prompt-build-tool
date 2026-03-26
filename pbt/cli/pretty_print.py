@@ -44,14 +44,12 @@ def _fmt_ts(ts: str | None) -> str:
 def print_run_header(
     c: Console,
     run_id: str,
-    dag_hash: str,
     ordered: list,
     select: tuple[str, ...],
     git_sha: str | None,
 ) -> None:
     c.rule("[bold cyan]pbt run[/bold cyan]")
     c.print(f"  Run ID   : [dim]{run_id}[/dim]")
-    c.print(f"  DAG hash : [dim]{dag_hash}[/dim]")
     c.print(f"  Models   : {len(ordered)}", end="")
     if select:
         c.print(f"  [dim](select: {sorted(select)})[/dim]")
@@ -92,7 +90,6 @@ def print_run_summary(
     outputs_dir: Path,
     written: list[str],
     run_id: str,
-    dag_hash: str,
 ) -> None:
     successes = sum(1 for r in all_results if r.status == "success")
     errors    = sum(1 for r in all_results if r.status == "error")
@@ -110,7 +107,6 @@ def print_run_summary(
     if written:
         summary.add_row("Outputs :", f"[dim]{outputs_dir}/[/dim]  {', '.join(written)}")
     summary.add_row("Run ID  :", f"[dim]{run_id}[/dim]")
-    summary.add_row("DAG hash:", f"[dim]{dag_hash}[/dim]")
 
     from pbt import db  # local import to avoid circular at module level
     summary.add_row("DB      :", f"[dim]{db.db_path()}[/dim]")
@@ -126,13 +122,11 @@ def print_test_header(
     tests_dir: str,
     tests: dict,
     target_run: dict,
-    dag_hash: str,
 ) -> None:
     c.rule("[bold cyan]pbt test[/bold cyan]")
     c.print(f"  Tests dir  : [dim]{tests_dir}[/dim]")
     c.print(f"  Tests      : {len(tests)}")
     c.print(f"  Using run  : [dim]{target_run['run_id']}[/dim]  ({target_run['run_date']})")
-    c.print(f"  DAG hash   : [dim]{dag_hash}[/dim]")
     c.print()
 
 
@@ -187,9 +181,9 @@ def print_test_summary(
 # pbt ls — models table
 # ---------------------------------------------------------------------------
 
-def models_table(ordered: list, dag_hash: str) -> Table:
+def models_table(ordered: list) -> Table:
     table = Table(
-        title=f"Prompt Models  [dim](DAG hash: {dag_hash})[/dim]",
+        title="Prompt Models",
         box=box.ROUNDED,
     )
     table.add_column("#", style="dim", justify="right")
@@ -224,7 +218,6 @@ def runs_table(rows: list) -> Table:
     table.add_column("Date")
     table.add_column("Status")
     table.add_column("Models", justify="right")
-    table.add_column("DAG hash", style="dim")
     table.add_column("Created at")
     table.add_column("Completed at")
 
@@ -235,7 +228,6 @@ def runs_table(rows: list) -> Table:
             row["run_date"] or "—",
             f"[{style}]{row['status']}[/{style}]",
             str(row["model_count"]),
-            row["dag_hash"] or "—",
             _fmt_ts(row["created_at"]),
             _fmt_ts(row["completed_at"]) if row["completed_at"] else "—",
         )

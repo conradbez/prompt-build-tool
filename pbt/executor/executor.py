@@ -3,61 +3,22 @@ Prompt executor — orchestrates the full run lifecycle.
 
 For each model (in dependency order):
   1. Render the Jinja2 template, injecting upstream outputs via ref().
-  2. Send the rendered prompt to Gemini.
-  3. Persist input + output to SQLite.
+  2. Send the rendered prompt to the LLM.
+  3. Persist input + output to storage.
 
-Gemini configuration
---------------------
-Set the GEMINI_API_KEY environment variable before running pbt.
-The model can be overridden with GEMINI_MODEL (default: gemini-3-flash-preview).
+LLM configuration
+-----------------
+Use ``pbt.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
 """
 
 from __future__ import annotations
 
-import inspect
-import json
-import re
-import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from pbt.executor.graph import PromptModel
-from pbt.executor.model_type_registry import BaseModelHandler, register_handler, get_handler
-from pbt.executor.model_constructs import LoopModelHandler, ExecutePythonModelHandler
-from pbt.executor.quality import QualityCheckModelHandler
+from pbt.executor.model_type_registry import BaseModelHandler
 from pbt.storage.base import StorageBackend
-from pbt.executor.parser import render_prompt
-
-# All known model-type handlers.  Register here so the executor and DAG
-# expansion both see them without any module-level side-effect imports elsewhere.
-_MODEL_HANDLERS: list[BaseModelHandler] = [
-    LoopModelHandler(),
-    ExecutePythonModelHandler(),
-    QualityCheckModelHandler(),
-]
-for _handler in _MODEL_HANDLERS:
-    register_handler(_handler)
 from pbt.types import PromptFile
-from pbt.validator import run_validator
-
-_JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
-
-
-def _parse_json_output(raw: str) -> dict | list:
-    """Strip optional ```json fences and parse as JSON. Raises ValueError on failure."""
-    stripped = raw.strip()
-    m = _JSON_FENCE.match(stripped)
-    if m:
-        stripped = m.group(1)
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError as exc:
-        preview = stripped[:120] + ("..." if len(stripped) > 120 else "")
-        raise ValueError(
-            f"output_format='json' set but response is not valid JSON "
-            f"(at line {exc.lineno}, col {exc.colno}): {exc.msg}\n"
-            f"Got: {preview!r}"
-        ) from exc
 
 
 @dataclass
@@ -72,10 +33,9 @@ class ModelRunResult:
     prompt_skipped: bool = False  # True when a skip function fired during rendering
 
 
-
 async def execute_run(
     run_id: str,
-    ordered_models: list[PromptModel],
+    ordered_models: list[BaseModelHandler],
     storage_backend: StorageBackend,
     preloaded_outputs: dict[str, str] | None = None,
     on_model_start: Callable[[str], None] | None = None,
@@ -200,88 +160,18 @@ async def execute_run(
                             )
                         model_files.append(promptfiles[name])
 
-                handler = get_handler(model.config.get("model_type", ""))
-                if handler is not None:
-                    result = await handler.execute_node(
-                        model=model,
-                        model_outputs=model_outputs,
-                        model_files=model_files,
-                        storage_backend=storage_backend,
-                        run_id=run_id,
-                        llm_call=llm_call,
-                        rag_call=rag_call,
-                        promptdata=promptdata,
-                        prompt_skipped_models=prompt_skipped_models,
-                        parse_json_output=_parse_json_output,
-                    )
-
-                else:
-                    # --- Normal (non-loop) model ---
-                    rendered, skip_state = render_prompt(model.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
-
-                    # Cache key includes config so a config-only change (e.g. adding
-                    # output_format: json) correctly busts the cache.
-                    cache_key = rendered + "\x00" + json.dumps(model.config, sort_keys=True)
-
-                    cached = None
-                    if skip_state.skip_value is not None:
-                        llm_output = skip_state.skip_value
-                        elapsed_ms = 0
-                        prompt_skipped_models.add(model.name)
-                        if skip_state.skip_downstream:
-                            skip_downstream_models.add(model.name)
-                    elif (cached := storage_backend.get_cached_llm_output(cache_key)) is not None:
-                        llm_output = cached
-                        elapsed_ms = 0
-                    else:
-                        t0 = time.monotonic()
-                        _sig = inspect.signature(llm_call).parameters
-                        _kwargs: dict = {}
-                        if model_files and "files" in _sig:
-                            _kwargs["files"] = model_files
-                        if "config" in _sig:
-                            _kwargs["config"] = model.config
-                        result = llm_call(rendered, **_kwargs)
-                        if inspect.isawaitable(result):
-                            llm_output = await result
-                        else:
-                            llm_output = result
-                        elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-                    # If model declares output_format: json, validate and parse output.
-                    # Downstream ref() will receive a Python dict/list instead of a string.
-                    output_format = model.config.get("output_format", "text")
-                    if skip_state.skip_value is None and output_format == "json":
-                        parsed = _parse_json_output(llm_output)
-                        model_outputs[model.name] = parsed
-                        # Normalise to canonical JSON for DB storage
-                        llm_output = json.dumps(parsed)
-                    else:
-                        model_outputs[model.name] = llm_output
-
-                    # Run user-defined validator as a post-processing step.
-                    # Its return value becomes the model's output; False → error.
-                    if skip_state.skip_value is None and validators:
-                        validated = run_validator(model.name, validators, rendered, llm_output)
-                        if isinstance(validated, (dict, list)):
-                            model_outputs[model.name] = validated
-                            llm_output = json.dumps(validated)
-                        else:
-                            llm_output = validated if isinstance(validated, str) else str(validated)
-                            model_outputs[model.name] = llm_output
-
-                    storage_backend.mark_model_success(run_id, model.name, rendered, llm_output, cache_key=cache_key)
-
-                    result = ModelRunResult(
-                        model_name=model.name,
-                        status="success",
-                        prompt_rendered=rendered,
-                        llm_output=llm_output,
-                        execution_ms=elapsed_ms,
-                        cached=cached is not None,
-                        prompt_skipped=skip_state.skip_value is not None,
-                    )
-
+                result = await model.execute_node(
+                    model_outputs=model_outputs,
+                    model_files=model_files,
+                    storage_backend=storage_backend,
+                    run_id=run_id,
+                    llm_call=llm_call,
+                    rag_call=rag_call,
+                    promptdata=promptdata,
+                    prompt_skipped_models=prompt_skipped_models,
+                    skip_downstream_models=skip_downstream_models,
+                    validators=validators,
+                )
             except Exception as exc:  # noqa: BLE001
                 error_msg = str(exc)
                 storage_backend.mark_model_error(run_id, model.name, error_msg)
