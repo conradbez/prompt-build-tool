@@ -82,7 +82,8 @@ class TestBasicExpansion:
         result = _inject(self.TEMPLATES)
         assert result["article_quality_1"].config["output_format"] == "json"
         assert result["article_quality_2"].config["output_format"] == "json"
-        assert result["article_quality"].config["output_format"] == "json"
+        # Terminal node is a pass-through that exposes article content, not quality JSON.
+        assert "output_format" not in result["article_quality"].config
 
     def test_model_type_stripped_from_generated_models(self):
         result = _inject(self.TEMPLATES)
@@ -104,6 +105,8 @@ class TestBasicExpansion:
         assert "parent_model" not in result["article_quality_1"].source
         assert "ref('article')" in result["article_quality_1"].source
         assert "ref('article_1')" in result["article_quality_2"].source
+        # Terminal node is a pass-through using skip_and_set_to_value, not a quality check.
+        assert "skip_and_set_to_value" in result["article_quality"].source
         assert "ref('article_2')" in result["article_quality"].source
 
     def test_retry_source_contains_skip_logic(self):
@@ -117,12 +120,12 @@ class TestBasicExpansion:
         assert "ref('article_quality_2')['pass']" in src2
         assert "ref('article_1')" in src2
 
-    def test_downstream_ref_rewritten(self):
+    def test_downstream_ref_not_rewritten(self):
         result = _inject(self.TEMPLATES)
-        # summary previously referenced article_quality; should now point at article_2
-        assert "ref('article_2')" in result["summary"].source
-        assert "article_quality" not in result["summary"].source
-        assert "article_2" in result["summary"].depends_on
+        # summary still references article_quality directly — the terminal node is a
+        # pass-through that outputs article content, so no ref-rewriting is needed.
+        assert "ref('article_quality')" in result["summary"].source
+        assert "article_quality" in result["summary"].depends_on
 
     def test_source_models_unchanged(self):
         result = _inject(self.TEMPLATES)

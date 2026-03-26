@@ -115,7 +115,9 @@ async def async_run(
         models_to_json,
         models_from_json,
     )
-    from pbt.executor.quality import inject_quality_intermediate_models
+    # Import quality module first so its replace_node_in_dag callback is registered.
+    import pbt.executor.quality  # noqa: F401
+    from pbt.executor.model_type_registry import apply_replace_node_callbacks
 
     if storage_backend is None:
         from pbt.storage.sqlite import SQLiteStorageBackend
@@ -147,7 +149,7 @@ async def async_run(
     else:
         raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
         all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)
-        all_models = inject_quality_intermediate_models(all_models)
+        all_models = apply_replace_node_callbacks(all_models)
         dag_hash = compute_dag_hash(all_models)
         storage_backend.save_dag(dag_hash, models_to_json(all_models))
 

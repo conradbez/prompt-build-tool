@@ -15,15 +15,17 @@ With article_quality.prompt::
     {{ parent_model }}
     Return {"pass": true, "feedback": "..."}.
 
-inject_quality_intermediate_models expands the models dict to::
+_quality_replace_node_callback expands the quality node into::
 
     topic → article
-                  → article_quality_1
-                  → article_1          (skips if quality_1 passed, else reruns article)
-                  → article_quality_2
-                  → article_2          (skips if quality_2 passed, else reruns article)
-                  → article_quality    (terminal; same name as original)
-                  → summary            (ref rewritten to article_2, not quality JSON)
+                  → article_quality_1      (intermediate quality check; outputs JSON)
+                  → article_1              (skips if quality_1 passed, else reruns article)
+                  → article_quality_2      (intermediate quality check; outputs JSON)
+                  → article_2              (skips if quality_2 passed, else reruns article)
+                  → article_quality        (terminal pass-through; outputs article_2 content)
+
+    summary still references article_quality and receives article content —
+    no rewriting of downstream nodes is required.
 
 Cache propagation
 -----------------
@@ -39,9 +41,73 @@ import re
 from pathlib import Path
 
 from pbt.executor.graph import PromptModel
+from pbt.executor.model_type_registry import register_replace_node_callback
 
 # Matches the bare `parent_model` identifier in templates.
 _PARENT_MODEL_RE = re.compile(r"\bparent_model\b")
+
+
+def _quality_replace_node_callback(
+    qm: PromptModel,
+    models: dict[str, PromptModel],
+) -> list[PromptModel]:
+    """Replace a quality_check node with a chain of intermediate nodes.
+
+    Returns only new nodes owned by this quality model — no other existing
+    node in the DAG is modified.  The terminal node keeps the original quality
+    model's name and acts as a pass-through that exposes the best article
+    content, so downstream models that ref() the quality model receive article
+    text without any ref-rewriting of those downstream nodes.
+
+    Parameters
+    ----------
+    qm:
+        The quality_check model to expand.
+    models:
+        The full models dict (read-only reference for context lookups).
+
+    Returns
+    -------
+    Ordered list of replacement PromptModel objects.
+
+    Raises
+    ------
+    ValueError
+        If a quality_check model cannot be resolved to exactly one source,
+        or if the declared source does not exist in the project.
+    """
+    source_name = _resolve_source(qm, models)
+    source_model = models[source_name]
+    max_depth = int(qm.config.get("max_depth", "3"))
+
+    if max_depth < 1:
+        raise ValueError(
+            f"Quality check model '{qm.name}': max_depth must be >= 1, "
+            f"got {max_depth}."
+        )
+
+    result: list[PromptModel] = []
+
+    # Build the chain iteratively.
+    # For max_depth=1 the loop body never executes — only the terminal
+    # pass-through node is created (config keys stripped, source normalised).
+    prev_article = source_name
+
+    for i in range(1, max_depth):
+        quality_i_name = f"{qm.name}_{i}"
+        retry_i_name = f"{source_name}_{i}"
+
+        result.append(_make_quality_model(qm, quality_i_name, prev_article, source_name))
+        result.append(_make_retry_model(source_model, retry_i_name, quality_i_name, prev_article))
+        prev_article = retry_i_name
+
+    # Terminal node: keeps the original quality model name and acts as a
+    # pass-through that outputs the best article content.  Downstream models
+    # that ref() this node receive article text, not quality-check JSON —
+    # without any modification to those downstream nodes.
+    result.append(_make_terminal_passthrough_node(qm, prev_article))
+
+    return result
 
 
 def inject_quality_intermediate_models(
@@ -49,6 +115,10 @@ def inject_quality_intermediate_models(
 ) -> dict[str, PromptModel]:
     """
     Expand quality_check models into retry chains.
+
+    Convenience wrapper used by tests and legacy callers.  Production code
+    should prefer ``apply_replace_node_callbacks`` from
+    ``pbt.executor.model_type_registry``.
 
     Parameters
     ----------
@@ -59,7 +129,7 @@ def inject_quality_intermediate_models(
     Returns
     -------
     A new models dict with intermediate quality checks and retry models
-    inserted between the source model and the terminal quality check.
+    inserted in place of each quality_check node.
 
     Raises
     ------
@@ -68,53 +138,12 @@ def inject_quality_intermediate_models(
         or if the declared source does not exist in the project.
     """
     result = dict(models)
-
-    quality_models = [
-        m for m in models.values()
-        if m.config.get("model_type") == "quality_check"
-    ]
-
-    for qm in quality_models:
-        source_name = _resolve_source(qm, models)
-        source_model = models[source_name]
-        max_depth = int(qm.config.get("max_depth", "3"))
-
-        if max_depth < 1:
-            raise ValueError(
-                f"Quality check model '{qm.name}': max_depth must be >= 1, "
-                f"got {max_depth}."
-            )
-
-        # Build the chain iteratively.
-        # For max_depth=1 the loop body never executes — only the terminal
-        # quality model is updated (config keys stripped, source normalised).
-        prev_article = source_name
-        new_models: dict[str, PromptModel] = {}
-
-        for i in range(1, max_depth):
-            quality_i_name = f"{qm.name}_{i}"
-            retry_i_name = f"{source_name}_{i}"
-
-            new_models[quality_i_name] = _make_quality_model(
-                qm, quality_i_name, prev_article, source_name
-            )
-            new_models[retry_i_name] = _make_retry_model(
-                source_model, retry_i_name, quality_i_name, prev_article
-            )
-            prev_article = retry_i_name
-
-        # Terminal quality model: keeps the original name, now checks the
-        # last retry article (or the original source if max_depth == 1).
-        new_models[qm.name] = _make_quality_model(
-            qm, qm.name, prev_article, source_name
-        )
-
-        # Downstream models that ref() the quality model should receive
-        # article content rather than quality-check JSON.
-        _rewrite_downstream_refs(result, qm.name, prev_article)
-
-        result.update(new_models)
-
+    for model in list(models.values()):
+        if model.config.get("model_type") == "quality_check":
+            replacement_nodes = _quality_replace_node_callback(model, models)
+            del result[model.name]
+            for node in replacement_nodes:
+                result[node.name] = node
     return result
 
 
@@ -165,7 +194,7 @@ def _make_quality_model(
     parent_model_name: str,
     original_source_name: str,
 ) -> PromptModel:
-    """Build a quality check model that checks *parent_model_name*.
+    """Build an intermediate quality check model that checks *parent_model_name*.
 
     * ``parent_model`` occurrences and direct ``ref('original_source')``
       calls in the source are replaced with ``ref('parent_model_name')``.
@@ -197,6 +226,33 @@ def _make_quality_model(
         config=new_config,
         promptdata_used=qm.promptdata_used,
         promptfiles_used=qm.promptfiles_used,
+    )
+
+
+def _make_terminal_passthrough_node(
+    qm: PromptModel,
+    last_article_name: str,
+) -> PromptModel:
+    """Build the terminal node that keeps the original quality model's name.
+
+    This node always skips its LLM call and returns the best article content
+    via ``skip_and_set_to_value``.  Downstream models that ref() the original
+    quality model name therefore receive article text without any modification
+    to those downstream nodes — the owned quality chain is self-contained.
+    """
+    source = f"{{{{ skip_and_set_to_value(ref('{last_article_name}')) }}}}"
+    config = {
+        k: v for k, v in qm.config.items()
+        if k not in ("model_type", "max_depth", "completion_check_of", "output_format")
+    }
+    return PromptModel(
+        name=qm.name,
+        path=qm.path,
+        source=source,
+        depends_on=[last_article_name],
+        config=config,
+        promptdata_used=[],
+        promptfiles_used=[],
     )
 
 
@@ -272,42 +328,6 @@ def _substitute_source_ref(
     return result
 
 
-def _rewrite_downstream_refs(
-    models: dict[str, PromptModel],
-    quality_model_name: str,
-    last_article_name: str,
-) -> None:
-    """Rewrite ``ref('quality_model')`` → ``ref('last_article')`` in-place.
-
-    Downstream consumers (e.g. a ``summary`` model) reference the quality
-    model expecting article content.  After injection the quality model
-    outputs JSON, so we redirect those refs to the last retry article instead.
-
-    Modifies *models* in-place; skips the quality model entry itself.
-    """
-    ref_pattern = re.compile(
-        r"""\bref\(\s*['"]"""
-        + re.escape(quality_model_name)
-        + r"""['"]\s*\)"""
-    )
-    replacement = f"ref('{last_article_name}')"
-
-    for name, model in list(models.items()):
-        if name == quality_model_name:
-            continue
-        if not ref_pattern.search(model.source):
-            continue
-        new_source = ref_pattern.sub(replacement, model.source)
-        new_deps = [
-            last_article_name if d == quality_model_name else d
-            for d in model.depends_on
-        ]
-        models[name] = PromptModel(
-            name=model.name,
-            path=model.path,
-            source=new_source,
-            depends_on=new_deps,
-            config=model.config,
-            promptdata_used=model.promptdata_used,
-            promptfiles_used=model.promptfiles_used,
-        )
+# Register this module's callback with the global registry so that
+# apply_replace_node_callbacks() expands quality_check nodes automatically.
+register_replace_node_callback("quality_check", _quality_replace_node_callback)
