@@ -110,43 +110,6 @@ def _quality_replace_node_callback(
     return result
 
 
-def inject_quality_intermediate_models(
-    models: dict[str, PromptModel],
-) -> dict[str, PromptModel]:
-    """
-    Expand quality_check models into retry chains.
-
-    Convenience wrapper used by tests and legacy callers.  Production code
-    should prefer ``apply_replace_node_callbacks`` from
-    ``pbt.executor.model_type_registry``.
-
-    Parameters
-    ----------
-    models:
-        Loaded models dict, as returned by ``load_models()`` or
-        ``build_models_from_dict()``.
-
-    Returns
-    -------
-    A new models dict with intermediate quality checks and retry models
-    inserted in place of each quality_check node.
-
-    Raises
-    ------
-    ValueError
-        If a quality_check model cannot be resolved to exactly one source,
-        or if the declared source does not exist in the project.
-    """
-    result = dict(models)
-    for model in list(models.values()):
-        if model.config.get("model_type") == "quality_check":
-            replacement_nodes = _quality_replace_node_callback(model, models)
-            del result[model.name]
-            for node in replacement_nodes:
-                result[node.name] = node
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

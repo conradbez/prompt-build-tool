@@ -1,4 +1,4 @@
-"""Tests for inject_quality_intermediate_models (quality check DAG expansion)."""
+"""Tests for quality_check DAG expansion via apply_replace_node_callbacks."""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ import pytest
 
 import pbt
 from pbt.executor.graph import build_models_from_dict, execution_order
-from pbt.executor.quality import inject_quality_intermediate_models
+import pbt.executor.quality  # noqa: F401 - registers the quality_check callback
+from pbt.executor.model_type_registry import apply_replace_node_callbacks
 from pbt.storage import MemoryStorageBackend
 
 
@@ -24,7 +25,7 @@ def _models(raw: dict[str, str]):
 
 def _inject(raw: dict[str, str]):
     """Build + inject in one call."""
-    return inject_quality_intermediate_models(_models(raw))
+    return apply_replace_node_callbacks(_models(raw))
 
 
 # ---------------------------------------------------------------------------
