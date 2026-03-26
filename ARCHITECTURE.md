@@ -9,10 +9,11 @@ pbt/
   __init__.py          Python API (pbt.run) — also resolves llm/rag backends
   cli.py               Click commands — orchestrates discovery, calls execute_run
   executor/
-    graph.py           PromptModel dataclass, DAG building, topological sort, serialisation
-    parser.py          Jinja2 rendering, config() parsing
+    graph.py           DAG building, topological sort, _MODEL_CLASS_MAP registry
+    parser_initial.py  Static analysis — extract_dependencies, parse_model_config
+    parser_model.py    Jinja2 rendering (render_prompt), skip-function helpers
     executor.py        Pure execution loop — no file discovery, no CLI concerns
-    model_constructs.py  Specialised model_type handlers (loop, …) imported by executor
+    model_constructs.py  BaseModelHandler + model_type subclasses (loop, execute_python, quality_check)
   llm.py / rag.py / validator.py  Backend resolvers
   db.py                SQLite schema + queries
   tester.py / docs.py  pbt test and pbt docs implementations
@@ -36,7 +37,9 @@ pbt/
 
 **Validators must not return the raw `result` string when `output_format: json` is set.** The executor parses the LLM output into a Python `dict`/`list` before running validators, storing it in `model_outputs`. If the validator returns the string `result` unchanged, it overwrites the parsed object with a string — breaking any downstream loop model that expects a list. Passthrough validators should either `return True` or return the already-parsed value (e.g. `json.loads(result)`). Validators that don't need to transform JSON output should simply be omitted.
 
-**`model_type` constructs live in `model_constructs.py`.** Specialised execution strategies (e.g. `loop`) are async functions in `pbt/executor/model_constructs.py`, each with the signature `execute_*(model, model_outputs, ...) -> ModelRunResult`. The executor dispatches to them by checking `model.config.get("model_type")` and imports the relevant function. Adding a new construct means adding one function there and one `elif` branch in `executor.py`.
+**`model_type` constructs are class-based handlers in `model_constructs.py`.** `BaseModelHandler` is a dataclass that holds source, deps, and config, and provides the default `execute_node` (plain LLM call). Subclasses override `execute_node` for custom execution strategies (e.g. `LoopModelHandler`, `ExecutePythonModelHandler`) and may also override `inject_extra_nodes` to expand themselves into multiple nodes at DAG-build time (e.g. `QualityCheckModelHandler`). The registry `_MODEL_CLASS_MAP` in `graph.py` maps `model_type` strings to handler classes; adding a new construct means adding a subclass and one entry in that dict.
+
+**`inject_extra_nodes` enables DAG-build-time node expansion.** After each handler is added to the models dict, `graph.py` calls `handler.inject_extra_nodes(models)`. If it returns `(updated_self, extra_nodes)`, the handler replaces itself with `updated_self` and appends `extra_nodes` to the models dict — all before the DAG is built. The handler may only affect itself and new nodes; it receives `models` read-only for looking up already-loaded upstream models. `QualityCheckModelHandler` uses this to expand a single quality-check node into an interleaved chain of check + retry nodes, with a terminal pass-through node that keeps the original name so downstream `ref()` calls are unaffected.
 
 ---
 
@@ -200,9 +203,11 @@ prompt-build-tool-for-LLMs/
 │   ├── __init__.py      # Python API (pbt.run)
 │   ├── cli.py           # Click CLI (pbt run, pbt test, pbt docs, …)
 │   ├── executor/
-│   │   ├── graph.py     # DAG builder + topological sort (networkx) + serialisation
-│   │   ├── parser.py    # Jinja2 renderer with ref(), config() parsing
-│   │   └── executor.py  # LLM calls + SQLite writes + validation hooks
+│   │   ├── graph.py          # DAG builder, topological sort (networkx), _MODEL_CLASS_MAP
+│   │   ├── parser_initial.py # Static analysis: deps, config, promptdata extraction
+│   │   ├── parser_model.py   # Jinja2 render_prompt, ref(), skip helpers
+│   │   ├── model_constructs.py # BaseModelHandler + loop/execute_python/quality_check
+│   │   └── executor.py       # Pure execution loop, LLM calls, validation hooks
 │   ├── llm.py           # LLM backend resolver (loads client.py)
 │   ├── rag.py           # RAG resolver (rag.py → do_RAG)
 │   ├── db.py            # SQLite schema + query helpers

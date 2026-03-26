@@ -12,7 +12,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from pbt.executor.model_constructs import BaseModelHandler, LoopModelHandler, ExecutePythonModelHandler
+from pbt.executor.model_constructs import BaseModelHandler, LoopModelHandler, ExecutePythonModelHandler, QualityCheckModelHandler
 from pbt.executor.parser_initial import (
     extract_dependencies,
     parse_model_config,
@@ -26,6 +26,7 @@ _PROMPT_SUFFIXES = (".prompt.jinja", ".prompt")
 _MODEL_CLASS_MAP: dict[str, type[BaseModelHandler]] = {
     "loop": LoopModelHandler,
     "execute_python": ExecutePythonModelHandler,
+    "quality_check": QualityCheckModelHandler,
 }
 
 
@@ -35,6 +36,22 @@ def _prompt_name(p: Path) -> str:
         if p.name.endswith(suffix):
             return p.name[: -len(suffix)]
     return p.stem
+
+
+def _apply_inject(models: dict[str, BaseModelHandler], name: str) -> None:
+    """Call inject_extra_nodes on models[name] and apply the result in-place."""
+    result = models[name].inject_extra_nodes(models)
+    if result is None:
+        return
+    updated_self, extra_nodes = result
+    models[name] = updated_self
+    for node in extra_nodes:
+        if node.name in models:
+            raise ValueError(
+                f"inject_extra_nodes for '{name}' produced node '{node.name}' "
+                "which conflicts with an existing model name."
+            )
+        models[node.name] = node
 
 
 class CyclicDependencyError(Exception):
@@ -92,6 +109,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, BaseModelHandler
             promptdata_used=promptdata_used,
             promptfiles_used=promptfiles_used,
         )
+        _apply_inject(models, name)
 
     if not models:
         raise FileNotFoundError(
@@ -180,4 +198,5 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, BaseModelHandler
             promptdata_used=promptdata_used,
             promptfiles_used=promptfiles_used,
         )
+        _apply_inject(result, name)
     return result

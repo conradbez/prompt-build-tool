@@ -1,9 +1,11 @@
 """
-Model handler base class and concrete model-type handlers for ``loop`` and
-``execute_python``.
+Model handler base class and concrete model-type handlers for ``loop``,
+``execute_python``, and ``quality_check``.
 
 ``BaseModelHandler`` provides the default (normal LLM-call) execution strategy.
-Subclasses override ``execute_node`` for custom model types.
+Subclasses override ``execute_node`` for custom model types and may override
+``inject_extra_nodes`` to expand a single node into a list of replacement nodes
+at DAG-build time (before execution begins).
 """
 
 from __future__ import annotations
@@ -64,6 +66,28 @@ class BaseModelHandler:
     promptfiles_used: list[str] = field(default_factory=list)
 
     model_type: ClassVar[str] = ""
+
+    def inject_extra_nodes(
+        self, all_models: "dict[str, BaseModelHandler]"
+    ) -> "tuple[BaseModelHandler, list[BaseModelHandler]] | None":
+        """Optionally rewrite this node and inject additional preceding nodes.
+
+        Called inline immediately after this handler is added to the models
+        dict, before the DAG is built.  ``all_models`` is the partially-built
+        models dict and may be used read-only to look up already-loaded models.
+
+        Return value
+        ------------
+        ``None``
+            Leave this node unchanged (default).
+        ``(updated_self, extra_nodes)``
+            *updated_self* replaces this node in the models dict (same name,
+            updated source/deps/config).  *extra_nodes* are additional handlers
+            added to the models dict alongside it.  The handler may only
+            influence itself and new nodes — it must not modify any entry in
+            *all_models* that already existed before it was called.
+        """
+        return None
 
     async def execute_node(
         self,
@@ -356,3 +380,119 @@ class ExecutePythonModelHandler(BaseModelHandler):
             cached=False,
             prompt_skipped=False,
         )
+
+
+class QualityCheckModelHandler(BaseModelHandler):
+    """Expand a quality-check node into a retry chain at DAG-build time.
+
+    At graph-construction time ``inject_extra_nodes`` replaces the single
+    quality-check node with an interleaved chain of check + retry nodes,
+    plus a terminal pass-through node that keeps the original name.
+
+    Example — given ``article → article_quality → summary`` where
+    ``article_quality`` has ``model_type="quality_check"`` and
+    ``quality_retries=2``, the expansion produces::
+
+        article_quality_1  ← quality check on original article
+        article_1          ← retry (skips if quality_1 passed)
+        article_quality_2  ← quality check on article_1
+        article_2          ← retry (skips if quality_2 passed)
+        article_quality    ← terminal pass-through (keeps original name)
+
+    The quality-check prompt (the node's source template) should reference the
+    upstream target via ``ref('...')``.  Pass ``quality_pass_marker`` in config
+    to change the substring the handler looks for in the quality check's output
+    to decide whether to skip the retry (default: ``"PASS"``).
+    """
+
+    model_type: str = "quality_check"  # type: ignore[assignment]
+
+    def inject_extra_nodes(
+        self, all_models: "dict[str, BaseModelHandler]"
+    ) -> "tuple[BaseModelHandler, list[BaseModelHandler]]":
+        retries = int(self.config.get("quality_retries", "2"))
+        pass_marker = self.config.get("quality_pass_marker", "PASS")
+
+        # Identify the single upstream model being quality-checked.
+        target_deps = [d for d in self.depends_on if d in all_models]
+        if len(target_deps) != 1:
+            raise ValueError(
+                f"Quality check node '{self.name}' must depend on exactly one upstream "
+                f"model; got depends_on={self.depends_on!r}."
+            )
+        target_name = target_deps[0]
+        target_model = all_models[target_name]
+
+        quality_config = {k: v for k, v in self.config.items() if k != "model_type"}
+        target_config = {k: v for k, v in target_model.config.items() if k != "model_type"}
+
+        extra_nodes: list[BaseModelHandler] = []
+        prev_retry_name = target_name  # name of the most recent article-like node
+
+        for i in range(1, retries + 1):
+            check_name = f"{self.name}_{i}"
+            retry_name = f"{target_name}_{i}"
+
+            # --- quality-check sub-node ---
+            if i == 1:
+                check_source = self.source
+                check_deps = list(self.depends_on)
+            else:
+                # Rewrite the quality template to ref the previous retry instead
+                # of the original target.
+                check_source = self.source.replace(
+                    f"ref('{target_name}')", f"ref('{prev_retry_name}')"
+                ).replace(
+                    f'ref("{target_name}")', f'ref("{prev_retry_name}")'
+                )
+                check_deps = [prev_retry_name]
+
+            extra_nodes.append(BaseModelHandler(
+                name=check_name,
+                path=self.path,
+                source=check_source,
+                depends_on=check_deps,
+                config=quality_config,
+                promptdata_used=self.promptdata_used,
+                promptfiles_used=self.promptfiles_used,
+            ))
+
+            # --- retry sub-node ---
+            # Skips (and passes through the previous best output) when quality passed.
+            skip_block = (
+                f"{{% if '{pass_marker}' in ref('{check_name}')|upper %}}"
+                f"{{{{ skip_and_set_to_value(ref('{prev_retry_name}')) }}}}"
+                f"{{% endif %}}\n"
+            )
+            retry_source = skip_block + target_model.source
+            retry_deps = list(dict.fromkeys(
+                list(target_model.depends_on)
+                + [check_name]
+                + ([prev_retry_name] if prev_retry_name != target_name else [])
+            ))
+
+            extra_nodes.append(BaseModelHandler(
+                name=retry_name,
+                path=target_model.path,
+                source=retry_source,
+                depends_on=retry_deps,
+                config=target_config,
+                promptdata_used=target_model.promptdata_used,
+                promptfiles_used=target_model.promptfiles_used,
+            ))
+
+            prev_retry_name = retry_name
+
+        # --- updated self: terminal pass-through (keeps original name) ---
+        terminal_source = f"{{{{ skip_and_set_to_value(ref('{prev_retry_name}')) }}}}"
+        updated_self = BaseModelHandler(
+            name=self.name,
+            path=self.path,
+            source=terminal_source,
+            depends_on=[prev_retry_name],
+            config={},
+            promptdata_used=[],
+            promptfiles_used=[],
+        )
+
+        return updated_self, extra_nodes
