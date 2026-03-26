@@ -121,7 +121,7 @@ def execute_tests(
             on_test_start(test_name)
 
         try:
-            rendered, _ = render_prompt(source, model_outputs)
+            rendered, _ = render_prompt(source, model_outputs, model_name=test_name)
             t0 = time.monotonic()
             llm_output = llm_call(rendered)
             elapsed_ms = int((time.monotonic() - t0) * 1000)

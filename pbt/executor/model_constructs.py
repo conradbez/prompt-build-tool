@@ -104,7 +104,7 @@ class BaseModelHandler:
     ) -> "ModelRunResult":
         from pbt.executor.executor import ModelRunResult
 
-        rendered, skip_state = render_prompt(self.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models)
+        rendered, skip_state = render_prompt(self.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models, model_name=self.name)
         cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True)
 
         cached = None
@@ -210,6 +210,7 @@ class LoopModelHandler(BaseModelHandler):
                 self.source, item_outputs,
                 promptdata=promptdata, rag_call=rag_call,
                 prompt_skipped_models=prompt_skipped_models,
+                model_name=self.name,
             )
             rendered_items.append((item_rendered, item_skip_state))
 
@@ -308,6 +309,7 @@ class ExecutePythonModelHandler(BaseModelHandler):
             self.source, model_outputs,
             promptdata=promptdata, rag_call=rag_call,
             prompt_skipped_models=prompt_skipped_models,
+            model_name=self.name,
         )
 
         cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True)
@@ -464,7 +466,10 @@ class QualityCheckModelHandler(BaseModelHandler):
                 f"{{{{ skip_and_set_to_value(ref('{prev_retry_name}')) }}}}"
                 f"{{% endif %}}\n"
             )
-            retry_source = skip_block + target_model.source
+            feedback_block = (
+                f"{{% set _ = model.meta._set(feedback_from_previous_run=ref('{check_name}')) %}}\n"
+            )
+            retry_source = skip_block + feedback_block + target_model.source
             retry_deps = list(dict.fromkeys(
                 list(target_model.depends_on)
                 + [check_name]

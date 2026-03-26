@@ -7,10 +7,33 @@ injecting upstream outputs via ref() and evaluating skip logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from jinja2 import Environment, StrictUndefined
+
+
+class _Meta:
+    """Open namespace for template-settable model metadata.
+
+    Attributes are set dynamically (e.g. ``feedback_from_previous_run`` in
+    quality retry nodes).  Any unset attribute returns ``None`` so
+    ``{% if model.meta.feedback_from_previous_run %}`` is always safe.
+    """
+    def __getattr__(self, name: str):
+        return None
+
+    def _set(self, **kwargs) -> str:
+        for k, v in kwargs.items():
+            object.__setattr__(self, k, v)
+        return ""
+
+
+@dataclass
+class _ModelContext:
+    """Metadata about the current model, available as ``{{ model }}`` in templates."""
+    name: str = ""
+    meta: _Meta = field(default_factory=_Meta)
 
 
 @dataclass
@@ -31,6 +54,7 @@ def render_prompt(
     promptdata: dict | None = None,
     rag_call: "Callable[..., list[str]] | None" = None,
     prompt_skipped_models: "set[str] | None" = None,
+    model_name: str = "",
 ) -> "tuple[str, _RenderState]":
     """
     Render *template_source* as a Jinja2 template.
@@ -54,6 +78,7 @@ def render_prompt(
     env = _make_env()
     _promptdata = promptdata or {}
     state = _RenderState()
+    model_context = _ModelContext(name=model_name)
 
     def ref(model_name: str) -> str:
         if model_name not in model_outputs:
@@ -82,6 +107,7 @@ def render_prompt(
         "return_list_RAG_results": return_list_RAG_results,
         "was_skipped": was_skipped,
         "config": lambda **_: "",   # no-op during real render; config already parsed
+        "model": model_context,
     }
 
     def skip_and_set_to_value(value) -> str:

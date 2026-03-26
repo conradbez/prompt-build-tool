@@ -396,38 +396,6 @@ def validate(prompt: str, result: str) -> bool:
 
 Run with `pbt run` — validation fires automatically after each model's LLM call.
 
-### Typed hints in validation
-
-Use Pydantic models to define the expected shape of your model's JSON output:
-
-```python
-# validation/summaries.py
-import json
-from pydantic import BaseModel, ValidationError
-
-
-class SummaryItem(BaseModel):
-    title: str
-    summary: str
-    key_points: list[str]
-
-
-class Summaries(BaseModel):
-    summaries: list[SummaryItem]
-
-
-def validate(prompt: str, result: str) -> bool:
-    """Summaries output must be valid JSON matching the Summaries model."""
-    try:
-        data = json.loads(result)
-        summaries = Summaries(**data)
-    except (json.JSONDecodeError, ValidationError):
-        return False
-    return len(summaries.summaries) >= 1 and len(summaries.summaries[0].key_points) >= 1
-```
-
-Run `pbt type-hints` to generate jinja-lsp context stubs from your validation classes, enabling autocomplete for `ref()` inside `.prompt` templates in VS Code.
-
 ---
 
 ## HTTP server (`utils/server`)
@@ -454,6 +422,55 @@ import uvicorn
 app = create_app(models_dir="models")
 uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
+
+---
+
+## Quality checks with automatic retries (`model_type="quality_check"`)
+
+Add a quality-check node after any model to automatically retry it until it passes (or a retry limit is reached).
+
+**1. Write the quality check:**
+
+```jinja
+{# models/article_quality.prompt #}
+{{ config(model_type="quality_check", quality_retries="2") }}
+Does this article have a clear introduction, body, and conclusion?
+Reply PASS if yes, FAIL and explain why if not.
+
+Article: {{ ref('article') }}
+```
+
+**2. The upstream model can use the feedback:**
+
+```jinja
+{# models/article.prompt #}
+{% if model.meta.feedback_from_previous_run %}
+A previous attempt was rejected. Feedback: {{ model.meta.feedback_from_previous_run }}
+Rewrite the article addressing that feedback.
+{% else %}
+Write an article about {{ ref('topic') }}.
+{% endif %}
+```
+
+pbt expands `article_quality` into an interleaved retry chain at run time:
+
+```
+article             ← original run
+article_quality_1   ← quality check (contains PASS or FAIL + reason)
+article_1           ← retry (skipped if quality_1 passed)
+article_quality_2   ← quality check on article_1
+article_2           ← retry (skipped if quality_2 passed)
+article_quality     ← terminal pass-through (output of best attempt)
+```
+
+Downstream models depend on `article_quality` as normal — they always receive the best passing output.
+
+**Config options:**
+
+| Option | Default | Description |
+|---|---|---|
+| `quality_retries` | `"2"` | Number of retry attempts |
+| `quality_pass_marker` | `"PASS"` | Substring to detect in quality check output to mark success |
 
 ---
 
