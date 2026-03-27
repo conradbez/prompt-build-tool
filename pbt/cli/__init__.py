@@ -720,7 +720,7 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
     app = create_app(models_dir=models_dir, validation_dir=validation_dir)
 
-    test_url = f"http://{host}:{port}/test"
+    test_url = f"http://{host}:{port}/run"
     docs_path = Path(docs_output)
     if docs_path.exists():
         from fastapi.responses import HTMLResponse

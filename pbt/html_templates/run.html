@@ -26,7 +26,7 @@
 <body>
   <div id="loader"><div class="spinner"></div></div>
 
-  {% set active_page = 'test' %}
+  {% set active_page = 'run' %}
   {% include '_nav.html' %}
 
   <main class="container">
@@ -34,7 +34,7 @@
       <p>Run models and inspect their outputs.</p>
     </hgroup>
 
-    <form hx-post="/test/run"
+    <form hx-post="/run/execute"
           hx-target="#results"
           hx-swap="innerHTML"
           hx-encoding="multipart/form-data"
@@ -43,6 +43,7 @@
       {% if dag_promptdata %}
       <section>
         <h6>Prompt Data</h6>
+        <p><small>Pass text values into prompts, referenced with <code>{{ '{{' }}promptdata("key"){{ '}}' }}</code>.</small></p>
         {% for key in dag_promptdata %}
         <label for="pd_{{ key }}">{{ key }}
           <input type="text" id="pd_{{ key }}" name="pd_{{ key }}" placeholder="(optional)">
@@ -54,6 +55,7 @@
       {% if dag_promptfiles %}
       <section>
         <h6>Prompt Files</h6>
+        <p><small>Upload files to use in prompts, referenced with <code>{{ '{{' }}promptfile("file_name"){{ '}}' }}</code>.</small></p>
         {% for name in dag_promptfiles %}
         <label for="pf_{{ name }}">{{ name }}
           <input type="file" id="pf_{{ name }}" name="pf_{{ name }}">
@@ -69,6 +71,7 @@
       {% if model_names %}
       <section>
         <h6>Model</h6>
+        <p><small>Select which model's result to return.</small></p>
         <select id="select-models" name="select">
           <option value="">All models</option>
           {% for name in model_names %}

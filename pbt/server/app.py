@@ -120,20 +120,20 @@ def create_app(
         return RunResponse(outputs=serialised, errors=errors)
 
     # ------------------------------------------------------------------
-    # GET /test — HTMX test UI
+    # GET /run — HTMX test UI
     # ------------------------------------------------------------------
-    @app.get("/test", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/run", response_class=HTMLResponse, include_in_schema=False)
     def test_ui() -> str:
-        return _TEMPLATES.get_template("test.html").render(
+        return _TEMPLATES.get_template("run.html").render(
             dag_promptdata=dag_promptdata,
             dag_promptfiles=dag_promptfiles,
             model_names=model_names,
         )
 
     # ------------------------------------------------------------------
-    # POST /test/run — HTMX form handler, returns HTML fragment
+    # POST /run/execute — HTMX form handler, returns HTML fragment
     # ------------------------------------------------------------------
-    @app.post("/test/run", response_class=HTMLResponse, include_in_schema=False)
+    @app.post("/run/execute", response_class=HTMLResponse, include_in_schema=False)
     async def test_run(request: Request) -> str:
         import html as _html
 
