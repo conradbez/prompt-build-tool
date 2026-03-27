@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pbt — test runner</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"></script>
+  <style>
+    #loader {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.35); backdrop-filter: blur(3px);
+      align-items: center; justify-content: center; z-index: 9999;
+    }
+    #loader.htmx-request { display: flex; }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid var(--pico-muted-border-color);
+      border-top-color: var(--pico-primary);
+      border-radius: 50%; animation: spin .75s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #results { margin-top: var(--pico-spacing); }
+    details {
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+      padding: var(--pico-spacing);
+      margin-bottom: var(--pico-spacing);
+    }
+  </style>
+</head>
+<body>
+  <div id="loader"><div class="spinner"></div></div>
+
+  {% set active_page = 'run' %}
+  {% include '_nav.html' %}
+
+  <main class="container">
+    <hgroup>
+      <p>Run models and inspect their outputs.</p>
+    </hgroup>
+
+    <form hx-post="/run/execute"
+          hx-target="#results"
+          hx-swap="innerHTML"
+          hx-encoding="multipart/form-data"
+          hx-indicator="#loader">
+
+      {% if dag_promptdata %}
+      <details open>
+        <summary><strong>Prompt Data</strong></summary>
+        <p><small>Pass text values into prompts, referenced with <code>{{ '{{' }}promptdata("key"){{ '}}' }}</code>.</small></p>
+        {% for key in dag_promptdata %}
+        <label for="pd_{{ key }}"><code>{{'{{'}}promptdata("<strong>{{ key }}</strong>"){{'}}'}}</code>
+          <input type="text" id="pd_{{ key }}" name="pd_{{ key }}" placeholder="(optional)">
+        </label>
+        {% endfor %}
+      </details>
+      {% endif %}
+
+      {% if dag_promptfiles %}
+      <details open>
+        <summary><strong>Prompt Files</strong></summary>
+        <p><small>Upload files to use in prompts, referenced with <code>{{ '{{' }}promptfile("file_name"){{ '}}' }}</code>.</small></p>
+        {% for name in dag_promptfiles %}
+        <label for="pf_{{ name }}"><code>{{'{{'}}promptfile("<strong>{{ name }}</strong>"){{'}}'}}</code>
+          <input type="file" id="pf_{{ name }}" name="pf_{{ name }}">
+        </label>
+        {% endfor %}
+      </details>
+      {% endif %}
+
+      {% if not dag_promptdata and not dag_promptfiles %}
+      <p><em>No promptdata() or promptfile() variables detected in models.</em></p>
+      {% endif %}
+
+      {% if model_names %}
+      <details>
+        <summary><strong>Select model</strong></summary>
+        <p><small>Select a model to return only its output. If none is selected, all models will be run and their outputs returned.</small></p>
+        <select id="select-models" name="select">
+          <option value="">All models</option>
+          {% for name in model_names %}
+          <option value="{{ name }}">{{ name }}</option>
+          {% endfor %}
+        </select>
+      </details>
+      {% endif %}
+
+      <button type="submit">&#9654; Run</button>
+    </form>
+
+    <div id="results"></div>
+  </main>
+</body>
+</html>

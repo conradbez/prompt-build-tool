@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pbt docs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    section { margin-top: var(--pico-spacing); }
+    h2 { font-size: 1.2em; font-weight: 600; margin-bottom: var(--pico-spacing); }
+    .badge {
+      color: #fff; padding: 2px 8px;
+      border-radius: 4px; font-size: 0.8em; font-weight: 600;
+    }
+    .detail-row { display: none; }
+    .detail-inner {
+      padding: var(--pico-spacing);
+      background: var(--pico-card-sectioning-background-color);
+    }
+    .output-cell {
+      font-size: 0.85em; max-width: 400px;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  {% set active_page = 'docs' %}
+  {% include '_nav.html' %}
+
+  {% macro badge(status) %}
+  <span class="badge" style="background:{{ status_colours.get(status, '#6b7280') }}">{{ status }}</span>
+  {% endmacro %}
+
+  <main class="container">
+    <hgroup>
+      <h1>pbt docs</h1>
+      <p>prompt-build-tool run history &mdash; generated {{ generated_at }}</p>
+    </hgroup>
+
+    <section>
+      <h2>Run History</h2>
+      <p><small>Click a row to expand model details.</small></p>
+      <figure>
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th style="text-align:right">Models</th>
+              <th>Started</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in runs %}
+            <tr onclick="toggleDetail('{{ run.run_id }}')" style="cursor:pointer">
+              <td style="font-family:monospace;font-size:0.85em">{{ run.short_id }}</td>
+              <td>{{ run.date }}</td>
+              <td>{{ badge(run.status) }}</td>
+              <td style="text-align:right">{{ run.model_count }}</td>
+              <td style="color:var(--pico-muted-color);font-size:0.9em">{{ run.created }}</td>
+              <td style="color:var(--pico-muted-color);font-size:0.9em">{{ run.duration }}</td>
+            </tr>
+            {% if run.results %}
+            <tr id="detail-{{ run.run_id }}" class="detail-row">
+              <td colspan="6" style="padding:0">
+                <div class="detail-inner">
+                  <table style="margin-bottom:0">
+                    <thead>
+                      <tr><th>Model</th><th>Status</th><th>Time</th><th>Output preview</th></tr>
+                    </thead>
+                    <tbody>
+                      {% for r in run.results %}
+                      <tr>
+                        <td style="font-family:monospace">{{ r.model_name }}</td>
+                        <td>{{ badge(r.status) }}</td>
+                        <td style="color:var(--pico-muted-color)">{{ r.execution_ms ~ ' ms' if r.execution_ms else '—' }}</td>
+                        <td class="output-cell">{{ r.error if r.error else r.output_preview }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
+            {% else %}
+            <tr>
+              <td colspan="6" style="text-align:center;color:var(--pico-muted-color)">
+                No runs recorded yet. Run <code>pbt run</code> first.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </figure>
+    </section>
+
+    {% if dag_section %}
+    <section>
+      <h2>Model DAG</h2>
+      <article>
+        <div class="mermaid" style="overflow:auto">
+{{ dag_section | safe }}
+        </div>
+      </article>
+    </section>
+    {% endif %}
+  </main>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+
+    function toggleDetail(runId) {
+      var row = document.getElementById('detail-' + runId);
+      if (row) {
+        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+      }
+    }
+  </script>
+</body>
+</html>

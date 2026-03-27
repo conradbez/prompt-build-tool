@@ -14,6 +14,7 @@ Use ``pbt.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable
 
 from pbt.executor.model_constructs import BaseModelHandler
@@ -148,7 +149,7 @@ async def execute_run(
 
             try:
                 # Resolve file paths declared in this model's config block
-                model_files: list[str] | None = None
+                model_files: list | None = None
                 if model.promptfiles_used and promptfiles:
                     model_files = []
                     for name in model.promptfiles_used:
@@ -158,7 +159,11 @@ async def execute_run(
                                 f"but it was not provided. Pass it via --promptfile {name}=path or "
                                 f"the promptfiles= argument."
                             )
-                        model_files.append(promptfiles[name])
+                        pf = promptfiles[name]
+                        # Open string/Path values so LLM clients always receive file objects
+                        if isinstance(pf, (str, Path)):
+                            pf = open(pf, "rb")  # noqa: WPS515
+                        model_files.append(pf)
 
                 result = await model.execute_node(
                     model_outputs=model_outputs,

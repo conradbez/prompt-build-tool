@@ -1,3 +1,6 @@
-def validate(prompt: str, result: str) -> bool:
+def validate(prompt: str, result: str) -> str:
     """Article must be at least 200 characters and contain a markdown header."""
-    return len(result) >= 200 and "#" in result
+    didPassValidation = len(result) >= 200 and "#" in result
+    if not didPassValidation:
+        result = False
+    return result

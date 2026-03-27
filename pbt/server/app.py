@@ -4,24 +4,36 @@ FastAPI application factory for the pbt server.
 
 from __future__ import annotations
 
-import inspect
-from typing import Any, Optional
+import io
+from pathlib import Path
+from typing import Any
 
 try:
-    from fastapi import FastAPI, Query
+    from fastapi import FastAPI, File, Form, Request, UploadFile
+    from fastapi.responses import HTMLResponse
     from pydantic import BaseModel
+    from jinja2 import Environment, FileSystemLoader
 except ImportError as exc:
     raise ImportError(
-        "utils.server requires FastAPI and uvicorn. "
-        "Install them with: pip install fastapi uvicorn"
+        "utils.server requires FastAPI, uvicorn, and mako. "
+        "Install them with: pip install fastapi uvicorn mako"
     ) from exc
 
 import pbt
 
 
-class RunRequest(BaseModel):
-    promptdata: dict[str, Any] | None = None
-    select: list[str] | None = None
+_TEMPLATES = Environment(
+    loader=FileSystemLoader(str(Path(__file__).parent.parent / "html_templates")),
+    autoescape=True,
+)
+
+
+class _NamedBytesIO(io.BytesIO):
+    """BytesIO with a .name attribute so LLM clients can call mimetypes.guess_type(f.name)."""
+
+    def __init__(self, data: bytes, name: str) -> None:
+        super().__init__(data)
+        self.name = name
 
 
 class RunResponse(BaseModel):
@@ -41,95 +53,64 @@ def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
     return serialised, errors
 
 
-def _build_run_endpoint(models_dir: str, validation_dir: str, dag_promptdata: list[str]):
-    """
-    Dynamically build a /run function whose signature lists each detected
-    promptdata() key as an optional query parameter. FastAPI reads __signature__
-    to generate the OpenAPI schema, so every key shows up in /docs.
-    """
-
-    # The actual handler — receives promptdata values as keyword arguments
-    async def _run(**kwargs: Any) -> RunResponse:
-        provided = {k: v for k, v in kwargs.items() if v is not None}
-        try:
-            outputs = await pbt.run(
-                models_dir=models_dir,
-                promptdata=provided or None,
-                validation_dir=validation_dir,
-                verbose=False,
-            )
-        except Exception as exc:
-            return RunResponse(outputs={}, errors=[str(exc)])
-        serialised, errors = _serialise(outputs)
-        return RunResponse(outputs=serialised, errors=errors)
-
-    # Build a signature: one Optional[str] query param per detected promptdata key
-    params = [
-        inspect.Parameter(
-            key_name,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            default=Query(None, description=f"Template variable: `{{{{ promptdata('{key_name}') }}}}`"),
-            annotation=Optional[str],
-        )
-        for key_name in dag_promptdata
-    ]
-    _run.__signature__ = inspect.Signature(params)
-
-    description = (
-        "Run all pbt prompt models and return their outputs.\n\n"
-        + (
-            "**Detected template variables** (from `promptdata()` usage in `.prompt` files):\n"
-            + "\n".join(f"- `{v}`" for v in dag_promptdata)
-            if dag_promptdata
-            else "_No promptdata() variables detected in current models._"
-        )
-    )
-    _run.__doc__ = description
-
-    return _run
-
-
 def create_app(
     models_dir: str = "models",
     validation_dir: str = "validation",
 ) -> FastAPI:
-    """
-    Create and return a FastAPI app that exposes pbt over HTTP.
+    """Create and return a FastAPI app that exposes pbt over HTTP."""
 
-    The /run endpoint's query parameters are built dynamically from the vars
-    detected across all .prompt files via static promptdata() scanning at startup.
-    """
-    # Detect promptdata() keys at startup so the OpenAPI schema is accurate
+    # Detect DAG shape at startup for the test UI
     try:
-        from pbt.graph import load_models, get_dag_promptdata
-        models = load_models(models_dir)
-        dag_promptdata = get_dag_promptdata(models)
+        from pbt.executor.graph import load_models, get_dag_promptdata, get_dag_promptfiles
+        _models = load_models(models_dir)
+        dag_promptdata: list[str] = get_dag_promptdata(_models)
+        dag_promptfiles: list[str] = get_dag_promptfiles(_models)
+        model_names: list[str] = list(_models.keys())
     except Exception:
         dag_promptdata = []
+        dag_promptfiles = []
+        model_names = []
 
     app = FastAPI(
         title="pbt server",
-        description=(
-            "Run pbt prompt models via HTTP. "
-            "Query parameters on `/run` are auto-generated from `promptdata()` "
-            "usage detected in your `.prompt` files."
-        ),
+        description="Run pbt prompt models via HTTP.",
         version=pbt.__version__,
     )
 
-    @app.get("/health")
-    def health() -> dict:
-        return {"status": "ok", "pbt_version": pbt.__version__, "dag_promptdata": dag_promptdata}
+    # ------------------------------------------------------------------
+    # POST /run — multipart form: promptdata (JSON), select (JSON), file
+    # ------------------------------------------------------------------
+    @app.post("/run", response_model=RunResponse, summary="Run models (form + file upload)")
+    async def run_endpoint(
+        promptdata: str | None = Form(None, description='JSON object of template variables, e.g. `{"key": "value"}`'),
+        select: str | None = Form(None, description='JSON array of model names to run, e.g. `["model_a"]`'),
+        file: UploadFile | None = File(None, description="Optional file passed as promptfile named 'file'"),
+    ) -> RunResponse:
+        """Run pbt models with optional form-encoded promptdata, select, and a file upload."""
+        import json
 
-    # POST /run — generic JSON body (for programmatic use)
-    @app.post("/run", response_model=RunResponse, summary="Run models (JSON body)")
-    async def run_post(request: RunRequest) -> RunResponse:
-        """Run pbt models with a JSON body. Useful for programmatic access."""
+        parsed_promptdata: dict | None = None
+        if promptdata:
+            try:
+                parsed_promptdata = json.loads(promptdata)
+            except json.JSONDecodeError as exc:
+                return RunResponse(outputs={}, errors=[f"promptdata is not valid JSON: {exc}"])
+
+        parsed_select: list[str] | None = None
+        if select:
+            try:
+                parsed_select = json.loads(select)
+            except json.JSONDecodeError as exc:
+                return RunResponse(outputs={}, errors=[f"select is not valid JSON: {exc}"])
+
+        promptfiles = {"file": _NamedBytesIO(await file.read(), file.filename)} if file else None
+
         try:
-            outputs = await pbt.run(
+            outputs = await pbt.async_run(
                 models_dir=models_dir,
-                select=request.select,
-                promptdata=request.promptdata,
+                select=parsed_select,
+                promptdata=parsed_promptdata,
+                promptfiles=promptfiles,
                 validation_dir=validation_dir,
                 verbose=False,
             )
@@ -138,8 +119,69 @@ def create_app(
         serialised, errors = _serialise(outputs)
         return RunResponse(outputs=serialised, errors=errors)
 
-    # GET /run — dynamic query params per detected promptdata key (for the docs UI)
-    run_get = _build_run_endpoint(models_dir, validation_dir, dag_promptdata)
-    app.get("/run", response_model=RunResponse, summary="Run models (query params)")(run_get)
+    # ------------------------------------------------------------------
+    # GET /run — HTMX test UI
+    # ------------------------------------------------------------------
+    @app.get("/run", response_class=HTMLResponse, include_in_schema=False)
+    def test_ui() -> str:
+        return _TEMPLATES.get_template("run.html").render(
+            dag_promptdata=dag_promptdata,
+            dag_promptfiles=dag_promptfiles,
+            model_names=model_names,
+        )
+
+    # ------------------------------------------------------------------
+    # POST /run/execute — HTMX form handler, returns HTML fragment
+    # ------------------------------------------------------------------
+    @app.post("/run/execute", response_class=HTMLResponse, include_in_schema=False)
+    async def test_run(request: Request) -> str:
+        import html as _html
+
+        form = await request.form()
+
+        promptdata = {
+            key: str(form[f"pd_{key}"])
+            for key in dag_promptdata
+            if form.get(f"pd_{key}")
+        }
+
+        promptfiles = {}
+        for name in dag_promptfiles:
+            upload = form.get(f"pf_{name}")
+            if upload and getattr(upload, "filename", None):
+                promptfiles[name] = _NamedBytesIO(await upload.read(), upload.filename)
+
+        raw_select = form.getlist("select")
+        selected = [s for s in raw_select if s] or None
+
+        try:
+            outputs = await pbt.async_run(
+                models_dir=models_dir,
+                select=selected,
+                promptdata=promptdata or None,
+                promptfiles=promptfiles or None,
+                validation_dir=validation_dir,
+                verbose=False,
+            )
+        except Exception as exc:
+            return f'<article><p><mark>&#9888; {_html.escape(str(exc))}</mark></p></article>'
+
+        serialised, errors = _serialise(outputs)
+
+        parts = ['<h6>Model outputs</h6>']
+        for model_name, output in serialised.items():
+            is_error = isinstance(output, str) and output.startswith("error")
+            content = f'<ins>{_html.escape(str(output))}</ins>' if is_error else _html.escape(str(output))
+            parts.append(
+                f'<article>'
+                f'<header><strong>{_html.escape(model_name)}</strong></header>'
+                f'<pre><code>{content}</code></pre>'
+                f'</article>'
+            )
+
+        for err in errors:
+            parts.append(f'<article><p><mark>&#9888; {_html.escape(err)}</mark></p></article>')
+
+        return "\n".join(parts) if parts else '<p><em>No outputs.</em></p>'
 
     return app

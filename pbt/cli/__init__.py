@@ -26,6 +26,7 @@ from pbt.executor.graph import (
     load_models,
     build_dag,
     get_dag_promptdata,
+    get_dag_promptfiles,
     CyclicDependencyError,
     UnknownModelError,
 )
@@ -33,6 +34,7 @@ from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
+from pbt.promptparams import load_promptparams, write_example
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
@@ -104,9 +106,20 @@ def main() -> None:
     show_default=True,
     help="Directory containing per-model validation Python files.",
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
+@click.option(
+    "--clear-cache",
+    is_flag=True,
+    default=False,
+    help="Clear the LLM prompt cache before running, forcing fresh calls for all models.",
+)
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
+
+    if clear_cache:
+        db.init_db()
+        cleared = db.clear_cache()
+        c.print(f"  [yellow]Cache cleared[/yellow] ({cleared} entr{'ies' if cleared != 1 else 'y'} invalidated)\n")
 
     # Parse --promptdata KEY=VALUE pairs into a dict
     promptdata_vars: dict[str, str] = {}
@@ -292,15 +305,43 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 @click.option(
     "--run-id",
     default=None,
-    help="Use outputs from this specific run (default: latest run with matching DAG hash).",
+    help="Use outputs from this specific run (default: latest run). Ignored when --promptparams-file rows are found.",
 )
 @click.option("--no-color", is_flag=True, default=False)
-def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) -> None:
+@click.option(
+    "--promptparams-file",
+    default="promptparams.csv",
+    show_default=True,
+    help=(
+        "CSV file with columns for promptdata / promptfile parameters. "
+        "When rows are present, pbt run is executed for each row and tests "
+        "are reported per row. Column names: promptdata.<key> or promptfile.<name>. "
+        "Ignored when the file does not exist."
+    ),
+)
+@click.option(
+    "--check-latest",
+    is_flag=True,
+    default=False,
+    help="Skip promptparams.csv and test against the latest stored run instead.",
+)
+def test(
+    models_dir: str,
+    tests_dir: str,
+    run_id: str | None,
+    no_color: bool,
+    promptparams_file: str,
+    check_latest: bool,
+) -> None:
     """
-    Run test prompts from the tests/ directory against the latest model outputs.
+    Run test prompts from the tests/ directory against model outputs.
 
     Each test prompt has full Jinja2 context (ref() works as in models).
     A test passes when the LLM returns JSON containing {"results": "pass"}.
+
+    When a promptparams.csv file is present, pbt run is executed once per row
+    and tests are reported for each row individually.
+    Without promptparams, tests run against the latest (or specified) run.
     """
     c = Console(highlight=not no_color)
     db.init_db()
@@ -317,7 +358,7 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         return
 
     # ------------------------------------------------------------------
-    # Load models (for ref() context in test templates)
+    # Load models
     # ------------------------------------------------------------------
     try:
         all_models = load_models(models_dir)
@@ -326,64 +367,167 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Find the run whose outputs we'll test against
-    # ------------------------------------------------------------------
-    if run_id:
-        with db.get_conn() as conn:
-            target_run = conn.execute(
-                "SELECT * FROM runs WHERE run_id=?", (run_id,)
-            ).fetchone()
-        if not target_run:
-            err_console.print(f"[red]Error:[/red] Run '{run_id}' not found.")
-            sys.exit(1)
-    else:
-        target_run = db.get_latest_successful_run()
-        if target_run is None:
-            err_console.print(
-                f"[red]Error:[/red] No previous successful run found.\n"
-                f"Run [bold]pbt run[/bold] first, then [bold]pbt test[/bold]."
-            )
-            sys.exit(1)
-
-    # ------------------------------------------------------------------
-    # Load model outputs from that run
-    # ------------------------------------------------------------------
-    model_names = list(all_models.keys())
-    model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
-
-    pretty_print.print_test_header(c, tests_dir, tests, target_run)
-
-    # ------------------------------------------------------------------
-    # Resolve LLM backend
+    # Resolve LLM backend (needed for both modes)
     # ------------------------------------------------------------------
     try:
         llm_call = resolve_llm_call(models_dir)
+        rag_call = resolve_rag_call(models_dir)
     except Exception as exc:
         err_console.print(f"[red]Backend resolution error:[/red] {exc}")
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Execute tests
+    # Write promptparams.csv.example — column template for this DAG
     # ------------------------------------------------------------------
-    test_results: list = []
-    on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=len(tests))
+    from pbt.executor.parser_initial import detect_used_promptdata
 
-    execute_tests(
-        run_id=target_run["run_id"],
-        tests=tests,
-        model_outputs=model_outputs,
-        storage_backend=db,
-        on_test_start=on_start,
-        on_test_done=on_done,
-        llm_call=llm_call,
-    )
+    dag_promptdata = get_dag_promptdata(all_models)
+    for src in tests.values():
+        for key in detect_used_promptdata(src):
+            if key not in dag_promptdata:
+                dag_promptdata.append(key)
+    dag_promptfiles = get_dag_promptfiles(all_models)
 
-    pretty_print.print_test_summary(c, test_results, target_run)
+    example_path = Path(tests_dir) / "promptparams.csv.example"
+    try:
+        write_example(example_path, dag_promptdata, dag_promptfiles)
+        if dag_promptdata or dag_promptfiles:
+            c.print(f"  [dim]promptparams.csv.example written → {example_path}[/dim]")
+            c.print()
+    except Exception:  # noqa: BLE001
+        pass
 
-    failed  = sum(1 for r in test_results if r.status == "fail")
-    errored = sum(1 for r in test_results if r.status == "error")
-    if failed or errored:
-        sys.exit(1)
+    # ------------------------------------------------------------------
+    # Load promptparams rows (optional; skipped when --check-latest)
+    # ------------------------------------------------------------------
+    promptparams_rows = [] if check_latest else load_promptparams(promptparams_file)
+
+    if promptparams_rows:
+        # --------------------------------------------------------------
+        # Per-row mode: run models then test for each CSV row
+        # --------------------------------------------------------------
+        from pbt.executor.executor import execute_run
+        from pbt.promptparams import parse_promptparams_row
+
+        c.print(
+            f"  promptparams : [dim]{promptparams_file}[/dim] "
+            f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
+        )
+        c.print()
+
+        try:
+            ordered_models = list(build_dag(all_models))  # validates DAG
+        except (CyclicDependencyError, UnknownModelError) as exc:
+            err_console.print(f"[red]Dependency error:[/red] {exc}")
+            sys.exit(1)
+        ordered_models = list(all_models.values())
+
+        git_sha = _git_sha()
+        all_test_results: list = []
+
+        for idx, row in enumerate(promptparams_rows, start=1):
+            row_promptdata, row_promptfiles = parse_promptparams_row(row)
+            row_label = ", ".join(f"{k}={v}" for k, v in row.items() if v)
+            c.rule(f"[bold]Row {idx}[/bold]" + (f" — {row_label}" if row_label else ""))
+
+            # Run models for this row
+            row_run_id = db.create_run(model_count=len(ordered_models), git_sha=git_sha)
+            model_run_results: list = []
+            on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(ordered_models))
+            run_results = asyncio.run(execute_run(
+                run_id=row_run_id,
+                ordered_models=ordered_models,
+                storage_backend=db,
+                on_model_start=on_model_start,
+                on_model_done=on_model_done,
+                llm_call=llm_call,
+                rag_call=rag_call,
+                promptdata=row_promptdata or None,
+                promptfiles=row_promptfiles or None,
+            ))
+            run_errors = sum(1 for r in run_results if r.status == "error")
+            db.finish_run(row_run_id, "success" if not run_errors else "partial")
+
+            model_outputs = {
+                r.model_name: r.llm_output
+                for r in run_results
+                if r.status == "success" and r.llm_output
+            }
+
+            # Run tests against this row's outputs
+            row_test_results: list = []
+            on_start, on_done = pretty_print.make_test_callbacks(c, row_test_results, total=len(tests))
+            execute_tests(
+                run_id=row_run_id,
+                tests=tests,
+                model_outputs=model_outputs,
+                storage_backend=db,
+                on_test_start=on_start,
+                on_test_done=on_done,
+                llm_call=llm_call,
+            )
+            all_test_results.extend(row_test_results)
+
+            passed = sum(1 for r in row_test_results if r.status == "pass")
+            failed_row = sum(1 for r in row_test_results if r.status in ("fail", "error"))
+            status_color = "green" if not failed_row else "red"
+            c.print(f"  [{status_color}]{passed}/{len(row_test_results)} passed[/{status_color}]")
+            c.print()
+
+        # Overall summary
+        total_passed = sum(1 for r in all_test_results if r.status == "pass")
+        total_failed = sum(1 for r in all_test_results if r.status in ("fail", "error"))
+        c.rule("[bold]Overall[/bold]")
+        overall_color = "green" if not total_failed else "red"
+        c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {len(promptparams_rows)} rows[/{overall_color}]")
+
+        if total_failed:
+            sys.exit(1)
+
+    else:
+        # --------------------------------------------------------------
+        # Single-run mode: test against latest (or specified) run
+        # --------------------------------------------------------------
+        if run_id:
+            with db.get_conn() as conn:
+                target_run = conn.execute(
+                    "SELECT * FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+            if not target_run:
+                err_console.print(f"[red]Error:[/red] Run '{run_id}' not found.")
+                sys.exit(1)
+        else:
+            target_run = db.get_latest_successful_run()
+            if target_run is None:
+                err_console.print(
+                    f"[red]Error:[/red] No previous successful run found.\n"
+                    f"Run [bold]pbt run[/bold] first, then [bold]pbt test[/bold]."
+                )
+                sys.exit(1)
+
+        model_names = list(all_models.keys())
+        model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
+
+        pretty_print.print_test_header(c, tests_dir, tests, target_run)
+
+        test_results: list = []
+        on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=len(tests))
+        execute_tests(
+            run_id=target_run["run_id"],
+            tests=tests,
+            model_outputs=model_outputs,
+            storage_backend=db,
+            on_test_start=on_start,
+            on_test_done=on_done,
+            llm_call=llm_call,
+        )
+
+        pretty_print.print_test_summary(c, test_results, target_run)
+
+        failed  = sum(1 for r in test_results if r.status == "fail")
+        errored = sum(1 for r in test_results if r.status == "error")
+        if failed or errored:
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -576,22 +720,11 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
     app = create_app(models_dir=models_dir, validation_dir=validation_dir)
 
+    test_url = f"http://{host}:{port}/run"
     docs_path = Path(docs_output)
     if docs_path.exists():
         from fastapi.responses import HTMLResponse
         html_content = docs_path.read_text(encoding="utf-8")
-        api_url = f"http://{host}:{port}/docs"
-        api_link = (
-            f'<nav style="'
-            f"font-family:sans-serif;font-size:13px;background:#1e1e2e;color:#cdd6f4;"
-            f"padding:0 20px;display:flex;align-items:center;gap:24px;height:40px;"
-            f'box-shadow:0 1px 4px rgba(0,0,0,.4);position:sticky;top:0;z-index:999">'
-            f'<span style="font-weight:600;letter-spacing:.5px">pbt</span>'
-            f'<a href="{api_url}" style="color:#89b4fa;text-decoration:none" '
-            f'target="_blank">API docs ↗</a>'
-            f"</nav>"
-        )
-        html_content = html_content.replace("<body>", f"<body>\n{api_link}", 1)
 
         @app.get("/docs-report", response_class=HTMLResponse)
         def docs_report():  # noqa: ANN201
@@ -599,10 +732,10 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
         docs_url = f"http://{host}:{port}/docs-report"
         console.print(f"[dim]Docs report:[/dim] {docs_url}")
-        console.print(f"[dim]API docs:    [/dim] {api_url}")
+        console.print(f"[dim]Test runner: [/dim] {test_url}")
     else:
-        docs_url = f"http://{host}:{port}/docs"
-        console.print(f"[dim]No docs file found at {docs_output}, opening API docs.[/dim]")
+        docs_url = test_url
+        console.print(f"[dim]No docs file found at {docs_output}, opening test runner.[/dim]")
 
     console.print(f"[bold cyan]pbt serve[/bold cyan] → http://{host}:{port}")
 

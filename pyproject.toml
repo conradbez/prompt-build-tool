@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-build-tool"
-version = "0.1.20"
+version = "0.1.22"
 description = "A dbt-inspired prompt orchestration tool for LLMs"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,9 @@ pbt = "pbt.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pbt*"]
+
+[tool.setuptools.package-data]
+"pbt" = ["html_templates/*.html"]
 
 [dependency-groups]
 dev = [

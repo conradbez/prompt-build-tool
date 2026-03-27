@@ -82,3 +82,7 @@ def get_run_results(run_id: str):
 
 def get_latest_runs(limit: int = 10):
     return _DEFAULT_BACKEND.get_latest_runs(limit)
+
+
+def clear_cache() -> int:
+    return _DEFAULT_BACKEND.clear_cache()

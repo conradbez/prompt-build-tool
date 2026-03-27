@@ -1,3 +1,3 @@
-*   **Symbiotic Exchange:** Trees and fungi form a subterranean "Wood Wide Web," where trees provide life-sustaining sugars in exchange for essential minerals and water gathered by fungal threads.
-*   **Communication and Support:** This network acts as a communication system, allowing trees to warn neighbors of pests and enabling "Mother Trees" to send nutrients to saplings and kin.
-*   **Strategic Competition:** While primarily cooperative, the network is also used for survival tactics, such as nutrient theft by certain orchids and chemical warfare by trees seeking to eliminate rivals.
+*   **Symbiotic Infrastructure:** Mycorrhizal fungi create a vast underground network that connects tree roots, facilitating a trade of sugars for essential nutrients like phosphorus and nitrogen.
+*   **Support and Communication:** Central "Mother Trees" use the network to nurture seedlings with carbon, while other trees send chemical distress signals to warn neighbors of pest attacks and trigger collective defenses.
+*   **Complex Ecosystem:** Beyond cooperation, the network is used for chemical warfare and resource theft, shifting the scientific view of forests from a group of individuals to a single, interconnected organism.

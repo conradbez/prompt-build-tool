@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from rich.console import Console
+from rich.markup import escape as _escape
 from rich.table import Table
 from rich import box
 
@@ -139,7 +140,7 @@ def make_test_callbacks(
 
     def on_start(name: str) -> None:
         idx = len(test_results) + 1
-        c.print(f"  [{idx}/{total}] [bold]{name}[/bold] … ", end="")
+        c.print(f"  [{idx}/{total}] [bold]{_escape(name)}[/bold] … ", end="")
 
     def on_done(result: TestResult) -> None:
         test_results.append(result)
