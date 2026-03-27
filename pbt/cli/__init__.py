@@ -26,6 +26,7 @@ from pbt.executor.graph import (
     load_models,
     build_dag,
     get_dag_promptdata,
+    get_dag_promptfiles,
     CyclicDependencyError,
     UnknownModelError,
 )
@@ -33,6 +34,7 @@ from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
+from pbt.promptparams import load_promptparams, write_example
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
@@ -295,12 +297,33 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     help="Use outputs from this specific run (default: latest run with matching DAG hash).",
 )
 @click.option("--no-color", is_flag=True, default=False)
-def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) -> None:
+@click.option(
+    "--promptparams-file",
+    default="promptparams.csv",
+    show_default=True,
+    help=(
+        "CSV file with columns for promptdata / promptfile parameters. "
+        "Each row is cross-joined with every test. "
+        "Column names: promptdata.<key> or promptfile.<name>. "
+        "Ignored when the file does not exist."
+    ),
+)
+def test(
+    models_dir: str,
+    tests_dir: str,
+    run_id: str | None,
+    no_color: bool,
+    promptparams_file: str,
+) -> None:
     """
     Run test prompts from the tests/ directory against the latest model outputs.
 
     Each test prompt has full Jinja2 context (ref() works as in models).
     A test passes when the LLM returns JSON containing {"results": "pass"}.
+
+    When a promptparams.csv file is present, every test is cross-joined with
+    each parameter row so that every combination is exercised.
+    Running pbt test also writes promptparams.csv.example as a column template.
     """
     c = Console(highlight=not no_color)
     db.init_db()
@@ -324,6 +347,17 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
     except FileNotFoundError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # Load promptparams rows (optional)
+    # ------------------------------------------------------------------
+    promptparams_rows = load_promptparams(promptparams_file)
+    if promptparams_rows:
+        c.print(
+            f"  promptparams : [dim]{promptparams_file}[/dim] "
+            f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
+        )
+        c.print()
 
     # ------------------------------------------------------------------
     # Find the run whose outputs we'll test against
@@ -351,8 +385,6 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
     model_names = list(all_models.keys())
     model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
 
-    pretty_print.print_test_header(c, tests_dir, tests, target_run)
-
     # ------------------------------------------------------------------
     # Resolve LLM backend
     # ------------------------------------------------------------------
@@ -363,10 +395,38 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Execute tests
+    # Write promptparams.csv.example — column template for this DAG
     # ------------------------------------------------------------------
+    from pbt.executor.parser_initial import detect_used_promptdata
+
+    # Collect all promptdata keys: from models + from test prompt sources
+    dag_promptdata = get_dag_promptdata(all_models)
+    for src in tests.values():
+        for key in detect_used_promptdata(src):
+            if key not in dag_promptdata:
+                dag_promptdata.append(key)
+
+    dag_promptfiles = get_dag_promptfiles(all_models)
+
+    example_path = Path(promptparams_file).with_suffix(".csv.example")
+    try:
+        write_example(example_path, dag_promptdata, dag_promptfiles)
+        if dag_promptdata or dag_promptfiles:
+            c.print(
+                f"  [dim]promptparams.csv.example written → {example_path}[/dim]"
+            )
+            c.print()
+    except Exception:  # noqa: BLE001
+        pass  # example generation is best-effort; never block a test run
+
+    # ------------------------------------------------------------------
+    # Print test header and execute
+    # ------------------------------------------------------------------
+    total_cases = len(tests) * max(len(promptparams_rows), 1)
+    pretty_print.print_test_header(c, tests_dir, tests, target_run)
+
     test_results: list = []
-    on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=len(tests))
+    on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=total_cases)
 
     execute_tests(
         run_id=target_run["run_id"],
@@ -376,6 +436,7 @@ def test(models_dir: str, tests_dir: str, run_id: str | None, no_color: bool) ->
         on_test_start=on_start,
         on_test_done=on_done,
         llm_call=llm_call,
+        promptparams_rows=promptparams_rows or None,
     )
 
     pretty_print.print_test_summary(c, test_results, target_run)
