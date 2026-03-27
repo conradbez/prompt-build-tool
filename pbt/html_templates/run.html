@@ -21,6 +21,12 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     #results { margin-top: var(--pico-spacing); }
+    details {
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+      padding: var(--pico-spacing);
+      margin-bottom: var(--pico-spacing);
+    }
   </style>
 </head>
 <body>
@@ -41,27 +47,27 @@
           hx-indicator="#loader">
 
       {% if dag_promptdata %}
-      <section>
-        <h6>Prompt Data</h6>
+      <details open>
+        <summary><strong>Prompt Data</strong></summary>
         <p><small>Pass text values into prompts, referenced with <code>{{ '{{' }}promptdata("key"){{ '}}' }}</code>.</small></p>
         {% for key in dag_promptdata %}
-        <label for="pd_{{ key }}">{{ key }}
+        <label for="pd_{{ key }}"><code>{{'{{'}}promptdata("<strong>{{ key }}</strong>"){{'}}'}}</code>
           <input type="text" id="pd_{{ key }}" name="pd_{{ key }}" placeholder="(optional)">
         </label>
         {% endfor %}
-      </section>
+      </details>
       {% endif %}
 
       {% if dag_promptfiles %}
-      <section>
-        <h6>Prompt Files</h6>
+      <details open>
+        <summary><strong>Prompt Files</strong></summary>
         <p><small>Upload files to use in prompts, referenced with <code>{{ '{{' }}promptfile("file_name"){{ '}}' }}</code>.</small></p>
         {% for name in dag_promptfiles %}
-        <label for="pf_{{ name }}">{{ name }}
+        <label for="pf_{{ name }}"><code>{{'{{'}}promptfile("<strong>{{ name }}</strong>"){{'}}'}}</code>
           <input type="file" id="pf_{{ name }}" name="pf_{{ name }}">
         </label>
         {% endfor %}
-      </section>
+      </details>
       {% endif %}
 
       {% if not dag_promptdata and not dag_promptfiles %}
@@ -69,16 +75,16 @@
       {% endif %}
 
       {% if model_names %}
-      <section>
-        <h6>Model</h6>
-        <p><small>Select which model's result to return.</small></p>
+      <details>
+        <summary><strong>Select model</strong></summary>
+        <p><small>Select a model to return only its output. If none is selected, all models will be run and their outputs returned.</small></p>
         <select id="select-models" name="select">
           <option value="">All models</option>
           {% for name in model_names %}
           <option value="{{ name }}">{{ name }}</option>
           {% endfor %}
         </select>
-      </section>
+      </details>
       {% endif %}
 
       <button type="submit">&#9654; Run</button>

@@ -168,7 +168,7 @@ def create_app(
 
         serialised, errors = _serialise(outputs)
 
-        parts = []
+        parts = ['<h6>Model outputs</h6>']
         for model_name, output in serialised.items():
             is_error = isinstance(output, str) and output.startswith("error")
             content = f'<ins>{_html.escape(str(output))}</ins>' if is_error else _html.escape(str(output))
