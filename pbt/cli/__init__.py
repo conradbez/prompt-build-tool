@@ -720,22 +720,20 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
     app = create_app(models_dir=models_dir, validation_dir=validation_dir)
 
+    test_url = f"http://{host}:{port}/test"
     docs_path = Path(docs_output)
     if docs_path.exists():
         from fastapi.responses import HTMLResponse
+        from pbt.server.app import _PICO, _NAV
         html_content = docs_path.read_text(encoding="utf-8")
-        api_url = f"http://{host}:{port}/docs"
-        api_link = (
-            f'<nav style="'
-            f"font-family:sans-serif;font-size:13px;background:#1e1e2e;color:#cdd6f4;"
-            f"padding:0 20px;display:flex;align-items:center;gap:24px;height:40px;"
-            f'box-shadow:0 1px 4px rgba(0,0,0,.4);position:sticky;top:0;z-index:999">'
-            f'<span style="font-weight:600;letter-spacing:.5px">pbt</span>'
-            f'<a href="{api_url}" style="color:#89b4fa;text-decoration:none" '
-            f'target="_blank">API docs ↗</a>'
-            f"</nav>"
-        )
-        html_content = html_content.replace("<body>", f"<body>\n{api_link}", 1)
+        # Ensure Pico CSS, dark theme, and nav are present regardless of when
+        # the docs file was generated.
+        if _PICO not in html_content:
+            html_content = html_content.replace("</head>", f"{_PICO}\n</head>", 1)
+        # Remove dark theme if present in older generated files.
+        html_content = html_content.replace(' data-theme="dark"', "")
+        if _NAV not in html_content:
+            html_content = html_content.replace("<body>", f"<body>\n{_NAV}", 1)
 
         @app.get("/docs-report", response_class=HTMLResponse)
         def docs_report():  # noqa: ANN201
@@ -743,10 +741,10 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 
         docs_url = f"http://{host}:{port}/docs-report"
         console.print(f"[dim]Docs report:[/dim] {docs_url}")
-        console.print(f"[dim]API docs:    [/dim] {api_url}")
+        console.print(f"[dim]Test runner: [/dim] {test_url}")
     else:
-        docs_url = f"http://{host}:{port}/docs"
-        console.print(f"[dim]No docs file found at {docs_output}, opening API docs.[/dim]")
+        docs_url = test_url
+        console.print(f"[dim]No docs file found at {docs_output}, opening test runner.[/dim]")
 
     console.print(f"[bold cyan]pbt serve[/bold cyan] → http://{host}:{port}")
 

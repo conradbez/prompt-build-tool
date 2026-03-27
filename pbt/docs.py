@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from pbt.executor.model_constructs import BaseModelHandler
 
 
+_PICO = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">'
+
 _STATUS_COLOUR = {
     "success": "#22c55e",
     "error":   "#ef4444",
@@ -100,42 +102,43 @@ def generate_docs(
                 output_preview = _esc((r["llm_output"] or "")[:200])
                 result_rows.append(
                     f"<tr>"
-                    f"<td style='padding:4px 12px;font-family:monospace'>{_esc(r['model_name'])}</td>"
-                    f"<td style='padding:4px 12px'>{_badge(r['status'])}</td>"
-                    f"<td style='padding:4px 12px;color:#6b7280'>{ms_str}</td>"
-                    f"<td style='padding:4px 12px;font-size:0.85em;color:#374151;max-width:400px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'>"
+                    f"<td style='font-family:monospace'>{_esc(r['model_name'])}</td>"
+                    f"<td>{_badge(r['status'])}</td>"
+                    f"<td style='color:var(--pico-muted-color)'>{ms_str}</td>"
+                    f"<td style='font-size:0.85em;max-width:400px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'>"
                     f"{err or output_preview}</td>"
                     f"</tr>"
                 )
             results_html = (
                 f"<tr id='detail-{_esc(rid)}' style='display:none'>"
-                f"<td colspan='6' style='padding:0 16px 16px 16px;background:#f9fafb'>"
-                f"<table style='width:100%;border-collapse:collapse;font-size:0.9em'>"
-                f"<thead><tr style='text-align:left;color:#6b7280'>"
-                f"<th style='padding:4px 12px'>Model</th>"
-                f"<th style='padding:4px 12px'>Status</th>"
-                f"<th style='padding:4px 12px'>Time</th>"
-                f"<th style='padding:4px 12px'>Output preview</th>"
+                f"<td colspan='6' style='padding:0'>"
+                f"<div style='padding:var(--pico-spacing);background:var(--pico-card-sectioning-background-color)'>"
+                f"<table style='margin-bottom:0'>"
+                f"<thead><tr>"
+                f"<th>Model</th>"
+                f"<th>Status</th>"
+                f"<th>Time</th>"
+                f"<th>Output preview</th>"
                 f"</tr></thead><tbody>"
                 + "".join(result_rows)
-                + "</tbody></table></td></tr>"
+                + "</tbody></table></div></td></tr>"
             )
 
         toggle_js = f"toggleDetail('{_esc(rid)}')"
         runs_rows.append(
-            f"<tr onclick=\"{toggle_js}\" style='cursor:pointer;border-bottom:1px solid #e5e7eb'>"
-            f"<td style='padding:10px 16px;font-family:monospace;font-size:0.85em'>{_esc(short_id)}</td>"
-            f"<td style='padding:10px 16px'>{date}</td>"
-            f"<td style='padding:10px 16px'>{_badge(status)}</td>"
-            f"<td style='padding:10px 16px;text-align:right'>{models_count}</td>"
-            f"<td style='padding:10px 16px;color:#6b7280;font-size:0.9em'>{created}</td>"
-            f"<td style='padding:10px 16px;color:#6b7280;font-size:0.9em'>{duration}</td>"
+            f"<tr onclick=\"{toggle_js}\" style='cursor:pointer'>"
+            f"<td style='font-family:monospace;font-size:0.85em'>{_esc(short_id)}</td>"
+            f"<td>{date}</td>"
+            f"<td>{_badge(status)}</td>"
+            f"<td style='text-align:right'>{models_count}</td>"
+            f"<td style='color:var(--pico-muted-color);font-size:0.9em'>{created}</td>"
+            f"<td style='color:var(--pico-muted-color);font-size:0.9em'>{duration}</td>"
             f"</tr>"
             + results_html
         )
 
     runs_table_body = "\n".join(runs_rows) if runs_rows else (
-        "<tr><td colspan='6' style='padding:24px;text-align:center;color:#9ca3af'>"
+        "<tr><td colspan='6' style='text-align:center;color:var(--pico-muted-color)'>"
         "No runs recorded yet. Run <code>pbt run</code> first.</td></tr>"
     )
 
@@ -145,11 +148,13 @@ def generate_docs(
     if models:
         dag_mermaid = _mermaid_dag(models)
         dag_section = f"""
-<section style="margin-top:40px">
-  <h2 style="font-size:1.2em;font-weight:600;margin-bottom:12px">Model DAG</h2>
-  <div class="mermaid" style="background:#f9fafb;padding:24px;border-radius:8px;overflow:auto">
+<section>
+  <h2>Model DAG</h2>
+  <article>
+    <div class="mermaid" style="overflow:auto">
 {_esc(dag_mermaid)}
-  </div>
+    </div>
+  </article>
 </section>
 """
     else:
@@ -164,49 +169,45 @@ def generate_docs(
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>pbt docs</title>
+  {_PICO}
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-           margin: 0; padding: 32px; background: #fff; color: #111; }}
-    h1   {{ font-size: 1.6em; font-weight: 700; margin-bottom: 4px; }}
-    .subtitle {{ color: #6b7280; margin-bottom: 32px; font-size: 0.95em; }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    thead tr {{ background: #f3f4f6; text-align: left; }}
-    th {{ padding: 10px 16px; font-size: 0.85em; font-weight: 600;
-          text-transform: uppercase; letter-spacing: 0.05em; color: #374151; }}
-    tr:hover {{ background: #f9fafb; }}
-    code {{ background: #f3f4f6; padding: 1px 5px; border-radius: 3px;
-            font-family: monospace; font-size: 0.9em; }}
-    .card {{ border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }}
+    nav {{ margin-bottom: 0; }}
+    section {{ margin-top: var(--pico-spacing); }}
+    h2 {{ font-size: 1.2em; font-weight: 600; margin-bottom: var(--pico-spacing); }}
   </style>
 </head>
 <body>
-  <h1>pbt docs</h1>
-  <p class="subtitle">prompt-build-tool run history &mdash; generated {_esc(__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M'))}</p>
+  <main class="container">
+    <hgroup>
+      <h1>pbt docs</h1>
+      <p>prompt-build-tool run history &mdash; generated {_esc(__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M'))}</p>
+    </hgroup>
 
-  <section>
-    <h2 style="font-size:1.2em;font-weight:600;margin-bottom:12px">Run History</h2>
-    <p style="font-size:0.88em;color:#6b7280;margin-bottom:8px">Click a row to expand model details.</p>
-    <div class="card">
-      <table>
-        <thead>
-          <tr>
-            <th>Run ID</th>
-            <th>Date</th>
-            <th>Status</th>
-            <th style="text-align:right">Models</th>
-            <th>Started</th>
-            <th>Duration</th>
-          </tr>
-        </thead>
-        <tbody>
+    <section>
+      <h2>Run History</h2>
+      <p><small>Click a row to expand model details.</small></p>
+      <figure>
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th style="text-align:right">Models</th>
+              <th>Started</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
 {runs_table_body}
-        </tbody>
-      </table>
-    </div>
-  </section>
+          </tbody>
+        </table>
+      </figure>
+    </section>
 
 {dag_section}
+  </main>
 
   <script>
     mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
