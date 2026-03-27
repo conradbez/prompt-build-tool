@@ -140,6 +140,11 @@ class BaseModelHandler:
         else:
             model_outputs[self.name] = llm_output
 
+        # Cache the raw LLM output before validation so that changing validation
+        # logic doesn't require a new LLM call.
+        raw_llm_output = llm_output
+        storage_backend.mark_model_success(run_id, self.name, rendered, raw_llm_output, cache_key=cache_key)
+
         if skip_state.skip_value is None and validators:
             from pbt.validator import run_validator
             validated = run_validator(self.name, validators, rendered, llm_output)
@@ -149,8 +154,6 @@ class BaseModelHandler:
             else:
                 llm_output = validated if isinstance(validated, str) else str(validated)
                 model_outputs[self.name] = llm_output
-
-        storage_backend.mark_model_success(run_id, self.name, rendered, llm_output, cache_key=cache_key)
 
         return ModelRunResult(
             model_name=self.name,

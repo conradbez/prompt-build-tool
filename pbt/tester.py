@@ -198,9 +198,15 @@ def execute_tests(
                 promptdata=promptdata,
                 model_name=display_name,
             )
-            t0 = time.monotonic()
-            llm_output = _invoke_llm(rendered, llm_call, promptfiles)
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            cached = storage_backend.get_cached_llm_output(rendered)
+            if cached is not None:
+                llm_output = cached
+                elapsed_ms = 0
+            else:
+                t0 = time.monotonic()
+                llm_output = _invoke_llm(rendered, llm_call, promptfiles)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=rendered)
 
             passed = _parse_pass(llm_output)
             # Extract param_label from display_name if present
