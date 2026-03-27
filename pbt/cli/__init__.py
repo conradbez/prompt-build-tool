@@ -724,16 +724,7 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
     docs_path = Path(docs_output)
     if docs_path.exists():
         from fastapi.responses import HTMLResponse
-        from pbt.server.app import _PICO, _NAV
         html_content = docs_path.read_text(encoding="utf-8")
-        # Ensure Pico CSS, dark theme, and nav are present regardless of when
-        # the docs file was generated.
-        if _PICO not in html_content:
-            html_content = html_content.replace("</head>", f"{_PICO}\n</head>", 1)
-        # Remove dark theme if present in older generated files.
-        html_content = html_content.replace(' data-theme="dark"', "")
-        if _NAV not in html_content:
-            html_content = html_content.replace("<body>", f"<body>\n{_NAV}", 1)
 
         @app.get("/docs-report", response_class=HTMLResponse)
         def docs_report():  # noqa: ANN201

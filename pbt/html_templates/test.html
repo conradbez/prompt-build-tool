@@ -26,14 +26,8 @@
 <body>
   <div id="loader"><div class="spinner"></div></div>
 
-  <nav class="container-fluid" style="position:sticky;top:0;z-index:999;border-bottom:1px solid var(--pico-muted-border-color)">
-    <ul><li><strong>pbt</strong></li></ul>
-    <ul>
-      <li><a href="/test" aria-current="page">Test runner</a></li>
-      <li><a href="/docs-report">Docs</a></li>
-      <li><a href="/docs" target="_blank">API docs ↗</a></li>
-    </ul>
-  </nav>
+  {% set active_page = 'test' %}
+  {% include '_nav.html' %}
 
   <main class="container">
     <hgroup>
@@ -46,32 +40,42 @@
           hx-encoding="multipart/form-data"
           hx-indicator="#loader">
 
+      {% if dag_promptdata %}
+      <section>
+        <h6>Prompt Data</h6>
+        {% for key in dag_promptdata %}
+        <label for="pd_{{ key }}">{{ key }}
+          <input type="text" id="pd_{{ key }}" name="pd_{{ key }}" placeholder="(optional)">
+        </label>
+        {% endfor %}
+      </section>
+      {% endif %}
+
+      {% if dag_promptfiles %}
+      <section>
+        <h6>Prompt Files</h6>
+        {% for name in dag_promptfiles %}
+        <label for="pf_{{ name }}">{{ name }}
+          <input type="file" id="pf_{{ name }}" name="pf_{{ name }}">
+        </label>
+        {% endfor %}
+      </section>
+      {% endif %}
+
       {% if not dag_promptdata and not dag_promptfiles %}
       <p><em>No promptdata() or promptfile() variables detected in models.</em></p>
       {% endif %}
 
-      {% for key in dag_promptdata %}
-      <label for="pd_{{ key }}">{{ key }}
-        <input type="text" id="pd_{{ key }}" name="pd_{{ key }}" placeholder="(optional)">
-      </label>
-      {% endfor %}
-
-      {% for name in dag_promptfiles %}
-      <label for="pf_{{ name }}">{{ name }} <small>file</small>
-        <input type="file" id="pf_{{ name }}" name="pf_{{ name }}">
-      </label>
-      {% endfor %}
-
       {% if model_names %}
-      <label for="select-models">Models
-        <br>
-        <small>(leave blank to run all)</small>
+      <section>
+        <h6>Model</h6>
         <select id="select-models" name="select">
+          <option value="">All models</option>
           {% for name in model_names %}
           <option value="{{ name }}">{{ name }}</option>
           {% endfor %}
         </select>
-      </label>
+      </section>
       {% endif %}
 
       <button type="submit">&#9654; Run</button>

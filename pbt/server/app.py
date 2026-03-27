@@ -21,17 +21,6 @@ except ImportError as exc:
 
 import pbt
 
-_PICO = '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">'
-_NAV = (
-    '<nav class="container-fluid" style="position:sticky;top:0;z-index:999;'
-    'border-bottom:1px solid var(--pico-muted-border-color)">'
-    '<ul><li><strong>pbt</strong></li></ul>'
-    '<ul>'
-    '<li><a href="/test">Test runner</a></li>'
-    '<li><a href="/docs-report">Docs</a></li>'
-    '<li><a href="/docs" target="_blank">API docs ↗</a></li>'
-    '</ul></nav>'
-)
 
 _TEMPLATES = Environment(
     loader=FileSystemLoader(str(Path(__file__).parent.parent / "html_templates")),
