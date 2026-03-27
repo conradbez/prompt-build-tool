@@ -106,9 +106,20 @@ def main() -> None:
     show_default=True,
     help="Directory containing per-model validation Python files.",
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str) -> None:
+@click.option(
+    "--clear-cache",
+    is_flag=True,
+    default=False,
+    help="Clear the LLM prompt cache before running, forcing fresh calls for all models.",
+)
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
+
+    if clear_cache:
+        db.init_db()
+        cleared = db.clear_cache()
+        c.print(f"  [yellow]Cache cleared[/yellow] ({cleared} entr{'ies' if cleared != 1 else 'y'} invalidated)\n")
 
     # Parse --promptdata KEY=VALUE pairs into a dict
     promptdata_vars: dict[str, str] = {}

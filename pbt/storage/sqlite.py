@@ -261,6 +261,17 @@ class SQLiteStorageBackend:
                 (limit,),
             ).fetchall()
 
+    def clear_cache(self) -> int:
+        """Nullify all prompt_hash values, forcing fresh LLM calls on next run.
+
+        Returns the number of cache entries cleared.
+        """
+        with self.get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE model_results SET prompt_hash = NULL WHERE prompt_hash IS NOT NULL"
+            )
+            return cursor.rowcount
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")

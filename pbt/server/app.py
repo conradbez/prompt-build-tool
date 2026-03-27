@@ -8,7 +8,7 @@ import inspect
 from typing import Any, Optional
 
 try:
-    from fastapi import FastAPI, Query
+    from fastapi import FastAPI, File, Form, Query, UploadFile
     from pydantic import BaseModel
 except ImportError as exc:
     raise ImportError(
@@ -130,6 +130,46 @@ def create_app(
                 models_dir=models_dir,
                 select=request.select,
                 promptdata=request.promptdata,
+                validation_dir=validation_dir,
+                verbose=False,
+            )
+        except Exception as exc:
+            return RunResponse(outputs={}, errors=[str(exc)])
+        serialised, errors = _serialise(outputs)
+        return RunResponse(outputs=serialised, errors=errors)
+
+    # POST /run/upload — multipart form: promptdata (JSON), select (JSON), optional file
+    @app.post("/run/upload", response_model=RunResponse, summary="Run models (form + file upload)")
+    async def run_upload(
+        promptdata: str | None = Form(None, description="JSON object of template variables, e.g. `{\"key\": \"value\"}`"),
+        select: str | None = Form(None, description="JSON array of model names to run, e.g. `[\"model_a\"]`"),
+        file: UploadFile | None = File(None, description="Optional file passed as promptfile named 'file'"),
+    ) -> RunResponse:
+        """Run pbt models with optional form-encoded promptdata, select, and a file upload."""
+        import json
+
+        parsed_promptdata: dict | None = None
+        if promptdata:
+            try:
+                parsed_promptdata = json.loads(promptdata)
+            except json.JSONDecodeError as exc:
+                return RunResponse(outputs={}, errors=[f"promptdata is not valid JSON: {exc}"])
+
+        parsed_select: list[str] | None = None
+        if select:
+            try:
+                parsed_select = json.loads(select)
+            except json.JSONDecodeError as exc:
+                return RunResponse(outputs={}, errors=[f"select is not valid JSON: {exc}"])
+
+        promptfiles = {"file": file.file} if file else None
+
+        try:
+            outputs = await pbt.run(
+                models_dir=models_dir,
+                select=parsed_select,
+                promptdata=parsed_promptdata,
+                promptfiles=promptfiles,
                 validation_dir=validation_dir,
                 verbose=False,
             )

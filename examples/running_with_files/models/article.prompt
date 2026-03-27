@@ -1,0 +1,20 @@
+{{ config(output_format="json", promptfiles=["instructions"]) }}
+{# Pass --promptfile instructions=path/to/file.txt to supply writing instructions.
+   Optionally pass --promptdata topic=... to set the article topic. #}
+{% if promptdata("topic") %}
+Write a detailed, engaging article about: {{ promptdata("topic") }}
+{% else %}
+Write a detailed, engaging article about a fascinating topic of your choice.
+{% endif %}
+
+Follow the instructions provided in the attached file.
+
+Structure it with an introduction, 3-4 body sections, and a conclusion.
+Use markdown formatting with headers.
+
+Return only valid JSON in this exact format:
+{
+  "content": "<full article text in markdown>",
+  "author": "<a plausible author name>",
+  "audience": "<intended audience, e.g. 'general public', 'developers', 'students'>"
+}
