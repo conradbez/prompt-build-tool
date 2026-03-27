@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pbt docs</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    section { margin-top: var(--pico-spacing); }
+    h2 { font-size: 1.2em; font-weight: 600; margin-bottom: var(--pico-spacing); }
+  </style>
+</head>
+<body>
+  <nav class="container-fluid" style="position:sticky;top:0;z-index:999;border-bottom:1px solid var(--pico-muted-border-color)">
+    <ul><li><strong>pbt</strong></li></ul>
+    <ul>
+      <li><a href="/test">Test runner</a></li>
+      <li><a href="/docs-report" aria-current="page">Docs</a></li>
+      <li><a href="/docs" target="_blank">API docs ↗</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    <hgroup>
+      <h1>pbt docs</h1>
+      <p>prompt-build-tool run history &mdash; generated {{ generated_at }}</p>
+    </hgroup>
+
+    <section>
+      <h2>Run History</h2>
+      <p><small>Click a row to expand model details.</small></p>
+      <figure>
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th style="text-align:right">Models</th>
+              <th>Started</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ runs_table_body | safe }}
+          </tbody>
+        </table>
+      </figure>
+    </section>
+
+    {% if dag_section %}
+    <section>
+      <h2>Model DAG</h2>
+      <article>
+        <div class="mermaid" style="overflow:auto">
+{{ dag_section | safe }}
+        </div>
+      </article>
+    </section>
+    {% endif %}
+  </main>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+
+    function toggleDetail(runId) {
+      var row = document.getElementById('detail-' + runId);
+      if (row) {
+        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+      }
+    }
+  </script>
+</body>
+</html>

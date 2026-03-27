@@ -5,16 +5,18 @@ FastAPI application factory for the pbt server.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Any
 
 try:
     from fastapi import FastAPI, File, Form, Request, UploadFile
     from fastapi.responses import HTMLResponse
     from pydantic import BaseModel
+    from jinja2 import Environment, FileSystemLoader
 except ImportError as exc:
     raise ImportError(
-        "utils.server requires FastAPI and uvicorn. "
-        "Install them with: pip install fastapi uvicorn"
+        "utils.server requires FastAPI, uvicorn, and mako. "
+        "Install them with: pip install fastapi uvicorn mako"
     ) from exc
 
 import pbt
@@ -29,6 +31,11 @@ _NAV = (
     '<li><a href="/docs-report">Docs</a></li>'
     '<li><a href="/docs" target="_blank">API docs ↗</a></li>'
     '</ul></nav>'
+)
+
+_TEMPLATES = Environment(
+    loader=FileSystemLoader(str(Path(__file__).parent.parent / "html_templates")),
+    autoescape=True,
 )
 
 
@@ -128,85 +135,11 @@ def create_app(
     # ------------------------------------------------------------------
     @app.get("/test", response_class=HTMLResponse, include_in_schema=False)
     def test_ui() -> str:
-        pd_fields = "".join(
-            f"""
-            <label for="pd_{key}">{key}
-              <input type="text" id="pd_{key}" name="pd_{key}" placeholder="(optional)">
-            </label>"""
-            for key in dag_promptdata
+        return _TEMPLATES.get_template("test.html").render(
+            dag_promptdata=dag_promptdata,
+            dag_promptfiles=dag_promptfiles,
+            model_names=model_names,
         )
-
-        pf_fields = "".join(
-            f"""
-            <label for="pf_{name}">{name} <small>file</small>
-              <input type="file" id="pf_{name}" name="pf_{name}">
-            </label>"""
-            for name in dag_promptfiles
-        )
-
-        select_field = f"""
-            <label for="select-models">Models
-              <small>leave blank to run all</small>
-              <select id="select-models" name="select" >
-                {"".join(f'<option value="{n}">{n}</option>' for n in model_names)}
-              </select>
-            </label>""" if model_names else ""
-
-        no_vars_msg = (
-            "<p><em>No promptdata() or promptfile() variables detected in models.</em></p>"
-            if not dag_promptdata and not dag_promptfiles else ""
-        )
-
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>pbt — test runner</title>
-  {_PICO}
-  <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"></script>
-  <style>
-    #loader {{
-      display: none; position: fixed; inset: 0;
-      background: rgba(0,0,0,.55); backdrop-filter: blur(3px);
-      align-items: center; justify-content: center; z-index: 9999;
-    }}
-    #loader.htmx-request {{ display: flex; }}
-    .spinner {{
-      width: 48px; height: 48px;
-      border: 4px solid var(--pico-muted-border-color);
-      border-top-color: var(--pico-primary);
-      border-radius: 50%; animation: spin .75s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    #results {{ margin-top: var(--pico-spacing); }}
-  </style>
-</head>
-<body>
-  <div id="loader"><div class="spinner"></div></div>
-  {_NAV}
-  <main class="container">
-    <hgroup>
-      <h1>pbt test runner</h1>
-      <p>Run models and inspect their outputs.</p>
-    </hgroup>
-
-    <form hx-post="/test/run"
-          hx-target="#results"
-          hx-swap="innerHTML"
-          hx-encoding="multipart/form-data"
-          hx-indicator="#loader">
-      {no_vars_msg}
-      {pd_fields}
-      {pf_fields}
-      {select_field}
-      <button type="submit">&#9654; Run</button>
-    </form>
-
-    <div id="results"></div>
-  </main>
-</body>
-</html>"""
 
     # ------------------------------------------------------------------
     # POST /test/run — HTMX form handler, returns HTML fragment

@@ -21,3 +21,4 @@ venv/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+examples/running_with_files/.DS_Store

@@ -23,6 +23,9 @@ pbt = "pbt.cli:main"
 where = ["."]
 include = ["pbt*"]
 
+[tool.setuptools.package-data]
+"pbt" = ["html_templates/*.html"]
+
 [dependency-groups]
 dev = [
     "fastapi>=0.135.1",
