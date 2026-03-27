@@ -1,6 +1,6 @@
 # pbt — prompt-build-tool
 
-A **dbt-inspired** prompt orchestration tool for LLMs.
+A **data-enineering-inspired** prompt orchestration tool for LLMs.
 
 Write modular prompts in Jinja2, reference the output of other prompts with
 `ref()`, and let **pbt** resolve dependencies. 
