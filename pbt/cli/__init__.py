@@ -388,7 +388,7 @@ def test(
                 dag_promptdata.append(key)
     dag_promptfiles = get_dag_promptfiles(all_models)
 
-    example_path = Path(promptparams_file).with_suffix(".csv.example")
+    example_path = Path(tests_dir) / "promptparams.csv.example"
     try:
         write_example(example_path, dag_promptdata, dag_promptfiles)
         if dag_promptdata or dag_promptfiles:
@@ -432,12 +432,14 @@ def test(
 
             # Run models for this row
             row_run_id = db.create_run(model_count=len(ordered_models), git_sha=git_sha)
+            model_run_results: list = []
+            on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(ordered_models))
             run_results = asyncio.run(execute_run(
                 run_id=row_run_id,
                 ordered_models=ordered_models,
                 storage_backend=db,
-                on_model_start=None,
-                on_model_done=None,
+                on_model_start=on_model_start,
+                on_model_done=on_model_done,
                 llm_call=llm_call,
                 rag_call=rag_call,
                 promptdata=row_promptdata or None,

@@ -1,4 +1,4 @@
-Is the following text an erticle about a ladybug?
+Is the following text an erticle about transformers?
 
 {{ ref('article') }}
 

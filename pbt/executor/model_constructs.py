@@ -11,6 +11,7 @@ at DAG-build time (before execution begins).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import io
 import json
@@ -22,6 +23,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, ClassVar
 
 from pbt.executor.parser_model import render_prompt
+
+
+def _files_hash(model_files: list | None) -> str:
+    """Return a short hash of the contents of all promptfiles, or '' if none."""
+    if not model_files:
+        return ""
+    h = hashlib.sha256()
+    for f in model_files:
+        try:
+            if isinstance(f, (str, Path)):
+                h.update(Path(f).read_bytes())
+            else:
+                data = f.read()
+                h.update(data)
+                f.seek(0)
+        except Exception:
+            pass
+    return h.hexdigest()[:16]
 
 if TYPE_CHECKING:
     from pbt.executor.executor import ModelRunResult
@@ -105,7 +124,7 @@ class BaseModelHandler:
         from pbt.executor.executor import ModelRunResult
 
         rendered, skip_state = render_prompt(self.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models, model_name=self.name)
-        cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True)
+        cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True) + "\x00" + _files_hash(model_files)
 
         cached = None
         if skip_state.skip_value is not None:
@@ -218,7 +237,7 @@ class LoopModelHandler(BaseModelHandler):
             rendered_items.append((item_rendered, item_skip_state))
 
         async def _call_one(item_rendered: str, item_skip_state) -> tuple[str, int, bool]:
-            item_cache_key = item_rendered + "\x00" + json.dumps(self.config, sort_keys=True)
+            item_cache_key = item_rendered + "\x00" + json.dumps(self.config, sort_keys=True) + "\x00" + _files_hash(model_files)
 
             if item_skip_state.skip_value is not None:
                 return item_skip_state.skip_value, 0, True
@@ -315,7 +334,7 @@ class ExecutePythonModelHandler(BaseModelHandler):
             model_name=self.name,
         )
 
-        cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True)
+        cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True) + "\x00" + _files_hash(model_files)
 
         if skip_state.skip_value is not None:
             llm_output = skip_state.skip_value
