@@ -1,0 +1,4 @@
+{{ config(output_format="json") }}
+
+Return a JSON array of exactly 3 short fruit names (single words only).
+Return only the JSON array, no other text. Example: ["apple", "banana", "cherry"]
