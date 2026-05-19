@@ -26,7 +26,6 @@ from pbt.executor.graph import (
     load_models,
     build_dag,
     get_dag_promptdata,
-    get_dag_promptfiles,
     CyclicDependencyError,
     UnknownModelError,
 )
@@ -34,7 +33,6 @@ from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
-from pbt.promptparams import load_promptparams, write_example
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
@@ -305,33 +303,14 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 @click.option(
     "--run-id",
     default=None,
-    help="Use outputs from this specific run (default: latest run). Ignored when --promptparams-file rows are found.",
+    help="Use outputs from this specific run (default: latest run). Only used when no test declares config rows.",
 )
 @click.option("--no-color", is_flag=True, default=False)
-@click.option(
-    "--promptparams-file",
-    default="promptparams.csv",
-    show_default=True,
-    help=(
-        "CSV file with columns for promptdata / promptfile parameters. "
-        "When rows are present, pbt run is executed for each row and tests "
-        "are reported per row. Column names: promptdata.<key> or promptfile.<name>. "
-        "Ignored when the file does not exist."
-    ),
-)
-@click.option(
-    "--check-latest",
-    is_flag=True,
-    default=False,
-    help="Skip promptparams.csv and test against the latest stored run instead.",
-)
 def test(
     models_dir: str,
     tests_dir: str,
     run_id: str | None,
     no_color: bool,
-    promptparams_file: str,
-    check_latest: bool,
 ) -> None:
     """
     Run test prompts from the tests/ directory against model outputs.
@@ -339,10 +318,13 @@ def test(
     Each test prompt has full Jinja2 context (ref() works as in models).
     A test passes when the LLM returns JSON containing {"results": "pass"}.
 
-    When a promptparams.csv file is present, pbt run is executed once per row
-    and tests are reported for each row individually.
-    Without promptparams, tests run against the latest (or specified) run.
+    Tests can declare their own promptdata and promptfiles via a config()
+    call at the top of the file.  When the config values are lists, the test
+    runs once per entry and models are re-run for each row.
     """
+    from pbt.tester import get_test_row_count, get_merged_row_params
+    from pbt.executor.executor import execute_run
+
     c = Console(highlight=not no_color)
     db.init_db()
 
@@ -367,7 +349,7 @@ def test(
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Resolve LLM backend (needed for both modes)
+    # Resolve LLM backend
     # ------------------------------------------------------------------
     try:
         llm_call = resolve_llm_call(models_dir)
@@ -377,44 +359,18 @@ def test(
         sys.exit(1)
 
     # ------------------------------------------------------------------
-    # Write promptparams.csv.example — column template for this DAG
+    # Determine row count from test configs
     # ------------------------------------------------------------------
-    from pbt.executor.parser_initial import detect_used_promptdata
-
-    dag_promptdata = get_dag_promptdata(all_models)
-    for src in tests.values():
-        for key in detect_used_promptdata(src):
-            if key not in dag_promptdata:
-                dag_promptdata.append(key)
-    dag_promptfiles = get_dag_promptfiles(all_models)
-
-    example_path = Path(tests_dir) / "promptparams.csv.example"
     try:
-        write_example(example_path, dag_promptdata, dag_promptfiles)
-        if dag_promptdata or dag_promptfiles:
-            c.print(f"  [dim]promptparams.csv.example written → {example_path}[/dim]")
-            c.print()
-    except Exception:  # noqa: BLE001
-        pass
+        row_count = get_test_row_count(tests)
+    except ValueError as exc:
+        err_console.print(f"[red]Test config error:[/red] {exc}")
+        sys.exit(1)
 
-    # ------------------------------------------------------------------
-    # Load promptparams rows (optional; skipped when --check-latest)
-    # ------------------------------------------------------------------
-    promptparams_rows = [] if check_latest else load_promptparams(promptparams_file)
-
-    if promptparams_rows:
+    if row_count > 0:
         # --------------------------------------------------------------
-        # Per-row mode: run models then test for each CSV row
+        # Parameterised mode: run models then test for each config row
         # --------------------------------------------------------------
-        from pbt.executor.executor import execute_run
-        from pbt.promptparams import parse_promptparams_row
-
-        c.print(
-            f"  promptparams : [dim]{promptparams_file}[/dim] "
-            f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
-        )
-        c.print()
-
         try:
             ordered_models = list(build_dag(all_models))  # validates DAG
         except (CyclicDependencyError, UnknownModelError) as exc:
@@ -425,10 +381,17 @@ def test(
         git_sha = _git_sha()
         all_test_results: list = []
 
-        for idx, row in enumerate(promptparams_rows, start=1):
-            row_promptdata, row_promptfiles = parse_promptparams_row(row)
-            row_label = ", ".join(f"{k}={v}" for k, v in row.items() if v)
-            c.rule(f"[bold]Row {idx}[/bold]" + (f" — {row_label}" if row_label else ""))
+        c.print(
+            f"  config rows  : {row_count} row{'s' if row_count != 1 else ''} "
+            f"(from test file config)"
+        )
+        c.print()
+
+        for row_idx in range(row_count):
+            row_num = row_idx + 1
+            merged_pd, merged_pf = get_merged_row_params(tests, row_idx)
+            row_label = ", ".join(f"{k}={v}" for k, v in merged_pd.items()) if merged_pd else ""
+            c.rule(f"[bold]Row {row_num}[/bold]" + (f" — {row_label}" if row_label else ""))
 
             # Run models for this row
             row_run_id = db.create_run(model_count=len(ordered_models), git_sha=git_sha)
@@ -442,8 +405,8 @@ def test(
                 on_model_done=on_model_done,
                 llm_call=llm_call,
                 rag_call=rag_call,
-                promptdata=row_promptdata or None,
-                promptfiles=row_promptfiles or None,
+                promptdata=merged_pd or None,
+                promptfiles=merged_pf or None,
             ))
             run_errors = sum(1 for r in run_results if r.status == "error")
             db.finish_run(row_run_id, "success" if not run_errors else "partial")
@@ -465,6 +428,7 @@ def test(
                 on_test_start=on_start,
                 on_test_done=on_done,
                 llm_call=llm_call,
+                row_index=row_idx,
             )
             all_test_results.extend(row_test_results)
 
@@ -479,7 +443,7 @@ def test(
         total_failed = sum(1 for r in all_test_results if r.status in ("fail", "error"))
         c.rule("[bold]Overall[/bold]")
         overall_color = "green" if not total_failed else "red"
-        c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {len(promptparams_rows)} rows[/{overall_color}]")
+        c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {row_count} rows[/{overall_color}]")
 
         if total_failed:
             sys.exit(1)

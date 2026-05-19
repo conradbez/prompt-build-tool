@@ -19,14 +19,24 @@ Example test that inspects a model output (tests/haiku_has_lines.prompt):
 
     If it has 3 lines respond {"results": "pass"}, otherwise {"results": "fail"}.
 
-Parameterised tests via promptparams.csv
------------------------------------------
-When a ``promptparams.csv`` file is present (or supplied explicitly), every
-test is *cross-joined* with each row in the file.  A test named ``smoke``
-with 3 parameter rows becomes ``smoke[row_1]``, ``smoke[row_2]``,
-``smoke[row_3]``.
+Parameterised tests via inline config()
+----------------------------------------
+Each test file can declare its own promptdata and promptfiles via a
+``{{ config() }}`` call at the top of the file::
 
-See ``pbt.promptparams`` for the CSV column-naming convention.
+    {{ config(
+        promptdata={"topic": "AI"},
+        promptfiles={"instructions": "path/to/file.txt"}
+    ) }}
+
+When the value is a list, the test runs once per entry (zipped, not
+cross-joined).  All test files in the same suite must declare the same
+number of rows when using lists.
+
+    {{ config(
+        promptdata=[{"topic": "AI"}, {"topic": "ML"}],
+        promptfiles=[{"instructions": "ai.txt"}, {"instructions": "ml.txt"}]
+    ) }}
 """
 
 from __future__ import annotations
@@ -38,6 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from pbt.executor.parser_initial import extract_test_config
 from pbt.executor.parser_model import render_prompt
 from pbt.storage.base import StorageBackend
 
@@ -50,7 +61,7 @@ class TestResult:
     llm_output: str = ""
     error: str = ""
     execution_ms: int = 0
-    param_label: str = ""   # e.g. "row_1" when using promptparams rows
+    param_label: str = ""   # e.g. "row_1" when using parameterised rows
 
 
 def load_tests(tests_dir: str | Path = "tests") -> dict[str, str]:
@@ -68,6 +79,80 @@ def load_tests(tests_dir: str | Path = "tests") -> dict[str, str]:
         f.stem: f.read_text(encoding="utf-8")
         for f in sorted(tests_dir.glob("*.prompt"))
     }
+
+
+def get_test_row_count(tests: dict[str, str]) -> int:
+    """
+    Determine the number of parameterised rows declared across all test files.
+
+    Returns 0 if no test declares a list-valued ``promptdata`` config.
+    Raises ``ValueError`` if tests declare inconsistent row counts.
+    """
+    row_count = 0
+    for name, source in tests.items():
+        cfg = extract_test_config(source)
+        pd = cfg.get("promptdata")
+        pf = cfg.get("promptfiles")
+
+        # Determine this test's row count from list-typed values
+        test_rows = 0
+        if isinstance(pd, list):
+            test_rows = len(pd)
+        if isinstance(pf, list):
+            if test_rows == 0:
+                test_rows = len(pf)
+            elif test_rows != len(pf):
+                raise ValueError(
+                    f"Test '{name}': promptdata and promptfiles lists must have "
+                    f"the same length (got {len(pd)} vs {len(pf)})."
+                )
+
+        if test_rows == 0:
+            continue
+
+        if row_count == 0:
+            row_count = test_rows
+        elif row_count != test_rows:
+            raise ValueError(
+                f"Test '{name}' declares {test_rows} row(s) but other tests "
+                f"declare {row_count}. All parameterised tests must have the "
+                f"same number of rows."
+            )
+
+    return row_count
+
+
+def get_merged_row_params(
+    tests: dict[str, str],
+    row_index: int,
+) -> tuple[dict, dict]:
+    """
+    Merge promptdata and promptfiles from all test configs for a given row index.
+
+    Returns ``(merged_promptdata, merged_promptfiles)``.
+    Used by the CLI to determine what parameters to pass to the model run.
+    """
+    merged_pd: dict = {}
+    merged_pf: dict = {}
+
+    for source in tests.values():
+        cfg = extract_test_config(source)
+        pd = cfg.get("promptdata")
+        pf = cfg.get("promptfiles")
+
+        if isinstance(pd, list):
+            if row_index < len(pd) and isinstance(pd[row_index], dict):
+                merged_pd.update(pd[row_index])
+        elif isinstance(pd, dict):
+            merged_pd.update(pd)
+
+        if isinstance(pf, list):
+            if row_index < len(pf) and isinstance(pf[row_index], dict):
+                merged_pf.update(pf[row_index])
+        elif isinstance(pf, dict):
+            merged_pf.update(pf)
+
+    return merged_pd, merged_pf
 
 
 def _parse_pass(llm_output: str) -> bool:
@@ -124,6 +209,37 @@ def _invoke_llm(
     return llm_call(rendered, **_kwargs)
 
 
+def _resolve_row_params(
+    cfg: dict,
+    row_index: int | None,
+) -> tuple[dict | None, dict | None]:
+    """
+    Extract promptdata and promptfiles for a single test execution.
+
+    When *row_index* is None, single-dict configs are used as-is.
+    When *row_index* is an int, list configs are indexed; single-dict configs
+    are used as-is for every row.
+    """
+    pd_val = cfg.get("promptdata")
+    pf_val = cfg.get("promptfiles")
+
+    if row_index is not None and isinstance(pd_val, list):
+        promptdata = pd_val[row_index] if row_index < len(pd_val) else None
+    elif isinstance(pd_val, dict):
+        promptdata = pd_val
+    else:
+        promptdata = None
+
+    if row_index is not None and isinstance(pf_val, list):
+        promptfiles = pf_val[row_index] if row_index < len(pf_val) else None
+    elif isinstance(pf_val, dict):
+        promptfiles = pf_val
+    else:
+        promptfiles = None
+
+    return promptdata or None, promptfiles or None
+
+
 def execute_tests(
     run_id: str,
     tests: dict[str, str],
@@ -132,7 +248,7 @@ def execute_tests(
     on_test_start: Callable[[str], None] | None = None,
     on_test_done: Callable[[TestResult], None] | None = None,
     llm_call: Callable[[str], str] | None = None,
-    promptparams_rows: list[dict[str, str]] | None = None,
+    row_index: int | None = None,
 ) -> list[TestResult]:
     """
     Execute each test prompt against the given model outputs.
@@ -140,20 +256,18 @@ def execute_tests(
     Parameters
     ----------
     run_id:
-        The run whose model outputs are being tested.  Test results are
-        stored in test_results linked to this run_id.
+        The run whose model outputs are being tested.
     tests:
         Mapping of test_name → raw prompt source, from load_tests().
     model_outputs:
         Mapping of model_name → LLM output, used to resolve ref() calls.
     llm_call:
         LLM backend callable ``(prompt: str) -> str``. Required.
-    promptparams_rows:
-        Optional list of raw CSV row dicts from ``promptparams.load_promptparams()``.
-        When supplied, every test is cross-joined with every row so that
-        ``len(tests) × len(promptparams_rows)`` test cases are executed.
-        Each test name is suffixed with ``[row_N]`` (1-indexed).
-        When *None* or empty, tests run once with no extra parameters.
+    row_index:
+        When not None, selects which entry from list-valued ``promptdata``
+        and ``promptfiles`` configs to use for this execution.  Test names
+        are suffixed with ``[row_N]`` (1-indexed).
+        When None, single-dict configs are used as-is and no suffix is added.
     """
     if llm_call is None:
         raise ValueError(
@@ -161,29 +275,19 @@ def execute_tests(
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
         )
 
-    from pbt.promptparams import parse_promptparams_row
-
-    # Build the list of (test_name_display, source, promptdata, promptfiles) to run.
-    # Without rows: one entry per test, no params.
-    # With rows: cross-join tests × rows.
     work: list[tuple[str, str, dict | None, dict | None]] = []
 
-    if promptparams_rows:
-        for test_name in sorted(tests):
-            source = tests[test_name]
-            for idx, row in enumerate(promptparams_rows, start=1):
-                label = f"row_{idx}"
-                display_name = f"{test_name}[{label}]"
-                promptdata, promptfiles = parse_promptparams_row(row)
-                work.append((
-                    display_name,
-                    source,
-                    promptdata or None,
-                    promptfiles or None,
-                ))
-    else:
-        for test_name in sorted(tests):
-            work.append((test_name, tests[test_name], None, None))
+    for test_name in sorted(tests):
+        source = tests[test_name]
+        cfg = extract_test_config(source)
+        promptdata, promptfiles = _resolve_row_params(cfg, row_index)
+
+        if row_index is not None:
+            display_name = f"{test_name}[row_{row_index + 1}]"
+        else:
+            display_name = test_name
+
+        work.append((display_name, source, promptdata, promptfiles))
 
     results: list[TestResult] = []
 
@@ -209,7 +313,6 @@ def execute_tests(
                 storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=rendered)
 
             passed = _parse_pass(llm_output)
-            # Extract param_label from display_name if present
             param_label = ""
             if "[" in display_name:
                 param_label = display_name.split("[", 1)[1].rstrip("]")

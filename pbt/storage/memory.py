@@ -110,7 +110,7 @@ class MemoryStorageBackend:
         llm_output: str,
         cache_key: str | None = None,
     ) -> None:
-        row = self._results[run_id][model_name]
+        row = self._results[run_id].setdefault(model_name, {})
         now = _now()
         started_at = row.get("started_at")
         elapsed = 0

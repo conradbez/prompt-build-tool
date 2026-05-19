@@ -115,3 +115,61 @@ def parse_model_config(template_source: str) -> dict:
     Returns a dict of string keys to string values.
     """
     return extract_jinja_config(template_source)
+
+
+def extract_test_config(template_source: str) -> dict:
+    """
+    Extract ``promptdata`` and ``promptfiles`` from a test file's ``{{ config() }}`` call.
+
+    Unlike ``extract_jinja_config``, values are returned as Python objects
+    (dicts or lists of dicts) rather than strings.
+
+    Returns a dict with zero or more of these keys:
+
+    ``promptdata``
+        A ``dict[str, str]`` of values for a single run, or a
+        ``list[dict[str, str]]`` for multiple runs (zipped with ``promptfiles``).
+
+    ``promptfiles``
+        A ``dict[str, str]`` of file paths for a single run, or a
+        ``list[dict[str, str]]`` for multiple runs (zipped with ``promptdata``).
+
+    Returns an empty dict if no ``config()`` call is present or rendering fails.
+    """
+    captured: dict = {}
+
+    def _config(**kwargs) -> str:
+        for key in ("promptdata", "promptfiles"):
+            if key in kwargs:
+                captured[key] = kwargs[key]
+        return ""
+
+    env = Environment(
+        keep_trailing_newline=True,
+        undefined=Undefined,
+        block_start_string="{%",
+        block_end_string="%}",
+        variable_start_string="{{",
+        variable_end_string="}}",
+        comment_start_string="{#",
+        comment_end_string="#}",
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+
+    context: dict = {
+        "config": _config,
+        "ref": lambda *a, **kw: _Empty(),
+        "promptdata": lambda *a, **kw: None,
+        "return_list_RAG_results": lambda *a, **kw: [],
+        "was_skipped": lambda *a, **kw: False,
+        "skip_and_set_to_value": lambda value="": "",
+        "skip_this_and_downstream": lambda value="": "",
+    }
+
+    try:
+        env.from_string(template_source).render(**context)
+    except Exception:
+        pass
+
+    return captured

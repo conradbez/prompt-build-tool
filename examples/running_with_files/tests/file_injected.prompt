@@ -1,4 +1,8 @@
-Is the following text an erticle about transformers?
+{{ config(
+    promptdata={"topic": "transformers"},
+    promptfiles={"instructions": "demo_files/instructions.txt"}
+) }}
+Is the following text an article about {{ promptdata("topic") }}?
 
 {{ ref('article') }}
 
