@@ -186,7 +186,9 @@ def register_command(main) -> None:
                     dag_promptdata.append(key)
         dag_promptfiles = get_dag_promptfiles(all_models)
 
-        example_path = Path(tests_dir) / "promptparams.csv.example"
+        # Write the template next to the real promptparams file so users can
+        # copy it into place (cp promptparams.csv.example promptparams.csv).
+        example_path = Path(f"{promptparams_file}.example")
         try:
             write_example(example_path, dag_promptdata, dag_promptfiles)
             if dag_promptdata or dag_promptfiles:
@@ -293,6 +295,9 @@ def register_command(main) -> None:
                     on_test_start=on_start,
                     on_test_done=on_done,
                     llm_call=llm_call,
+                    promptdata=row_promptdata or None,
+                    promptfiles=row_promptfiles or None,
+                    param_label=f"row_{idx}",
                 )
                 all_test_results.extend(row_test_results)
 
