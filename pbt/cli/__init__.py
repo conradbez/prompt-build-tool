@@ -284,7 +284,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 
 
 # ---------------------------------------------------------------------------
-# pbt test  (command defined in pbt/cli/test/__init__.py)
+# pbt test  (command defined in pbt/cli/test.py)
 # ---------------------------------------------------------------------------
 
 _register_test(main)
