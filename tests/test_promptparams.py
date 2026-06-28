@@ -22,6 +22,7 @@ from pbt.promptparams import (
     load_promptparams,
     parse_promptparams_row,
     write_example,
+    append_promptparams_row,
     get_promptparams_columns,
     PROMPTDATA_PREFIX,
     PROMPTFILE_PREFIX,
@@ -145,6 +146,64 @@ def test_write_example_only_promptdata(tmp_path: Path) -> None:
     with out.open(newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
     assert rows[0] == ["promptdata.topic"]
+
+
+# ---------------------------------------------------------------------------
+# append_promptparams_row
+# ---------------------------------------------------------------------------
+
+def test_append_creates_file(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.csv"
+    append_promptparams_row(out, {"tone": "formal"}, {})
+
+    rows = load_promptparams(out)
+    assert rows == [{"promptdata.tone": "formal"}]
+
+
+def test_append_preserves_existing_rows(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.csv"
+    out.write_text("promptdata.tone\nformal\n", encoding="utf-8")
+
+    append_promptparams_row(out, {"tone": "casual"}, {})
+
+    rows = load_promptparams(out)
+    assert rows == [
+        {"promptdata.tone": "formal"},
+        {"promptdata.tone": "casual"},
+    ]
+
+
+def test_append_unions_new_columns(tmp_path: Path) -> None:
+    """A new column is added to the header; older rows get an empty cell."""
+    out = tmp_path / "promptparams.csv"
+    out.write_text("promptdata.tone\nformal\n", encoding="utf-8")
+
+    append_promptparams_row(out, {"tone": "casual", "audience": "devs"}, {})
+
+    with out.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == ["promptdata.tone", "promptdata.audience"]
+    assert rows[1] == ["formal", ""]          # old row padded for new column
+    assert rows[2] == ["casual", "devs"]
+
+
+def test_append_promptfile_list_is_json_encoded(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.csv"
+    append_promptparams_row(out, {}, {"docs": ["a.pdf", "b.pdf"]})
+
+    # Round-trips back through parse_promptparams_row
+    rows = load_promptparams(out)
+    pd, pf = parse_promptparams_row(rows[0])
+    assert pf == {"docs": ["a.pdf", "b.pdf"]}
+
+
+def test_append_mixed_promptdata_and_promptfile(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.csv"
+    append_promptparams_row(out, {"tone": "formal"}, {"report": "annual.pdf"})
+
+    rows = load_promptparams(out)
+    assert rows[0]["promptdata.tone"] == "formal"
+    assert rows[0]["promptfile.report"] == "annual.pdf"
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +384,36 @@ def test_cli_test_uses_promptparams(promptparams_proj: Path) -> None:
     # Both parameterised variants should appear in output
     assert "tone_test[row_1]" in result.stdout or "tone_test[row_1]" in result.stderr
     assert "tone_test[row_2]" in result.stdout or "tone_test[row_2]" in result.stderr
+
+
+def test_cli_test_add_to_csv_appends_row(promptparams_proj: Path) -> None:
+    """`pbt test --promptdata ... --add-to-csv` appends the inline params as a row."""
+    before = load_promptparams(promptparams_proj / "promptparams.csv")
+
+    result = run_pbt(
+        "test",
+        "--promptdata", "tone=playful",
+        "--add-to-csv",
+        cwd=promptparams_proj,
+        check=False,
+    )
+
+    after = load_promptparams(promptparams_proj / "promptparams.csv")
+    assert len(after) == len(before) + 1
+    assert after[-1] == {"promptdata.tone": "playful"}
+    # Only the inline row runs, so it is reported as a single row.
+    assert "1 row" in result.stdout or "1 row" in result.stderr
+
+
+def test_cli_test_add_to_csv_requires_params(promptparams_proj: Path) -> None:
+    """`--add-to-csv` without inline params is an error and changes nothing."""
+    before = (promptparams_proj / "promptparams.csv").read_text(encoding="utf-8")
+
+    result = run_pbt("test", "--add-to-csv", cwd=promptparams_proj, check=False)
+
+    assert result.returncode != 0
+    after = (promptparams_proj / "promptparams.csv").read_text(encoding="utf-8")
+    assert after == before
 
 
 def test_cli_test_writes_example(promptparams_proj: Path) -> None:

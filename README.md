@@ -121,6 +121,20 @@ Run `tests/*.prompt` files against the latest run's outputs. Each test passes wh
 pbt test
 ```
 
+**Inline params (`--promptdata` / `--promptfile`)** — pass params straight to `pbt test` to run the models with them and test against that run (an inline one-row `promptparams.csv`):
+
+```bash
+pbt test --promptdata tone=formal --promptfile doc=report.pdf
+```
+
+**Capture a run into `promptparams.csv` (`--add-to-csv`)** — when you find a param set worth keeping as a regression case, add `--add-to-csv` to append it as a new row in `promptparams.csv`, so it's re-tested in future parameterised runs:
+
+```bash
+pbt test --promptdata tone=formal --add-to-csv
+```
+
+`--add-to-csv` requires at least one `--promptdata`/`--promptfile`. Existing columns and rows are preserved; new columns are added to the header and older rows padded with empty cells.
+
 
 ### `pbt serve`
 

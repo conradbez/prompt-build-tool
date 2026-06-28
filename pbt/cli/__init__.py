@@ -34,7 +34,7 @@ from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
-from pbt.promptparams import load_promptparams, write_example
+from pbt.promptparams import load_promptparams, write_example, append_promptparams_row
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
@@ -325,6 +325,37 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     default=False,
     help="Skip promptparams.csv and test against the latest stored run instead.",
 )
+@click.option(
+    "--promptdata",
+    "promptdata",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help=(
+        "Inline promptdata for this test run. When provided, pbt run is executed "
+        "with these params and tests are reported against that run (an inline "
+        "one-row promptparams). Repeatable: --promptdata tone=formal."
+    ),
+)
+@click.option(
+    "--promptfile",
+    "promptfiles",
+    multiple=True,
+    metavar="NAME=PATH",
+    help=(
+        "Inline promptfile for this test run, paired with --promptdata. "
+        "Repeatable: --promptfile doc=report.pdf."
+    ),
+)
+@click.option(
+    "--add-to-csv",
+    is_flag=True,
+    default=False,
+    help=(
+        "After running, append the inline --promptdata/--promptfile params as a "
+        "new row in the promptparams file so the case is re-tested in future "
+        "parameterised runs. Requires at least one --promptdata or --promptfile."
+    ),
+)
 def test(
     models_dir: str,
     tests_dir: str,
@@ -332,6 +363,9 @@ def test(
     no_color: bool,
     promptparams_file: str,
     check_latest: bool,
+    promptdata: tuple[str, ...],
+    promptfiles: tuple[str, ...],
+    add_to_csv: bool,
 ) -> None:
     """
     Run test prompts from the tests/ directory against model outputs.
@@ -398,9 +432,39 @@ def test(
         pass
 
     # ------------------------------------------------------------------
-    # Load promptparams rows (optional; skipped when --check-latest)
+    # Parse inline --promptdata / --promptfile into a single synthetic row.
+    # When present, this row drives a fresh run (an inline one-row
+    # promptparams) and takes precedence over the CSV / --check-latest.
     # ------------------------------------------------------------------
-    promptparams_rows = [] if check_latest else load_promptparams(promptparams_file)
+    inline_row: dict[str, str] = {}
+    for v in promptdata:
+        if "=" not in v:
+            err_console.print(f"[red]Error:[/red] --promptdata must be KEY=VALUE, got: {v!r}")
+            sys.exit(1)
+        k, _, val = v.partition("=")
+        inline_row[f"promptdata.{k}"] = val
+    for f in promptfiles:
+        if "=" not in f:
+            err_console.print(f"[red]Error:[/red] --promptfile must be NAME=PATH, got: {f!r}")
+            sys.exit(1)
+        k, _, val = f.partition("=")
+        inline_row[f"promptfile.{k}"] = val
+
+    if add_to_csv and not inline_row:
+        err_console.print(
+            "[red]Error:[/red] --add-to-csv requires at least one --promptdata or "
+            "--promptfile to record as a new row."
+        )
+        sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # Load promptparams rows (optional; skipped when --check-latest).
+    # Inline params override everything else.
+    # ------------------------------------------------------------------
+    if inline_row:
+        promptparams_rows = [inline_row]
+    else:
+        promptparams_rows = [] if check_latest else load_promptparams(promptparams_file)
 
     if promptparams_rows:
         # --------------------------------------------------------------
@@ -409,10 +473,13 @@ def test(
         from pbt.executor.executor import execute_run
         from pbt.promptparams import parse_promptparams_row
 
-        c.print(
-            f"  promptparams : [dim]{promptparams_file}[/dim] "
-            f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
-        )
+        if inline_row:
+            c.print("  promptparams : [dim]inline --promptdata/--promptfile[/dim] (1 row)")
+        else:
+            c.print(
+                f"  promptparams : [dim]{promptparams_file}[/dim] "
+                f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
+            )
         c.print()
 
         try:
@@ -480,6 +547,13 @@ def test(
         c.rule("[bold]Overall[/bold]")
         overall_color = "green" if not total_failed else "red"
         c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {len(promptparams_rows)} rows[/{overall_color}]")
+
+        # Snapshot the inline run's params into the promptparams file so the
+        # case is re-tested in future parameterised runs.
+        if add_to_csv and inline_row:
+            row_promptdata, row_promptfiles = parse_promptparams_row(inline_row)
+            append_promptparams_row(promptparams_file, row_promptdata, row_promptfiles)
+            c.print(f"  [dim]added row → {promptparams_file}[/dim]")
 
         if total_failed:
             sys.exit(1)
