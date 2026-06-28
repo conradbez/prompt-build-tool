@@ -107,6 +107,53 @@ def get_promptparams_columns(rows: list[dict[str, str]]) -> tuple[list[str], lis
     return list(pd_seen), list(pf_seen)
 
 
+def append_promptparams_row(
+    path: str | Path,
+    promptdata: dict[str, str],
+    promptfiles: dict[str, str | list[str]],
+) -> None:
+    """
+    Append a single parameter row to ``promptparams.csv``.
+
+    Columns are named ``promptdata.<key>`` / ``promptfile.<name>``, matching the
+    file's existing convention.  ``promptfile`` values that are lists are
+    JSON-encoded so they round-trip through :func:`parse_promptparams_row`.
+
+    When the file already exists its columns and rows are preserved; any new
+    columns introduced by this row are appended and the file is rewritten so
+    every row stays aligned to the header.  When it does not exist the file is
+    created with just this row.
+    """
+    new_row: dict[str, str] = {}
+    for key, value in promptdata.items():
+        new_row[f"{PROMPTDATA_PREFIX}{key}"] = value
+    for name, value in promptfiles.items():
+        new_row[f"{PROMPTFILE_PREFIX}{name}"] = (
+            json.dumps(value) if isinstance(value, list) else value
+        )
+
+    p = Path(path)
+    existing_rows: list[dict[str, str]] = []
+    fieldnames: list[str] = []
+    if p.exists():
+        with p.open(newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or [])
+            existing_rows = [dict(r) for r in reader]
+
+    for col in new_row:
+        if col not in fieldnames:
+            fieldnames.append(col)
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, restval="")
+        writer.writeheader()
+        for row in existing_rows:
+            writer.writerow(row)
+        writer.writerow(new_row)
+
+
 def write_example(
     path: str | Path,
     promptdata_keys: list[str],

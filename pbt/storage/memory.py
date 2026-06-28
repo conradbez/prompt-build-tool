@@ -110,7 +110,10 @@ class MemoryStorageBackend:
         llm_output: str,
         cache_key: str | None = None,
     ) -> None:
-        row = self._results[run_id][model_name]
+        # Tolerate a model_name that was never registered via
+        # upsert_model_pending — e.g. test prompts cached by execute_tests.
+        # Mirrors the SQLite backend, whose UPDATE is a no-op on a missing row.
+        row = self._results.setdefault(run_id, {}).setdefault(model_name, {})
         now = _now()
         started_at = row.get("started_at")
         elapsed = 0
