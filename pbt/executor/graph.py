@@ -8,15 +8,18 @@ dependencies, and validates the graph (cycle detection, unknown refs).
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import networkx as nx
 
 from pbt.executor.model_constructs import BaseModelHandler, LoopModelHandler, ExecutePythonModelHandler, QualityCheckModelHandler
 from pbt.executor.parser_initial import (
+    UnknownConfigKeyWarning,
     extract_dependencies,
     parse_model_config,
     detect_used_promptdata,
+    warn_unknown_config_keys,
 )
 
 # Supported file extensions, longest first so stripping is unambiguous.
@@ -36,6 +39,27 @@ def _prompt_name(p: Path) -> str:
         if p.name.endswith(suffix):
             return p.name[: -len(suffix)]
     return p.stem
+
+
+def _resolve_model_class(
+    config: dict, name: str, path: object = None
+) -> type[BaseModelHandler]:
+    """Return the handler class for a model's ``model_type``, warning on typos.
+
+    An unknown model_type would otherwise fall back to a plain LLM call with no
+    indication that the requested behaviour never happened.
+    """
+    model_type = config.get("model_type", "")
+    if model_type and model_type not in _MODEL_CLASS_MAP:
+        where = f"'{name}'" + (f" ({path})" if path else "")
+        warnings.warn(
+            f"Model {where}: unknown model_type '{model_type}' — running it as a "
+            f"normal LLM call. Known model types: "
+            f"{', '.join(sorted(_MODEL_CLASS_MAP))}.",
+            UnknownConfigKeyWarning,
+            stacklevel=3,
+        )
+    return _MODEL_CLASS_MAP.get(model_type, BaseModelHandler)
 
 
 def _apply_inject(models: dict[str, BaseModelHandler], name: str) -> None:
@@ -94,12 +118,12 @@ def load_models(models_dir: str | Path = "models") -> dict[str, BaseModelHandler
         source = prompt_file.read_text(encoding="utf-8")
         deps = extract_dependencies(source)
         config = parse_model_config(source)
+        warn_unknown_config_keys(config, name, prompt_file)
         promptdata_used = detect_used_promptdata(source)
         _pf = config.get("promptfiles", "[]")
         _pf_parsed = json.loads(_pf) if _pf.startswith("[") else [_pf] if _pf else []
         promptfiles_used = _pf_parsed
-        model_type = config.get("model_type", "")
-        cls = _MODEL_CLASS_MAP.get(model_type, BaseModelHandler)
+        cls = _resolve_model_class(config, name, prompt_file)
         models[name] = cls(
             name=name,
             path=prompt_file.resolve(),
@@ -183,12 +207,12 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, BaseModelHandler
     for name, source in models.items():
         deps = extract_dependencies(source)
         config = parse_model_config(source)
+        warn_unknown_config_keys(config, name)
         promptdata_used = detect_used_promptdata(source)
         _pf = config.get("promptfiles", "[]")
         _pf_parsed = json.loads(_pf) if _pf.startswith("[") else [_pf] if _pf else []
         promptfiles_used = _pf_parsed
-        model_type = config.get("model_type", "")
-        cls = _MODEL_CLASS_MAP.get(model_type, BaseModelHandler)
+        cls = _resolve_model_class(config, name)
         result[name] = cls(
             name=name,
             path=Path("<inline>"),

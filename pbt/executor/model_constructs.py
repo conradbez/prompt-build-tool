@@ -211,6 +211,22 @@ class LoopModelHandler(BaseModelHandler):
             for dep in self.depends_on
             if dep in model_outputs and isinstance(model_outputs[dep], list)
         }
+
+        # config(loop_over='name') pins which dependency to fan out over.
+        loop_over = self.config.get("loop_over", "")
+        if loop_over:
+            if loop_over not in self.depends_on:
+                raise ValueError(
+                    f"Loop model '{self.name}': loop_over='{loop_over}' is not a "
+                    f"dependency of this model. Dependencies: {self.depends_on!r}."
+                )
+            if loop_over not in list_deps:
+                raise ValueError(
+                    f"Loop model '{self.name}': loop_over='{loop_over}' does not return "
+                    "a JSON list. Ensure it has output_format='json' and returns a list."
+                )
+            list_deps = {loop_over: list_deps[loop_over]}
+
         if not list_deps:
             raise ValueError(
                 f"Loop model '{self.name}': no upstream dependency returns a JSON list. "

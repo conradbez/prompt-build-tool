@@ -8,6 +8,11 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from pbt.executor.parser_initial import (
+    UnknownConfigKeyWarning,
+    known_config_keys,
+    register_config_keys,
+)
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
 

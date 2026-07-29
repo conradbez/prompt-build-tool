@@ -332,6 +332,26 @@ Return a JSON object with keys "title" and "summary".
 
 When `output_format: json` is set, pbt validates the LLM output as JSON (stripping optional ` ```json ``` ` fences) and passes the parsed `dict`/`list` to downstream models via `ref()`, for example enabling `{{ ref('model').title }}` access.
 
+### Recognised keys
+
+| Key | Effect |
+| --- | --- |
+| `output_format` | `"json"` parses and validates the output as JSON; defaults to `"text"` |
+| `output_extension` | File extension for `outputs/<model>.<ext>`; defaults to `"md"` |
+| `promptfiles` | Names of files this model receives at runtime — see [Passing files to models](#passing-files-to-models-promptfiles) |
+| `model_type` | `"loop"`, `"execute_python"`, or `"quality_check"`; defaults to a plain LLM call |
+| `loop_over` | For loop models: which upstream model to fan out over |
+| `quality_retries` | For quality-check models: retry count (default `2`) |
+| `quality_pass_marker` | Substring marking a passing quality check (default `"PASS"`) |
+
+Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
+
+```python
+import pbt
+
+pbt.register_config_keys("temperature", "max_tokens")
+```
+
 ---
 
 ## Looping over a list (`model_type="loop"`)
