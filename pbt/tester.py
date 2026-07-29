@@ -133,6 +133,9 @@ def execute_tests(
     on_test_done: Callable[[TestResult], None] | None = None,
     llm_call: Callable[[str], str] | None = None,
     promptparams_rows: list[dict[str, str]] | None = None,
+    promptdata: dict[str, str] | None = None,
+    promptfiles: dict[str, str | list[str]] | None = None,
+    param_label: str = "",
 ) -> list[TestResult]:
     """
     Execute each test prompt against the given model outputs.
@@ -154,6 +157,15 @@ def execute_tests(
         ``len(tests) × len(promptparams_rows)`` test cases are executed.
         Each test name is suffixed with ``[row_N]`` (1-indexed).
         When *None* or empty, tests run once with no extra parameters.
+    promptdata, promptfiles:
+        Optional params injected into every test template for a single
+        invocation.  Used by the CLI's per-row mode, which runs the models
+        once per row and then calls ``execute_tests`` for that row.  Ignored
+        when *promptparams_rows* is supplied.
+    param_label:
+        Optional label (e.g. ``"row_2"``) that suffixes every test name as
+        ``name[label]``, so per-row CLI results stay identifiable.  Ignored
+        when *promptparams_rows* is supplied.
     """
     if llm_call is None:
         raise ValueError(
@@ -174,16 +186,17 @@ def execute_tests(
             for idx, row in enumerate(promptparams_rows, start=1):
                 label = f"row_{idx}"
                 display_name = f"{test_name}[{label}]"
-                promptdata, promptfiles = parse_promptparams_row(row)
+                row_promptdata, row_promptfiles = parse_promptparams_row(row)
                 work.append((
                     display_name,
                     source,
-                    promptdata or None,
-                    promptfiles or None,
+                    row_promptdata or None,
+                    row_promptfiles or None,
                 ))
     else:
         for test_name in sorted(tests):
-            work.append((test_name, tests[test_name], None, None))
+            display_name = f"{test_name}[{param_label}]" if param_label else test_name
+            work.append((display_name, tests[test_name], promptdata, promptfiles))
 
     results: list[TestResult] = []
 
