@@ -66,6 +66,7 @@ async def async_run(
     promptfiles: dict[str, PromptFile] | None = None,
     validation_dir: str | None = "validation",
     storage_backend: StorageBackend | None = None,
+    global_instruction: str | Callable[[], str] | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -96,6 +97,21 @@ async def async_run(
         Values may be a **string path**, a :class:`pathlib.Path`, or any
         **binary file-like object** (``open(..., "rb")``, ``io.BytesIO``,
         etc.) — whatever your ``llm_call`` implementation accepts.
+    global_instruction:
+        Optional prompt text rendered into **every** model prompt — pbt's
+        analogue of dbt's query-comment.  Either a string or a zero-argument
+        callable returning one.  Falls back to a ``global.prompt`` file
+        alongside ``models_dir`` when not given (file-based runs only).
+
+        The text is itself a Jinja template rendered with each model's own
+        context, so ``promptdata()``, ``model.name`` and ``was_skipped()``
+        work inside it; ``ref()`` does not, since that would make every model
+        depend on the referenced one.  Reference ``{{ prompt }}`` to place the
+        model body explicitly, otherwise the instruction is prepended.
+
+        Individual models opt out with
+        ``{{ config(global_instruction=False) }}``, and ``execute_python``
+        models never receive it.
 
 
     Returns
@@ -165,6 +181,15 @@ async def async_run(
         from pbt.rag import resolve_rag_call
         rag_call = resolve_rag_call(models_dir)
 
+    # Global instruction: explicit argument wins, else global.prompt on disk.
+    from pbt.global_instruction import (
+        coerce_global_instruction,
+        resolve_global_instruction,
+    )
+    global_instruction = coerce_global_instruction(global_instruction)
+    if global_instruction is None and models_from_dict is None:
+        global_instruction = resolve_global_instruction(models_dir)
+
     # Load per-model validators from validation_dir (optional)
     validators = None
     if validation_dir is not None and models_from_dict is None:
@@ -231,6 +256,7 @@ async def async_run(
         promptdata=promptdata,
         promptfiles=promptfiles,
         validators=validators or None,
+        global_instruction=global_instruction,
     )
 
     errors = sum(1 for r in results if r.status == "error")
@@ -274,6 +300,7 @@ def run(
     promptfiles: "dict[str, PromptFile] | None" = None,
     validation_dir: "str | None" = "validation",
     storage_backend: "StorageBackend | None" = None,
+    global_instruction: "str | Callable[[], str] | None" = None,
 ):
     """Run prompt models synchronously."""
     import asyncio
@@ -289,4 +316,5 @@ def run(
         promptfiles=promptfiles,
         validation_dir=validation_dir,
         storage_backend=storage_backend,
+        global_instruction=global_instruction,
     ))

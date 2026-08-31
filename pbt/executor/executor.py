@@ -46,6 +46,7 @@ async def execute_run(
     promptdata: dict | None = None,
     promptfiles: dict[str, PromptFile] | None = None,
     validators: dict | None = None,
+    global_instruction: str | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in sequence (dependency order).
@@ -66,6 +67,11 @@ async def execute_run(
         RAG backend callable or None.
     on_model_start / on_model_done:
         Optional progress callbacks for the CLI layer.
+    global_instruction:
+        Optional prompt text rendered into every model's prompt — pbt's
+        analogue of dbt's query-comment.  Individual models opt out with
+        ``{{ config(global_instruction=False) }}``; ``execute_python`` models
+        never receive it.  See ``pbt.global_instruction``.
 
     Returns
     -------
@@ -176,6 +182,7 @@ async def execute_run(
                     prompt_skipped_models=prompt_skipped_models,
                     skip_downstream_models=skip_downstream_models,
                     validators=validators,
+                    global_instruction=global_instruction,
                 )
             except Exception as exc:  # noqa: BLE001
                 error_msg = str(exc)

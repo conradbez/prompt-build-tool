@@ -28,6 +28,7 @@ _BUILTIN_CONFIG_KEYS = frozenset({
     "loop_over",
     "quality_retries",
     "quality_pass_marker",
+    "global_instruction",
 })
 
 _extra_config_keys: set[str] = set()

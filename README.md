@@ -87,6 +87,7 @@ Context from previous analysis:
 | `.prompt` file | `.sql` model file |
 | `ref('model')` | `{{ ref('model') }}` |
 | `models/` directory | `models/` directory |
+| `global.prompt` | `query-comment` in `dbt_project.yml` |
 | SQLite `runs` table | dbt `run_results.json` |
 | SQLite `model_results` table | dbt `model` timing artifacts |
 
@@ -184,6 +185,7 @@ results = asyncio.run(pbt.run(
     rag_call=my_rag_fn,        # optional: custom RAG function
     promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
     validation_dir="validation", # optional: per-model validation functions
+    global_instruction="Answer in British English.",  # optional: text added to every prompt
 ))
 ```
 
@@ -196,6 +198,7 @@ results = asyncio.run(pbt.run(
 | `promptdata` | `dict \| None` | Variables injected into every template, accessed via `{{ promptdata('key') }}` |
 | `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` in their config block |
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
+| `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to models/) |
 
 Returns a list of `ModelRunResult` objects with fields: `model_name`, `status`, `prompt_rendered`, `llm_output`, `error`, `execution_ms`, `cached`.
 
@@ -357,6 +360,7 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `loop_over` | For loop models: which upstream model to fan out over |
 | `quality_retries` | For quality-check models: retry count (default `2`) |
 | `quality_pass_marker` | Substring marking a passing quality check (default `"PASS"`) |
+| `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
 
 Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
 
@@ -365,6 +369,99 @@ import pbt
 
 pbt.register_config_keys("temperature", "max_tokens")
 ```
+
+---
+
+## Global instructions (`global.prompt`)
+
+Sometimes every prompt in a project needs the same preamble — a house style, a
+persona, an output convention. This is pbt's analogue of dbt's `query-comment`:
+one snippet, rendered into every prompt pbt sends.
+
+Create a `global.prompt` next to your `models/` directory (the same place
+`client.py` and `rag.py` live) and it is picked up automatically:
+
+```
+my_project/
+├── client.py
+├── global.prompt      ← rendered into every model's prompt
+└── models/
+    ├── article.prompt
+    └── summary.prompt
+```
+
+```jinja
+{# global.prompt #}
+Write in British English. Never use em dashes.
+```
+
+By default the instruction is **prepended** to each model's prompt. Reference
+`{{ prompt }}` to place the model body yourself:
+
+```jinja
+{# global.prompt — wrapper form #}
+You are a careful technical writer.
+
+<task>
+{{ prompt }}
+</task>
+
+Answer in British English.
+```
+
+### It is a Jinja template too
+
+The instruction is rendered with each model's own context, so
+`{{ promptdata('key') }}`, `{{ model.name }}` and `{{ was_skipped('x') }}` all
+work inside it:
+
+```jinja
+{% if promptdata("tone") %}Write in a {{ promptdata("tone") }} tone.{% endif %}
+```
+
+`ref()` is deliberately **not** available. The instruction goes into every
+model, so a `ref('article')` would make every model depend on `article` —
+including `article` itself. Use `promptdata()` for values that vary per run.
+
+### Setting it from Python
+
+```python
+import pbt
+
+pbt.run(global_instruction="Write in British English.")
+
+# or build it at runtime — the callable is invoked once per run
+pbt.run(global_instruction=lambda: load_house_style_from_somewhere())
+```
+
+The explicit argument wins over `global.prompt`. This is also the only way to
+set one for `models_from_dict` runs, which never touch the filesystem. On the
+CLI, `--global-instruction PATH` overrides the file for a single run:
+
+```bash
+pbt run --global-instruction experiments/terse.prompt
+```
+
+### Opting out
+
+A single model opts out with `config()`:
+
+```jinja
+{{ config(global_instruction=False) }}
+Return the raw JSON only, with no preamble.
+```
+
+Two exclusions are automatic:
+
+- **`execute_python` models** never receive it — their template renders to
+  Python source, and prepending prose to it would be a `SyntaxError`.
+- **Test prompts** in `tests/` never receive it. The models under test render
+  exactly as they do in a real run, but a judge told how to write is a biased
+  judge.
+
+Changing the instruction changes every rendered prompt, so the prompt cache
+invalidates itself — the next `pbt run` re-runs affected models without
+`--clear-cache`.
 
 ---
 

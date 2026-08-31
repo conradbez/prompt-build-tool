@@ -27,6 +27,12 @@ with 3 parameter rows becomes ``smoke[row_1]``, ``smoke[row_2]``,
 ``smoke[row_3]``.
 
 See ``pbt.promptparams`` for the CSV column-naming convention.
+
+Global instructions
+-------------------
+Test prompts deliberately do **not** receive the run's global instruction (see
+``pbt.global_instruction``).  The models under test render with it exactly as
+they do in a real run, but a judge told how to write is a biased judge.
 """
 
 from __future__ import annotations

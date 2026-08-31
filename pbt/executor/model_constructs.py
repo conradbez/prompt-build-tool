@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
+# config(global_instruction=...) values that turn the global instruction off.
+_OPT_OUT_VALUES = frozenset({"false", "none", "no", "off", "0"})
+
 
 def _parse_json_output(raw: str) -> dict | list:
     """Strip optional ```json fences and parse as JSON. Raises ValueError on failure."""
@@ -86,6 +89,23 @@ class BaseModelHandler:
 
     model_type: ClassVar[str] = ""
 
+    # Whether a global instruction may be rendered into this model's prompt.
+    # False for model types whose "prompt" is not natural language.
+    accepts_global_instruction: ClassVar[bool] = True
+
+    def resolve_global_instruction(self, global_instruction: str | None) -> str | None:
+        """Return the global instruction to render into this model, or None.
+
+        Suppressed when the handler class does not accept one, or when the model
+        opts out with ``{{ config(global_instruction=False) }}``.  config values
+        arrive as strings, hence the string comparison.
+        """
+        if not global_instruction or not self.accepts_global_instruction:
+            return None
+        if str(self.config.get("global_instruction", "")).strip().lower() in _OPT_OUT_VALUES:
+            return None
+        return global_instruction
+
     def inject_extra_nodes(
         self, all_models: "dict[str, BaseModelHandler]"
     ) -> "tuple[BaseModelHandler, list[BaseModelHandler]] | None":
@@ -120,10 +140,17 @@ class BaseModelHandler:
         prompt_skipped_models: set[str],
         skip_downstream_models: set[str],
         validators: dict | None = None,
+        global_instruction: str | None = None,
     ) -> "ModelRunResult":
         from pbt.executor.executor import ModelRunResult
 
-        rendered, skip_state = render_prompt(self.source, model_outputs, promptdata=promptdata, rag_call=rag_call, prompt_skipped_models=prompt_skipped_models, model_name=self.name)
+        rendered, skip_state = render_prompt(
+            self.source, model_outputs,
+            promptdata=promptdata, rag_call=rag_call,
+            prompt_skipped_models=prompt_skipped_models,
+            model_name=self.name,
+            global_instruction=self.resolve_global_instruction(global_instruction),
+        )
         cache_key = rendered + "\x00" + json.dumps(self.config, sort_keys=True) + "\x00" + _files_hash(model_files)
 
         cached = None
@@ -202,6 +229,7 @@ class LoopModelHandler(BaseModelHandler):
         prompt_skipped_models: set[str],
         skip_downstream_models: set[str],
         validators: dict | None = None,
+        global_instruction: str | None = None,
     ) -> "ModelRunResult":
         from pbt.executor.executor import ModelRunResult
 
@@ -241,6 +269,7 @@ class LoopModelHandler(BaseModelHandler):
         output_format = self.config.get("output_format", "text")
 
         # Render all item prompts up front (fast, synchronous).
+        model_global_instruction = self.resolve_global_instruction(global_instruction)
         rendered_items: list[tuple[str, object]] = []
         for item in list_items:
             item_outputs = {**model_outputs, list_dep_name: item}
@@ -249,6 +278,7 @@ class LoopModelHandler(BaseModelHandler):
                 promptdata=promptdata, rag_call=rag_call,
                 prompt_skipped_models=prompt_skipped_models,
                 model_name=self.name,
+                global_instruction=model_global_instruction,
             )
             rendered_items.append((item_rendered, item_skip_state))
 
@@ -320,6 +350,9 @@ class ExecutePythonModelHandler(BaseModelHandler):
     """Render the template as Python and run it with exec()."""
 
     model_type: str = "execute_python"  # type: ignore[assignment]
+    # The rendered template is Python source — prose prepended to it would be a
+    # SyntaxError, so a global instruction never applies here.
+    accepts_global_instruction: bool = False  # type: ignore[assignment]
 
     async def execute_node(
         self,
@@ -333,6 +366,7 @@ class ExecutePythonModelHandler(BaseModelHandler):
         prompt_skipped_models: set[str],
         skip_downstream_models: set[str],
         validators: dict | None = None,
+        global_instruction: str | None = None,
     ) -> "ModelRunResult":
         """Render the template as Python code and exec() it.
 

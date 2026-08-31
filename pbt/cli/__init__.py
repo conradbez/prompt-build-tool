@@ -32,6 +32,7 @@ from pbt.executor.graph import (
 from pbt.executor.executor import execute_run
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
+from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
@@ -110,7 +111,18 @@ def main() -> None:
     default=False,
     help="Clear the LLM prompt cache before running, forcing fresh calls for all models.",
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool) -> None:
+@click.option(
+    "--global-instruction",
+    "global_instruction_path",
+    default=None,
+    metavar="PATH",
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "Prompt file rendered into every model's prompt. "
+        "Overrides the global.prompt discovered alongside --models-dir."
+    ),
+)
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None) -> None:
     """Execute all prompt models in dependency order."""
     c = Console(highlight=not no_color)
 
@@ -197,6 +209,10 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     try:
         llm_call = resolve_llm_call(models_dir)
         rag_call = resolve_rag_call(models_dir)
+        if global_instruction_path:
+            global_instruction = Path(global_instruction_path).read_text(encoding="utf-8")
+        else:
+            global_instruction = resolve_global_instruction(models_dir)
     except Exception as exc:
         err_console.print(f"[red]Backend resolution error:[/red] {exc}")
         db.finish_run(run_id, "error")
@@ -223,6 +239,11 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         c.print(f"  Validators: {sorted(validators.keys())}")
         c.print()
 
+    if global_instruction:
+        source_label = global_instruction_path or "global.prompt"
+        c.print(f"  Global instruction: [cyan]{source_label}[/cyan]")
+        c.print()
+
     # Warn about promptdata() vars used in templates but not provided
     dag_promptdata = get_dag_promptdata(all_models)
     missing_promptdata = [v for v in dag_promptdata if v not in promptdata_vars]
@@ -245,6 +266,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
             promptdata=promptdata_vars or None,
             promptfiles=promptfiles_dict or None,
             validators=validators or None,
+            global_instruction=global_instruction,
         ))
     except EnvironmentError as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")

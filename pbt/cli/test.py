@@ -35,6 +35,7 @@ from pbt.executor.graph import (
     UnknownModelError,
 )
 from pbt.executor.executor import execute_run
+from pbt.global_instruction import resolve_global_instruction
 from pbt.llm import resolve_llm_call
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
@@ -170,6 +171,10 @@ def register_command(main) -> None:
         try:
             llm_call = resolve_llm_call(models_dir)
             rag_call = resolve_rag_call(models_dir)
+            # Models under test render exactly as they do in a real run.  The
+            # test prompts themselves never get it — a judge given style
+            # instructions is a biased judge.
+            global_instruction = resolve_global_instruction(models_dir)
         except Exception as exc:
             err_console.print(f"[red]Backend resolution error:[/red] {exc}")
             sys.exit(1)
@@ -274,6 +279,7 @@ def register_command(main) -> None:
                     rag_call=rag_call,
                     promptdata=row_promptdata or None,
                     promptfiles=row_promptfiles or None,
+                    global_instruction=global_instruction,
                 ))
                 run_errors = sum(1 for r in run_results if r.status == "error")
                 db.finish_run(row_run_id, "success" if not run_errors else "partial")

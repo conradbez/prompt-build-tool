@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from jinja2 import Environment, StrictUndefined
+from jinja2 import Environment, StrictUndefined, meta
 
 
 class _Meta:
@@ -55,6 +55,7 @@ def render_prompt(
     rag_call: "Callable[..., list[str]] | None" = None,
     prompt_skipped_models: "set[str] | None" = None,
     model_name: str = "",
+    global_instruction: str | None = None,
 ) -> "tuple[str, _RenderState]":
     """
     Render *template_source* as a Jinja2 template.
@@ -68,6 +69,13 @@ def render_prompt(
     promptdata:
         Optional dict of runtime variables, injected via promptdata("name").
         Returns None for missing keys so {% if promptdata('x') %} is safe.
+    global_instruction:
+        Optional prompt text rendered into every model prompt (see
+        ``pbt.global_instruction``).  It is rendered with this model's own
+        Jinja context, so ``promptdata()``, ``model`` and ``was_skipped()``
+        work inside it.  Reference ``{{ prompt }}`` in it to place the model
+        body explicitly; otherwise the instruction is prepended.  Ignored when
+        a skip function fired, since no LLM call will be made.
 
     Returns
     -------
@@ -127,7 +135,39 @@ def render_prompt(
     context["skip_this_and_downstream"] = skip_this_and_downstream
 
     template = env.from_string(template_source)
-    return template.render(**context), state
+    rendered = template.render(**context)
+
+    if global_instruction and state.skip_value is None:
+        rendered = _apply_global_instruction(env, global_instruction, rendered, context)
+
+    return rendered, state
+
+
+def _apply_global_instruction(
+    env: Environment, source: str, body: str, context: dict
+) -> str:
+    """Render *source* with the model's context and combine it with *body*.
+
+    ``{{ prompt }}`` inside the instruction is the rendered model body; when the
+    instruction references it the result is used as-is (wrapper semantics),
+    otherwise the instruction is prepended to the body.
+    """
+    def _ref_unavailable(name: str = "") -> str:
+        raise ValueError(
+            f"ref('{name}') is not available in a global instruction. The global "
+            f"instruction is rendered into every model, so this would make every "
+            f"model depend on '{name}' — including '{name}' itself. Use "
+            f"promptdata() for values that vary between runs."
+        )
+
+    global_context = {**context, "ref": _ref_unavailable, "prompt": body}
+    rendered_global = env.from_string(source).render(**global_context)
+
+    if not rendered_global.strip():
+        return body
+    if "prompt" in meta.find_undeclared_variables(env.parse(source)):
+        return rendered_global
+    return rendered_global.rstrip("\n") + "\n\n" + body
 
 
 def _make_env() -> Environment:
