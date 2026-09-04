@@ -22,6 +22,7 @@ import networkx as nx
 from rich.console import Console
 
 from pbt import db
+from pbt.storage.sqlite import StaleDatabaseError
 from pbt.executor.graph import (
     load_models,
     build_dag,
@@ -30,7 +31,7 @@ from pbt.executor.graph import (
     UnknownModelError,
 )
 from pbt.executor.executor import execute_run
-from pbt.llm import resolve_llm_call
+from pbt.llm import resolve_llm_call, try_load_client_module
 from pbt.rag import resolve_rag_call
 from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
@@ -46,6 +47,17 @@ from pbt.cli.pretty_print import console, err_console
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
+
+def init_db_or_exit() -> None:
+    """Open the run database, reporting a pre-schema one as advice, not a crash."""
+    try:
+        db.init_db()
+    except StaleDatabaseError as exc:
+        err_console.print("[red]Outdated pbt database:[/red]")
+        # soft_wrap keeps the suggested shell commands on one line, copy-pastable.
+        err_console.print(str(exc), soft_wrap=True, highlight=False)
+        sys.exit(1)
+
 
 @click.group()
 @click.version_option()
@@ -127,7 +139,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     c = Console(highlight=not no_color)
 
     if clear_cache:
-        db.init_db()
+        init_db_or_exit()
         cleared = db.clear_cache()
         c.print(f"  [yellow]Cache cleared[/yellow] ({cleared} entr{'ies' if cleared != 1 else 'y'} invalidated)\n")
 
@@ -153,12 +165,13 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
             err_console.print(f"[red]Error:[/red] Cannot open promptfile '{val}': {exc}")
             sys.exit(1)
 
-    db.init_db()
+    init_db_or_exit()
 
     # ------------------------------------------------------------------
     # Discover & validate models
     # ------------------------------------------------------------------
     try:
+        try_load_client_module(models_dir)  # registers any project-local model types
         all_models = load_models(models_dir)
     except FileNotFoundError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
@@ -321,6 +334,7 @@ _register_test(main)
 def list_models(models_dir: str) -> None:
     """List all discovered models and their dependencies."""
     try:
+        try_load_client_module(models_dir)  # registers any project-local model types
         models = load_models(models_dir)
     except (FileNotFoundError, CyclicDependencyError, UnknownModelError) as exc:
         err_console.print(str(exc))
@@ -337,7 +351,7 @@ def list_models(models_dir: str) -> None:
 @click.option("--limit", default=10, show_default=True, help="Number of runs to show.")
 def show_runs(limit: int) -> None:
     """Show recent run history."""
-    db.init_db()
+    init_db_or_exit()
     rows = db.get_latest_runs(limit)
 
     if not rows:
@@ -362,7 +376,7 @@ def show_runs(limit: int) -> None:
 )
 def show_result(model_name: str, run_id: str | None, show: str) -> None:
     """Print stored output for MODEL_NAME."""
-    db.init_db()
+    init_db_or_exit()
 
     with db.get_conn() as conn:
         if run_id:
@@ -428,7 +442,7 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
     """Generate a self-contained HTML report of all previous runs."""
     import webbrowser
 
-    db.init_db()
+    init_db_or_exit()
 
     all_runs = db.get_latest_runs(limit=10_000)
     run_results: dict = {}
@@ -437,6 +451,7 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
 
     models = None
     try:
+        try_load_client_module(models_dir)  # registers any project-local model types
         models = load_models(models_dir)
     except (FileNotFoundError, Exception):
         pass

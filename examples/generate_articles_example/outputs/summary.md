@@ -1,3 +1,3 @@
-*   **Symbiotic Infrastructure:** Mycorrhizal fungi create a vast underground network that connects tree roots, facilitating a trade of sugars for essential nutrients like phosphorus and nitrogen.
-*   **Support and Communication:** Central "Mother Trees" use the network to nurture seedlings with carbon, while other trees send chemical distress signals to warn neighbors of pest attacks and trigger collective defenses.
-*   **Complex Ecosystem:** Beyond cooperation, the network is used for chemical warfare and resource theft, shifting the scientific view of forests from a group of individuals to a single, interconnected organism.
+* **Symbiotic Connection:** Trees use an underground fungal network (mycelium) to exchange sugar for essential nutrients, creating a massive, interconnected ecosystem.
+* **Communication and Care:** Large "Mother Trees" utilize this web to nurture young saplings and transmit chemical warning signals to the community regarding pest attacks.
+* **Complex Community:** The network facilitates both cooperation and biological warfare, proving that forests function as interdependent societies rather than just individual competitors.

@@ -13,8 +13,38 @@ from pbt.executor.parser_initial import (
     known_config_keys,
     register_config_keys,
 )
+from pbt.model_spec import ModelSpec
+from pbt.model_types import (
+    BaseModelType,
+    ModelType,
+    get_model_type,
+    known_model_types,
+    model_type,
+    register_model_type,
+)
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
+
+__all__ = [
+    "run",
+    "async_run",
+    "ModelSpec",
+    "ModelType",
+    "BaseModelType",
+    "model_type",
+    "register_model_type",
+    "get_model_type",
+    "known_model_types",
+    "register_config_keys",
+    "known_config_keys",
+    "UnknownConfigKeyWarning",
+    "ModelStatus",
+    "ModelError",
+    "PromptModelsDict",
+    "PromptFile",
+    "StorageBackend",
+    "__version__",
+]
 
 
 def _version_from_pyproject() -> str:
@@ -144,6 +174,13 @@ async def async_run(
             console.print(f"[dim]{ts()}[/dim]  {msg}")
 
     storage_backend.init_db()
+
+    # client.py is imported before the models are parsed: it is where a project
+    # registers its own model types, and an unregistered type looks like a typo.
+    if models_from_dict is None:
+        from pbt.llm import try_load_client_module
+
+        try_load_client_module(models_dir)
 
     raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
     all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)

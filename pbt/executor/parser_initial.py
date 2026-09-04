@@ -18,16 +18,16 @@ from jinja2 import Environment, Undefined
 _REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)['"]\s*\)""")
 _PROMPTDATA_PATTERN = re.compile(r"""\bpromptdata\(\s*['"](\w+)['"]\s*\)""")
 
-# Every config() key pbt itself acts on.  Anything else is either a typo or a
-# key consumed by a custom llm_call(prompt, config=...) — see register_config_keys().
+# Every config() key pbt acts on regardless of model type.  Type-specific keys
+# (loop_over, quality_retries, …) are declared by the model type itself and come
+# from the registry, so registering a type is the only step needed to make its
+# keys legal.  Anything left over is either a typo or a key consumed by a custom
+# llm_call(prompt, config=...) — see register_config_keys().
 _BUILTIN_CONFIG_KEYS = frozenset({
     "output_format",
     "output_extension",
     "promptfiles",
     "model_type",
-    "loop_over",
-    "quality_retries",
-    "quality_pass_marker",
     "global_instruction",
 })
 
@@ -49,8 +49,14 @@ def register_config_keys(*keys: str) -> None:
 
 
 def known_config_keys() -> set[str]:
-    """Return every config() key currently recognised (built-in + registered)."""
-    return set(_BUILTIN_CONFIG_KEYS) | _extra_config_keys
+    """Return every config() key currently recognised.
+
+    Three sources: the keys pbt always acts on, the keys each registered model
+    type declares, and any keys registered by hand for a custom ``llm_call``.
+    """
+    from pbt.model_types import registered_config_keys
+
+    return set(_BUILTIN_CONFIG_KEYS) | registered_config_keys() | _extra_config_keys
 
 
 def warn_unknown_config_keys(

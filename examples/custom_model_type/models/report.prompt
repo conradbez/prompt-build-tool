@@ -1,0 +1,7 @@
+{# A built-in type: renders and returns, no LLM call. #}
+{{ config(model_type="template") }}
+# {{ ref('headline') }}
+
+{{ ref('article') }}
+
+_({{ ref('length') }} words)_

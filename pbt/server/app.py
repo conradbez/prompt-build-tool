@@ -62,6 +62,11 @@ def create_app(
     # Detect DAG shape at startup for the test UI
     try:
         from pbt.executor.graph import load_models, get_dag_promptdata, get_dag_promptfiles
+        from pbt.llm import try_load_client_module
+
+        # client.py registers any project-local model types; it has to be
+        # imported before the models are parsed or those types look unknown.
+        try_load_client_module(models_dir)
         _models = load_models(models_dir)
         dag_promptdata: list[str] = get_dag_promptdata(_models)
         dag_promptfiles: list[str] = get_dag_promptfiles(_models)

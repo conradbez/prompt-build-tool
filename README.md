@@ -164,10 +164,9 @@ pbt docs --output my/report.html
 pbt can be used directly from Python without the CLI:
 
 ```python
-import asyncio
 import pbt
 
-results = asyncio.run(pbt.run("path/to/models"))
+results = pbt.run("path/to/models")
 
 for name, output in results.items():
     print(name, output)
@@ -176,9 +175,7 @@ for name, output in results.items():
 ### `pbt.run()`
 
 ```python
-import asyncio
-
-results = asyncio.run(pbt.run(
+results = pbt.run(
     models_dir="models",       # path to *.prompt files
     select=["article"],        # optional: run only these models
     llm_call=my_llm_fn,        # optional: custom LLM backend
@@ -186,7 +183,7 @@ results = asyncio.run(pbt.run(
     promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
     validation_dir="validation", # optional: per-model validation functions
     global_instruction="Answer in British English.",  # optional: text added to every prompt
-))
+)
 ```
 
 | Parameter | Type | Description |
@@ -213,7 +210,7 @@ pbt run --promptdata tone=formal --promptdata audience=engineers
 ```
 
 ```python
-asyncio.run(pbt.run("models", promptdata={"tone": "formal", "audience": "engineers"}))
+pbt.run("models", promptdata={"tone": "formal", "audience": "engineers"})
 ```
 
 Access them in any `.prompt` file:
@@ -318,8 +315,8 @@ pbt run --promptfile report=annual.pdf --promptfile chart_image=q4.png
 ```
 
 ```python
-asyncio.run(pbt.run("models", promptfiles={"my_document": "report.pdf"}))
-asyncio.run(pbt.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"}))
+pbt.run("models", promptfiles={"my_document": "report.pdf"})
+pbt.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"})
 ```
 
 **3. Custom `llm_call` with file and config support:**
@@ -356,7 +353,7 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `output_format` | `"json"` parses and validates the output as JSON; defaults to `"text"` |
 | `output_extension` | File extension for `outputs/<model>.<ext>`; defaults to `"md"` |
 | `promptfiles` | Names of files this model receives at runtime — see [Passing files to models](#passing-files-to-models-promptfiles) |
-| `model_type` | `"loop"`, `"execute_python"`, or `"quality_check"`; defaults to a plain LLM call |
+| `model_type` | `"template"`, `"loop"`, `"execute_python"`, `"quality_check"`, or a type you register; defaults to a plain LLM call |
 | `loop_over` | For loop models: which upstream model to fan out over |
 | `quality_retries` | For quality-check models: retry count (default `2`) |
 | `quality_pass_marker` | Substring marking a passing quality check (default `"PASS"`) |
@@ -499,6 +496,22 @@ Write a one-paragraph summary for this article title:
 
 ---
 
+## Template models (`model_type="template"`)
+
+A `template` model renders its Jinja and uses the result as its output, with no
+LLM call — for nodes that only reshape what upstream models already produced.
+
+```jinja
+{# models/report.prompt #}
+{{ config(model_type="template") }}
+
+# {{ ref('title') }}
+
+{{ ref('summary') }}
+```
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.
@@ -618,3 +631,111 @@ Summarise the following: {{ ref('previous_model') }}
 ```
 
 The model is recorded as a successful run, downstream templates can detect it with `was_skipped('model_name')`, and downstream `ref()` calls receive the value you provided.
+
+---
+
+## Writing your own model type (`model_type=`)
+
+Every `.prompt` file is run by a *model type*. Leave `model_type` unset and pbt
+sends the rendered prompt to your LLM; set it to `loop`, `template`,
+`execute_python` or `quality_check` and pbt runs it differently. If none of
+those do what you need, you can add your own.
+
+Write a class with one method and register it in `client.py`:
+
+```python
+# client.py
+import pbt
+
+@pbt.model_type("shout", config_keys={"suffix"})
+class Shout(pbt.BaseModelType):
+    async def execute(self, spec, ctx):
+        rendered, state = ctx.render(spec)
+        output = await ctx.call_llm(rendered, spec, state)
+        return output.upper() + spec.config.get("suffix", "")
+```
+
+Then use it from any model:
+
+```jinja
+{# models/loud.prompt #}
+{{ config(model_type="shout", suffix="!") }}
+Summarise {{ ref('article') }}.
+```
+
+```bash
+pbt run
+```
+
+### What you get
+
+Two arguments arrive in `execute`:
+
+| | |
+|---|---|
+| `spec` | The model being run: `spec.name`, `spec.source`, `spec.config` (its `config()` block), `spec.depends_on` |
+| `ctx` | The run: `ctx.render(spec)` renders the template, `ctx.call_llm(...)` sends it, `ctx.outputs` holds the outputs of upstream models by name |
+
+Whatever you return becomes the model's output — the thing `ref('loud')` gives
+downstream models, and the thing written to `outputs/`. Return a string and it
+is parsed for you if the model sets `output_format="json"`. Return a list or a
+dict and it is kept as-is, which is how `loop` returns one entry per item.
+
+Everything else keeps working without you doing anything: the prompt cache,
+`{{ config(output_format="json") }}`, the skip functions, `validation/`,
+`pbt test`, `pbt docs` and the run report all treat your type like a built-in
+one.
+
+`config_keys={"suffix"}` tells pbt which `config()` keys your type reads.
+Without it, `pbt run` warns that `suffix` looks like a typo.
+
+### Optional extras
+
+**Skip the LLM entirely.** Anything you can compute, you can return:
+
+```python
+@pbt.model_type("truncate", config_keys={"max_words"})
+class Truncate(pbt.BaseModelType):
+    async def execute(self, spec, ctx):
+        rendered, _ = ctx.render(spec)
+        return " ".join(rendered.split()[:spec.config_int("max_words", 50)])
+```
+
+```jinja
+{{ config(model_type="truncate", max_words="30") }}
+{{ ref('article') }}
+```
+
+Keep calling `ctx.render(spec)` even when you ignore the text. The `ref()` calls
+in the template are what tell pbt your model has to run after the models it
+references — reading `ctx.outputs` directly does not create that edge.
+
+For a *one-off* calculation, you do not need a type at all:
+[`execute_python`](#custom-model-types-model_type) already runs a model's
+template as Python. Write a type when the behaviour is worth reusing across
+models and configuring per model, the way `truncate` takes `max_words`.
+
+**Cache expensive non-LLM work.** Anything slow and repeatable can go behind the
+same cache your LLM calls use, so it does not re-run when nothing changed:
+
+```python
+rendered, state = ctx.render(spec)
+return await ctx.cached(rendered, spec, state, compute=lambda: scrape(rendered))
+```
+
+**Opt out of the global instruction.** If your rendered template is not a prompt
+for a model to answer — Python source, or a value passed straight through — set
+`accepts_global_instruction = False` so your
+[global instruction](#global-instructions-globalprompt) is not prepended to it.
+
+**Turn one model into several.** Override `expand(spec, all_specs)` to replace
+your node with a chain of nodes before the run starts — this is how
+`quality_check` builds its check-and-retry loop. Return a list of models, one of
+which must keep the original name so `ref()` still finds it.
+
+### Where to register it
+
+Anywhere that runs before your models are read. `client.py` is the easiest spot,
+because pbt already imports it on every `pbt run`, `pbt test` and `pbt ls`.
+
+A worked example lives in [`examples/custom_model_type/`](examples/custom_model_type/).

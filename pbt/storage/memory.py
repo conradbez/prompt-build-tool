@@ -68,7 +68,7 @@ class MemoryStorageBackend:
     def get_model_outputs_from_run(self, run_id: str, model_names: list[str]) -> dict[str, str]:
         results = self._results.get(run_id, {})
         return {
-            name: row["llm_output"]
+            name: row.get("llm_output_validated") or row["llm_output"]
             for name, row in results.items()
             if name in model_names and row["status"] == "success"
         }
@@ -82,6 +82,8 @@ class MemoryStorageBackend:
         model_name: str,
         prompt_template: str,
         depends_on: list[str],
+        model_type: str = "",
+        config: dict | None = None,
     ) -> None:
         self._results[run_id][model_name] = {
             "run_id": run_id,
@@ -91,11 +93,15 @@ class MemoryStorageBackend:
             "prompt_rendered": None,
             "prompt_hash": None,
             "llm_output": None,
+            "llm_output_validated": None,
+            "cached": False,
             "started_at": None,
             "completed_at": None,
             "execution_ms": None,
             "error": None,
             "depends_on": json.dumps(depends_on),
+            "model_type": model_type,
+            "config": json.dumps(config or {}, sort_keys=True),
         }
 
     def mark_model_running(self, run_id: str, model_name: str) -> None:
@@ -109,6 +115,7 @@ class MemoryStorageBackend:
         prompt_rendered: str,
         llm_output: str,
         cache_key: str | None = None,
+        cached: bool = False,
     ) -> None:
         # Tolerate a model_name that was never registered via
         # upsert_model_pending — e.g. test prompts cached by execute_tests.
@@ -133,9 +140,20 @@ class MemoryStorageBackend:
                 "llm_output": llm_output,
                 "completed_at": now,
                 "execution_ms": elapsed,
+                "cached": cached,
             }
         )
         self._cache[_prompt_hash(cache_key or prompt_rendered)] = llm_output
+
+    def record_validated_output(self, run_id: str, model_name: str, output: str) -> None:
+        """Store the post-validation output alongside the raw one.
+
+        The raw text stays in ``llm_output`` because that is what the prompt
+        cache serves — editing a validator must not force a new LLM call.
+        """
+        self._results.setdefault(run_id, {}).setdefault(model_name, {})[
+            "llm_output_validated"
+        ] = output
 
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:
         self._results[run_id][model_name].update(

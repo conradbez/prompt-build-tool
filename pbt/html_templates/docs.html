@@ -6,6 +6,8 @@
   <title>pbt docs</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <style>
     section { margin-top: var(--pico-spacing); }
     h2 { font-size: 1.2em; font-weight: 600; margin-bottom: var(--pico-spacing); }
@@ -18,10 +20,33 @@
       padding: var(--pico-spacing);
       background: var(--pico-card-sectioning-background-color);
     }
+    .type-chip {
+      font-family: var(--pico-font-family-monospace);
+      font-size: 0.78em; padding: 1px 7px; border-radius: 4px;
+      background: var(--pico-code-background-color);
+      color: var(--pico-code-color);
+      white-space: nowrap;
+    }
+    .config-cell {
+      font-family: var(--pico-font-family-monospace);
+      font-size: 0.78em; color: var(--pico-muted-color);
+      max-width: 200px; overflow: hidden;
+      white-space: nowrap; text-overflow: ellipsis;
+    }
     .output-cell {
-      font-size: 0.85em; max-width: 400px;
+      font-size: 0.85em; max-width: 260px;
       overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     }
+    .output-cell[data-content] { cursor: pointer; }
+    .output-cell[data-content]:hover { text-decoration: underline; }
+    .tag {
+      display: inline-block; margin-left: 6px; padding: 1px 8px;
+      border-radius: 999px; font-size: 0.72em; font-weight: 600;
+      border: 1px solid var(--pico-muted-border-color);
+      color: var(--pico-muted-color);
+    }
+    #modal-body { max-height: 65vh; overflow: auto; }
+    #modal-body pre { white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -46,7 +71,6 @@
           <thead>
             <tr>
               <th>Run ID</th>
-              <th>Date</th>
               <th>Status</th>
               <th style="text-align:right">Models</th>
               <th>Started</th>
@@ -57,7 +81,6 @@
             {% for run in runs %}
             <tr onclick="toggleDetail('{{ run.run_id }}')" style="cursor:pointer">
               <td style="font-family:monospace;font-size:0.85em">{{ run.short_id }}</td>
-              <td>{{ run.date }}</td>
               <td>{{ badge(run.status) }}</td>
               <td style="text-align:right">{{ run.model_count }}</td>
               <td style="color:var(--pico-muted-color);font-size:0.9em">{{ run.created }}</td>
@@ -65,19 +88,35 @@
             </tr>
             {% if run.results %}
             <tr id="detail-{{ run.run_id }}" class="detail-row">
-              <td colspan="6" style="padding:0">
+              <td colspan="5" style="padding:0">
                 <div class="detail-inner">
                   <table style="margin-bottom:0">
                     <thead>
-                      <tr><th>Model</th><th>Status</th><th>Time</th><th>Output preview</th></tr>
+                      <tr><th>Model</th><th>Type</th><th>Config</th><th>Status</th><th>Time</th><th>Input</th><th>Output preview</th></tr>
                     </thead>
                     <tbody>
                       {% for r in run.results %}
                       <tr>
                         <td style="font-family:monospace">{{ r.model_name }}</td>
-                        <td>{{ badge(r.status) }}</td>
-                        <td style="color:var(--pico-muted-color)">{{ r.execution_ms ~ ' ms' if r.execution_ms else '—' }}</td>
-                        <td class="output-cell">{{ r.error if r.error else r.output_preview }}</td>
+                        <td><span class="type-chip">{{ r.model_type }}</span></td>
+                        <td class="config-cell">{{ r.config or '—' }}</td>
+                        <td style="white-space:nowrap">
+                          {{ badge(r.status) }}{% if r.cached %}<span class="tag">Cached</span>{% endif %}
+                        </td>
+                        {# 0 ms is a real measurement (a model that made no call); — means not recorded. #}
+                        <td style="color:var(--pico-muted-color);white-space:nowrap">{{ (r.execution_ms ~ ' ms') if r.execution_ms is not none else '—' }}</td>
+                        <td class="output-cell"
+                            {% if r.input %}onclick="openContent(this)"
+                            data-title="{{ r.model_name }} — input"
+                            data-content="{{ r.input }}"{% endif %}>{{ r.input_preview or '—' }}</td>
+                        {% if r.error %}
+                        <td class="output-cell">{{ r.error }}</td>
+                        {% else %}
+                        <td class="output-cell"
+                            {% if r.output %}onclick="openContent(this)"
+                            data-title="{{ r.model_name }} — output"
+                            data-content="{{ r.output }}"{% endif %}>{{ r.output_preview or '—' }}</td>
+                        {% endif %}
                       </tr>
                       {% endfor %}
                     </tbody>
@@ -88,7 +127,7 @@
             {% endif %}
             {% else %}
             <tr>
-              <td colspan="6" style="text-align:center;color:var(--pico-muted-color)">
+              <td colspan="5" style="text-align:center;color:var(--pico-muted-color)">
                 No runs recorded yet. Run <code>pbt run</code> first.
               </td>
             </tr>
@@ -110,14 +149,47 @@
     {% endif %}
   </main>
 
+  <dialog id="content-modal">
+    <article style="max-width:min(900px, 90vw)">
+      <header>
+        <button aria-label="Close" rel="prev" onclick="closeContent()"></button>
+        <strong id="modal-title"></strong>
+      </header>
+      <div id="modal-body"></div>
+    </article>
+  </dialog>
+
   <script>
     mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
+    var modal = document.getElementById('content-modal');
+
+    function openContent(cell) {
+      document.getElementById('modal-title').textContent = cell.dataset.title || '';
+      // Model output is rendered as markdown, which is how most of it is
+      // written. It is sanitised first: it is text a language model produced,
+      // so it is not trusted to be inert HTML.
+      document.getElementById('modal-body').innerHTML =
+        DOMPurify.sanitize(marked.parse(cell.dataset.content || ''));
+      modal.showModal();
+    }
+
+    function closeContent() {
+      modal.close();
+    }
+
+    // Clicking the backdrop (outside the article) closes the modal.
+    modal.addEventListener('click', function (event) {
+      if (event.target === modal) closeContent();
+    });
+
     function toggleDetail(runId) {
       var row = document.getElementById('detail-' + runId);
-      if (row) {
-        row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
-      }
+      if (!row) return;
+      // Read the computed style: the row starts hidden by the .detail-row
+      // class, so its inline style is empty on the first click.
+      var hidden = window.getComputedStyle(row).display === 'none';
+      row.style.display = hidden ? 'table-row' : 'none';
     }
   </script>
 </body>

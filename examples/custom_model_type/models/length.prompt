@@ -1,0 +1,6 @@
+{# The built-in "execute_python" type: the template renders to Python source,
+   which pbt then runs instead of calling the LLM. The ref() below is ordinary
+   Python at run time, and is also what puts the edge article -> length into
+   the DAG. #}
+{{ config(model_type="execute_python") }}
+output = len(ref('article').split())

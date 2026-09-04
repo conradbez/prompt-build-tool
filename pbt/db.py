@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from pbt.storage.sqlite import SQLiteStorageBackend
+from pbt.storage.sqlite import SQLiteStorageBackend, StaleDatabaseError
 
 _DEFAULT_BACKEND = SQLiteStorageBackend()
 
@@ -19,6 +19,7 @@ def get_conn():
 
 
 def init_db() -> None:
+    """Create the schema. Raises StaleDatabaseError on a pre-schema database."""
     _DEFAULT_BACKEND.init_db()
 
 
@@ -50,8 +51,18 @@ def get_cached_llm_output(cache_key: str) -> str | None:
     return _DEFAULT_BACKEND.get_cached_llm_output(cache_key)
 
 
-def upsert_model_pending(run_id: str, model_name: str, prompt_template: str, depends_on: list[str]) -> None:
-    _DEFAULT_BACKEND.upsert_model_pending(run_id, model_name, prompt_template, depends_on)
+def upsert_model_pending(
+    run_id: str,
+    model_name: str,
+    prompt_template: str,
+    depends_on: list[str],
+    model_type: str = "",
+    config: dict | None = None,
+) -> None:
+    _DEFAULT_BACKEND.upsert_model_pending(
+        run_id, model_name, prompt_template, depends_on,
+        model_type=model_type, config=config,
+    )
 
 
 def mark_model_running(run_id: str, model_name: str) -> None:
@@ -64,8 +75,16 @@ def mark_model_success(
     prompt_rendered: str,
     llm_output: str,
     cache_key: str | None = None,
+    cached: bool = False,
 ) -> None:
-    _DEFAULT_BACKEND.mark_model_success(run_id, model_name, prompt_rendered, llm_output, cache_key=cache_key)
+    _DEFAULT_BACKEND.mark_model_success(
+        run_id, model_name, prompt_rendered, llm_output,
+        cache_key=cache_key, cached=cached,
+    )
+
+
+def record_validated_output(run_id: str, model_name: str, output: str) -> None:
+    _DEFAULT_BACKEND.record_validated_output(run_id, model_name, output)
 
 
 def mark_model_error(run_id: str, model_name: str, error: str) -> None:

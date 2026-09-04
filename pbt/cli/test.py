@@ -36,7 +36,7 @@ from pbt.executor.graph import (
 )
 from pbt.executor.executor import execute_run
 from pbt.global_instruction import resolve_global_instruction
-from pbt.llm import resolve_llm_call
+from pbt.llm import resolve_llm_call, try_load_client_module
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
 from pbt.promptparams import (
@@ -140,10 +140,10 @@ def register_command(main) -> None:
         and tests are reported for each row individually.
         Without promptparams, tests run against the latest (or specified) run.
         """
-        from pbt.cli import _git_sha
+        from pbt.cli import _git_sha, init_db_or_exit
 
         c = Console(highlight=not no_color)
-        db.init_db()
+        init_db_or_exit()
 
         # ------------------------------------------------------------------
         # Discover tests
@@ -160,6 +160,7 @@ def register_command(main) -> None:
         # Load models
         # ------------------------------------------------------------------
         try:
+            try_load_client_module(models_dir)  # registers any project-local model types
             all_models = load_models(models_dir)
         except FileNotFoundError as exc:
             err_console.print(f"[red]Error:[/red] {exc}")

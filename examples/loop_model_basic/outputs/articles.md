@@ -1,1 +1,1 @@
-["The Evolution of Quantum Computing", "The Impact of 5G on Remote Work", "Future Trends in Edge Computing"]
+["The rise of edge computing in 2024", "Advances in sustainable battery technology", "The impact of quantum computing on cybersecurity"]

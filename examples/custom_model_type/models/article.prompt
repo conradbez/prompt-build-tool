@@ -1,0 +1,2 @@
+{# An ordinary model — no model_type, so pbt just sends this to the LLM. #}
+Write two short paragraphs about {{ promptdata("topic") or "tidal energy" }}.

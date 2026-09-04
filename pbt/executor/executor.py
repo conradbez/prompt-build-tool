@@ -1,10 +1,19 @@
 """
 Prompt executor — orchestrates the full run lifecycle.
 
-For each model (in dependency order):
-  1. Render the Jinja2 template, injecting upstream outputs via ref().
-  2. Send the rendered prompt to the LLM.
-  3. Persist input + output to storage.
+The executor owns everything that is the same for every model, so that a model
+type never has to reimplement it:
+
+  1. Look up the strategy for the model's ``model_type``.
+  2. Ask it for an output value — the strategy renders, and calls the LLM or
+     runs whatever it runs, through the :class:`~pbt.executor.run_context.RunContext`.
+  3. Apply skip propagation from the model's own template.
+  4. Parse the value when ``output_format="json"``.
+  5. Persist prompt and output, which is also what populates the prompt cache.
+  6. Run the model's validator, if it has one.
+
+Adding a model type therefore means writing step 2 only — see
+:mod:`pbt.model_types`.
 
 LLM configuration
 -----------------
@@ -13,11 +22,13 @@ Use ``pbt.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Awaitable, Callable
 
-from pbt.executor.model_constructs import BaseModelHandler
+from pbt.executor.run_context import RunContext, parse_json_output
+from pbt.model_spec import ModelSpec
+from pbt.model_types import get_model_type
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile
 
@@ -34,9 +45,85 @@ class ModelRunResult:
     prompt_skipped: bool = False  # True when a skip function fired during rendering
 
 
+async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
+    """Run one model through the full lifecycle and return its result.
+
+    The strategy contributes the output value; every step around it is here, so
+    caching, skipping, JSON handling, storage and validation behave identically
+    for built-in and user-registered model types alike.
+    """
+    strategy = get_model_type(spec.model_type) or get_model_type("")
+    value = await strategy.execute(spec, ctx)
+
+    # --- skip propagation, from the model's own (primary) render -----------
+    state = ctx.primary_state(spec.name)
+    skipped = state is not None and state.skip_value is not None
+    if skipped:
+        ctx.skipped.add(spec.name)
+        if state.skip_downstream:
+            ctx.skip_downstream.add(spec.name)
+
+    # --- output_format ------------------------------------------------------
+    # Only a plain string needs parsing: a strategy that already produced a
+    # structured value (a fan-out's list of items) has handled its own items.
+    if not skipped and isinstance(value, str) and spec.output_format == "json":
+        value = parse_json_output(value)
+
+    ctx.outputs[spec.name] = value
+    output = value if isinstance(value, str) else json.dumps(value)
+    rendered = ctx.prompt_rendered(spec.name)
+
+    # --- persist ------------------------------------------------------------
+    # What goes under the cache key is the raw LLM response, not this model's
+    # final output.  The two differ whenever a strategy post-processes the
+    # response, and caching the processed form would re-apply that processing
+    # on the next run.  Storing the raw form also means editing a validator
+    # costs nothing at the LLM.
+    cached_value = ctx.cache_artifact(spec.name)
+    if cached_value is None:
+        cached_value = output
+    ctx.storage.mark_model_success(
+        ctx.run_id,
+        spec.name,
+        rendered,
+        cached_value,
+        cache_key=ctx.cache_key(spec, rendered, ctx.files_for(spec)),
+        cached=ctx.served_from_cache(spec.name),
+    )
+
+    # --- validate -----------------------------------------------------------
+    if not skipped and ctx.validators:
+        from pbt.validator import run_validator
+
+        validated = run_validator(spec.name, ctx.validators, rendered, output)
+        if isinstance(validated, (dict, list)):
+            ctx.outputs[spec.name] = validated
+            output = json.dumps(validated)
+        else:
+            output = validated if isinstance(validated, str) else str(validated)
+            ctx.outputs[spec.name] = output
+
+    if output != cached_value:
+        # Record the model's actual output next to the cached raw response, so
+        # `pbt test` and `pbt docs` show what the pipeline really passed on.
+        record = getattr(ctx.storage, "record_validated_output", None)
+        if record is not None:
+            record(ctx.run_id, spec.name, output)
+
+    return ModelRunResult(
+        model_name=spec.name,
+        status="success",
+        prompt_rendered=rendered,
+        llm_output=output,
+        execution_ms=ctx.elapsed_ms(spec.name),
+        cached=ctx.served_from_cache(spec.name),
+        prompt_skipped=skipped,
+    )
+
+
 async def execute_run(
     run_id: str,
-    ordered_models: list[BaseModelHandler],
+    ordered_models: list[ModelSpec],
     storage_backend: StorageBackend,
     preloaded_outputs: dict[str, str] | None = None,
     on_model_start: Callable[[str], None] | None = None,
@@ -49,14 +136,15 @@ async def execute_run(
     global_instruction: str | None = None,
 ) -> list[ModelRunResult]:
     """
-    Execute all *ordered_models* in sequence (dependency order).
+    Execute all *ordered_models* in dependency order.
 
     Parameters
     ----------
     run_id:
         The run ID created by db.create_run().
     ordered_models:
-        Models sorted by execution_order() — upstream models first.
+        The :class:`~pbt.model_spec.ModelSpec` objects to run.  Execution order
+        is derived from their dependencies, so the list order does not matter.
     preloaded_outputs:
         Outputs from a previous run to seed ref() lookups.  Used by
         ``--select`` so upstream models don't need to be re-executed.
@@ -70,8 +158,8 @@ async def execute_run(
     global_instruction:
         Optional prompt text rendered into every model's prompt — pbt's
         analogue of dbt's query-comment.  Individual models opt out with
-        ``{{ config(global_instruction=False) }}``; ``execute_python`` models
-        never receive it.  See ``pbt.global_instruction``.
+        ``{{ config(global_instruction=False) }}``, and model types whose
+        rendered template is not natural language never receive it.
 
     Returns
     -------
@@ -83,118 +171,104 @@ async def execute_run(
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
         )
 
-    # Seed model_outputs with any preloaded results from a previous run.
-    model_outputs: dict[str, str] = dict(preloaded_outputs or {})
-    # Tracks models whose LLM call was skipped via a skip function in the template.
-    prompt_skipped_models: set[str] = set()
-    # Tracks models that triggered skip_this_and_downstream — their dependents skip too.
-    skip_downstream_models: set[str] = set()
+    ctx = RunContext(
+        run_id=run_id,
+        storage=storage_backend,
+        llm_call=llm_call,
+        rag_call=rag_call,
+        promptdata=promptdata,
+        promptfiles=promptfiles,
+        validators=validators,
+        global_instruction=global_instruction,
+        outputs=dict(preloaded_outputs or {}),
+    )
 
     # Register all models as 'pending' up front (mirrors dbt's deferred state).
-    for model in ordered_models:
+    for spec in ordered_models:
         storage_backend.upsert_model_pending(
             run_id=run_id,
-            model_name=model.name,
-            prompt_template=model.source,
-            depends_on=model.depends_on,
+            model_name=spec.name,
+            prompt_template=spec.source,
+            depends_on=spec.depends_on,
+            model_type=spec.model_type,
+            config=spec.config,
         )
 
     results: list[ModelRunResult] = []
     failed_upstream: set[str] = set()
-    completed: set[str] = set(model_outputs)  # preloaded outputs count as completed
+    completed: set[str] = set(ctx.outputs)  # preloaded outputs count as completed
 
     pending = list(ordered_models)
     while pending:
-        still_waiting = []
+        still_waiting: list[ModelSpec] = []
         made_progress = False
 
-        for model in pending:
+        for spec in pending:
             # Deps still running — come back to this model next iteration
-            waiting_deps = [d for d in model.depends_on if d not in completed and d not in failed_upstream]
+            waiting_deps = [
+                dep for dep in spec.depends_on
+                if dep not in completed and dep not in failed_upstream
+            ]
             if waiting_deps:
-                still_waiting.append(model)
+                still_waiting.append(spec)
                 continue
 
             made_progress = True
 
             # Skip if any dependency failed *in this run* (preloaded deps are fine)
-            blocked_by = [d for d in model.depends_on if d in failed_upstream]
+            blocked_by = [dep for dep in spec.depends_on if dep in failed_upstream]
             if blocked_by:
-                storage_backend.mark_model_skipped(run_id, model.name)
+                storage_backend.mark_model_skipped(run_id, spec.name)
                 result = ModelRunResult(
-                    model_name=model.name,
+                    model_name=spec.name,
                     status="skipped",
                     error=f"Skipped because upstream models failed: {blocked_by}",
                 )
                 results.append(result)
-                failed_upstream.add(model.name)
+                failed_upstream.add(spec.name)
                 if on_model_done:
                     on_model_done(result)
                 continue
 
             # Skip if any dependency called skip_this_and_downstream
-            skip_signalled_by = [d for d in model.depends_on if d in skip_downstream_models]
+            skip_signalled_by = [
+                dep for dep in spec.depends_on if dep in ctx.skip_downstream
+            ]
             if skip_signalled_by:
-                storage_backend.mark_model_skipped(run_id, model.name)
+                storage_backend.mark_model_skipped(run_id, spec.name)
                 result = ModelRunResult(
-                    model_name=model.name,
+                    model_name=spec.name,
                     status="skipped",
-                    error=f"Skipped because upstream models signalled skip_this_and_downstream: {skip_signalled_by}",
+                    error=(
+                        "Skipped because upstream models signalled "
+                        f"skip_this_and_downstream: {skip_signalled_by}"
+                    ),
                 )
                 results.append(result)
-                skip_downstream_models.add(model.name)  # propagate further downstream
-                completed.add(model.name)
+                ctx.skip_downstream.add(spec.name)  # propagate further downstream
+                completed.add(spec.name)
                 if on_model_done:
                     on_model_done(result)
                 continue
 
             if on_model_start:
-                on_model_start(model.name)
+                on_model_start(spec.name)
 
-            storage_backend.mark_model_running(run_id, model.name)
+            storage_backend.mark_model_running(run_id, spec.name)
 
             try:
-                # Resolve file paths declared in this model's config block
-                model_files: list | None = None
-                if model.promptfiles_used and promptfiles:
-                    model_files = []
-                    for name in model.promptfiles_used:
-                        if name not in promptfiles:
-                            raise ValueError(
-                                f"Model '{model.name}' declares promptfile '{name}' in config "
-                                f"but it was not provided. Pass it via --promptfile {name}=path or "
-                                f"the promptfiles= argument."
-                            )
-                        pf = promptfiles[name]
-                        # Open string/Path values so LLM clients always receive file objects
-                        if isinstance(pf, (str, Path)):
-                            pf = open(pf, "rb")  # noqa: WPS515
-                        model_files.append(pf)
-
-                result = await model.execute_node(
-                    model_outputs=model_outputs,
-                    model_files=model_files,
-                    storage_backend=storage_backend,
-                    run_id=run_id,
-                    llm_call=llm_call,
-                    rag_call=rag_call,
-                    promptdata=promptdata,
-                    prompt_skipped_models=prompt_skipped_models,
-                    skip_downstream_models=skip_downstream_models,
-                    validators=validators,
-                    global_instruction=global_instruction,
-                )
+                result = await execute_model(spec, ctx)
             except Exception as exc:  # noqa: BLE001
                 error_msg = str(exc)
-                storage_backend.mark_model_error(run_id, model.name, error_msg)
-                failed_upstream.add(model.name)
+                storage_backend.mark_model_error(run_id, spec.name, error_msg)
+                failed_upstream.add(spec.name)
                 result = ModelRunResult(
-                    model_name=model.name,
+                    model_name=spec.name,
                     status="error",
                     error=error_msg,
                 )
             else:
-                completed.add(model.name)
+                completed.add(spec.name)
 
             results.append(result)
             if on_model_done:
@@ -204,12 +278,14 @@ async def execute_run(
         if not made_progress:
             # No model could run this pass — unresolvable (e.g. circular deps).
             # Emit an error result for each stuck model so nothing is silently dropped.
-            for model in still_waiting:
-                storage_backend.mark_model_error(run_id, model.name, "Unresolvable dependency (possible cycle)")
+            for spec in still_waiting:
+                storage_backend.mark_model_error(
+                    run_id, spec.name, "Unresolvable dependency (possible cycle)"
+                )
                 result = ModelRunResult(
-                    model_name=model.name,
+                    model_name=spec.name,
                     status="error",
-                    error=f"Unresolvable dependency (possible cycle): {model.depends_on}",
+                    error=f"Unresolvable dependency (possible cycle): {spec.depends_on}",
                 )
                 results.append(result)
                 if on_model_done:

@@ -11,6 +11,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+# Columns added to model_results after the first release.  pbt does not migrate
+# databases — this exists so that opening an older one fails with an
+# explanation instead of "no such column".  Keep it in step with init_db().
+_LATE_COLUMNS = {
+    "llm_output_validated": "TEXT",
+}
+
+
+class StaleDatabaseError(RuntimeError):
+    """Raised when .pbt/pbt.db predates the current schema."""
+
 
 class SQLiteStorageBackend:
     def __init__(self, path: str | Path | None = None) -> None:
@@ -57,11 +68,15 @@ class SQLiteStorageBackend:
                     prompt_rendered  TEXT,
                     prompt_hash      TEXT,
                     llm_output       TEXT,
+                    llm_output_validated TEXT,
+                    cached           INTEGER   NOT NULL DEFAULT 0,
                     started_at       TEXT,
                     completed_at     TEXT,
                     execution_ms     INTEGER,
                     error            TEXT,
-                    depends_on       TEXT      NOT NULL DEFAULT '[]'
+                    depends_on       TEXT      NOT NULL DEFAULT '[]',
+                    model_type       TEXT      NOT NULL DEFAULT '',
+                    config           TEXT      NOT NULL DEFAULT '{}'
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_model_results_run
@@ -86,6 +101,34 @@ class SQLiteStorageBackend:
                 CREATE INDEX IF NOT EXISTS idx_test_results_run
                     ON test_results (run_id, test_name);
             """)
+            self._check_schema(conn)
+
+    def _check_schema(self, conn: sqlite3.Connection) -> None:
+        """Fail with an explanation when the database predates this schema.
+
+        ``CREATE TABLE IF NOT EXISTS`` silently leaves an older table alone, so
+        without this the first write fails much later with a bare
+        "no such column".
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_results)")}
+        missing = {name: t for name, t in _LATE_COLUMNS.items() if name not in columns}
+        if not missing:
+            return
+
+        path = self._db_path
+        alters = " ".join(
+            f'ALTER TABLE model_results ADD COLUMN {name} {type_};'
+            for name, type_ in missing.items()
+        )
+        raise StaleDatabaseError(
+            f"'{path}' was created by an older version of pbt and is missing "
+            f"the model_results column(s): {', '.join(sorted(missing))}.\n\n"
+            f"pbt does not migrate databases. The file holds only run history "
+            f"and the prompt cache, so the simplest fix is to delete it:\n\n"
+            f"    rm {path}\n\n"
+            f"To keep your run history instead, add the column(s) by hand:\n\n"
+            f'    sqlite3 {path} "{alters}"'
+        )
 
     def create_run(self, model_count: int, git_sha: Optional[str] = None) -> str:
         run_id = str(uuid.uuid4())
@@ -146,7 +189,9 @@ class SQLiteStorageBackend:
         placeholders = ",".join("?" * len(model_names))
         with self.get_conn() as conn:
             rows = conn.execute(
-                f"""SELECT model_name, llm_output FROM model_results
+                f"""SELECT model_name,
+                           COALESCE(llm_output_validated, llm_output) AS llm_output
+                    FROM model_results
                     WHERE run_id = ?
                       AND model_name IN ({placeholders})
                       AND status = 'success'""",
@@ -172,14 +217,18 @@ class SQLiteStorageBackend:
         model_name: str,
         prompt_template: str,
         depends_on: list[str],
+        model_type: str = "",
+        config: dict | None = None,
     ) -> None:
         with self.get_conn() as conn:
             conn.execute(
                 """INSERT INTO model_results
-                   (run_id, model_name, status, prompt_template, depends_on)
-                   VALUES (?, ?, 'pending', ?, ?)
+                   (run_id, model_name, status, prompt_template, depends_on,
+                    model_type, config)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?)
                 """,
-                (run_id, model_name, prompt_template, json.dumps(depends_on)),
+                (run_id, model_name, prompt_template, json.dumps(depends_on),
+                 model_type, json.dumps(config or {}, sort_keys=True)),
             )
 
     def mark_model_running(self, run_id: str, model_name: str) -> None:
@@ -197,6 +246,7 @@ class SQLiteStorageBackend:
         prompt_rendered: str,
         llm_output: str,
         cache_key: str | None = None,
+        cached: bool = False,
     ) -> None:
         now = _now()
         with self.get_conn() as conn:
@@ -223,10 +273,25 @@ class SQLiteStorageBackend:
                        prompt_hash=?,
                        llm_output=?,
                        completed_at=?,
-                       execution_ms=?
+                       execution_ms=?,
+                       cached=?
                    WHERE run_id=? AND model_name=?
                 """,
-                (prompt_rendered, prompt_hash, llm_output, now, elapsed, run_id, model_name),
+                (prompt_rendered, prompt_hash, llm_output, now, elapsed,
+                 int(cached), run_id, model_name),
+            )
+
+    def record_validated_output(self, run_id: str, model_name: str, output: str) -> None:
+        """Store the post-validation output alongside the raw one.
+
+        The raw text stays in ``llm_output`` because that is what the prompt
+        cache serves — editing a validator must not force a new LLM call.
+        """
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE model_results SET llm_output_validated=? "
+                "WHERE run_id=? AND model_name=?",
+                (output, run_id, model_name),
             )
 
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:

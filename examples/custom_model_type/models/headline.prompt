@@ -1,0 +1,6 @@
+{# Uses the "shout" type registered in client.py: the LLM answers as usual,
+   then Shout.execute() uppercases it and appends suffix. #}
+{{ config(model_type="shout", suffix="!") }}
+Write a single short headline for this article. Reply with the headline only.
+
+{{ ref('article') }}
