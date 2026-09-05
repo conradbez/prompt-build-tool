@@ -512,6 +512,33 @@ LLM call — for nodes that only reshape what upstream models already produced.
 
 ---
 
+## Python models (`model_type="execute_python"`)
+
+An `execute_python` model runs its template as Python instead of sending it to
+the LLM. Use it for the deterministic steps in a pipeline — counting, parsing,
+reshaping, arithmetic on an upstream result.
+
+```jinja
+{# models/length.prompt #}
+{{ config(model_type="execute_python") }}
+output = len(ref('article').split())
+```
+
+The template is rendered first, then the result is executed. Inside the code,
+`ref('name')` returns an upstream model's output and `model_outputs` holds them
+all. Those `ref()` calls are also what build the dependency edges, exactly as in
+a normal prompt.
+
+The output is whatever the code prints; if it prints nothing, a variable named
+`output` is used instead (`dict` and `list` are JSON-encoded, anything else via
+`str()`). Printing wins over `output`.
+
+Results are cached on the rendered code, so unchanged code does not re-run. The
+code executes in-process with full builtins and no sandbox, so treat a `.prompt`
+file as trusted code.
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.
@@ -711,8 +738,8 @@ in the template are what tell pbt your model has to run after the models it
 references — reading `ctx.outputs` directly does not create that edge.
 
 For a *one-off* calculation, you do not need a type at all:
-[`execute_python`](#custom-model-types-model_type) already runs a model's
-template as Python. Write a type when the behaviour is worth reusing across
+[`execute_python`](#python-models-model_typeexecute_python) already runs a
+model's template as Python. Write a type when the behaviour is worth reusing across
 models and configuring per model, the way `truncate` takes `max_words`.
 
 **Cache expensive non-LLM work.** Anything slow and repeatable can go behind the
