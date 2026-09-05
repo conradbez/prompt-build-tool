@@ -124,20 +124,19 @@ call. Use it to reshape or combine what upstream models already produced.
 {{ ref('body') }}
 ```
 
-## Adding a new execution strategy
+## Adding a new execution kind
 
-Model types are registered classes. Write one `execute` method and register it:
+A model kind is a frozen record of data with, at most, one function. Write the
+function and register it:
 
 ```python
 # client.py — pbt imports this before parsing your models
 import pbt
 
-@pbt.model_type("shout", config_keys={"suffix"})
-class Shout(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, state = ctx.render(spec)
-        output = await ctx.call_llm(rendered, spec, state)
-        return output.upper() + spec.config.get("suffix", "")
+@pbt.model_kind("shout", config_keys={"suffix"})
+async def shout(rendered, call):
+    response = await call.llm(rendered)
+    return response.upper() + call.spec.config.get("suffix", "")
 ```
 
 ```
@@ -145,22 +144,25 @@ class Shout(pbt.BaseModelType):
 Summarise {{ ref('article') }}.
 ```
 
-`spec` is the parsed model (its `source`, `config`, `depends_on`, `name`).
-`ctx` is the run: `ctx.render(spec)` renders the template, `ctx.call_llm(...)`
-sends it, and `ctx.outputs` holds what upstream models produced.
+pbt renders the template before calling you. `rendered` is that text; `call`
+has the model already bound to it — `call.llm(rendered)` sends the prompt,
+`call.spec` is the parsed model (`name`, `source`, `config`, `depends_on`), and
+`call.outputs` holds what upstream models produced.
 
 You only write that one step. The prompt cache, `output_format="json"` parsing,
-skip functions, validation and storage are applied to your type exactly as they
-are to the built-in ones. `config_keys` declares the `config()` keys your type
+skip functions, validation and storage are applied to your kind exactly as they
+are to the built-in ones. `config_keys` declares the `config()` keys your kind
 reads, so they stop being reported as typos.
 
-Two optional hooks:
+The other fields on `ModelKind`, for what a plain function cannot express:
 
-| Hook | Purpose |
+| Field | Purpose |
 |---|---|
-| `accepts_global_instruction = False` | Your rendered template is not a natural-language prompt, so the run's global instruction must not be prepended |
-| `expand(spec, all_specs)` | Rewrite this node into several nodes at DAG-build time, the way `quality_check` does. Return a list of specs including exactly one keeping the declared name |
+| `exec_fn=None` | The rendered text *is* the output — no LLM call. This is all `template` is |
+| `fan_out=True` | Render once per item of an upstream JSON list and run concurrently. This is all `loop` is |
+| `accepts_global_instruction=False` | Your rendered template is not a natural-language prompt, so the run's global instruction must not be prepended |
+| `expand_fn=(spec, all_specs)` | Rewrite this node into several nodes at DAG-build time, the way `quality_check` does. Return a list of specs including exactly one keeping the declared name |
 
 For work that is expensive but not an LLM call, run it through
-`ctx.cached(rendered, spec, state, compute=...)` so it gets the same prompt
-cache — that is how `execute_python` avoids re-running unchanged code.
+`call.compute(rendered, compute=...)` so it gets the same prompt cache — that is
+how `execute_python` avoids re-running unchanged code.

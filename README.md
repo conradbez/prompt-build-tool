@@ -661,25 +661,23 @@ The model is recorded as a successful run, downstream templates can detect it wi
 
 ---
 
-## Writing your own model type (`model_type=`)
+## Writing your own model kind (`model_type=`)
 
-Every `.prompt` file is run by a *model type*. Leave `model_type` unset and pbt
+Every `.prompt` file is run by a *model kind*. Leave `model_type` unset and pbt
 sends the rendered prompt to your LLM; set it to `loop`, `template`,
 `execute_python` or `quality_check` and pbt runs it differently. If none of
 those do what you need, you can add your own.
 
-Write a class with one method and register it in `client.py`:
+A kind is a function and a registration, both in `client.py`:
 
 ```python
 # client.py
 import pbt
 
-@pbt.model_type("shout", config_keys={"suffix"})
-class Shout(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, state = ctx.render(spec)
-        output = await ctx.call_llm(rendered, spec, state)
-        return output.upper() + spec.config.get("suffix", "")
+@pbt.model_kind("shout", config_keys={"suffix"})
+async def shout(rendered, call):
+    response = await call.llm(rendered)
+    return response.upper() + call.spec.config.get("suffix", "")
 ```
 
 Then use it from any model:
@@ -696,36 +694,62 @@ pbt run
 
 ### What you get
 
-Two arguments arrive in `execute`:
+pbt renders the template for you and hands your function two things:
 
 | | |
 |---|---|
-| `spec` | The model being run: `spec.name`, `spec.source`, `spec.config` (its `config()` block), `spec.depends_on` |
-| `ctx` | The run: `ctx.render(spec)` renders the template, `ctx.call_llm(...)` sends it, `ctx.outputs` holds the outputs of upstream models by name |
+| `rendered` | The rendered prompt text, with every `ref()`, `promptdata()` and skip function already resolved |
+| `call` | `call.llm(rendered)` sends it to your LLM; `call.spec` is the model being run (`call.spec.name`, `call.spec.config`); `call.outputs` holds upstream outputs by name; `call.compute(rendered, compute=fn)` caches arbitrary work |
 
 Whatever you return becomes the model's output — the thing `ref('loud')` gives
 downstream models, and the thing written to `outputs/`. Return a string and it
 is parsed for you if the model sets `output_format="json"`. Return a list or a
-dict and it is kept as-is, which is how `loop` returns one entry per item.
+dict and it is kept as-is.
 
 Everything else keeps working without you doing anything: the prompt cache,
 `{{ config(output_format="json") }}`, the skip functions, `validation/`,
-`pbt test`, `pbt docs` and the run report all treat your type like a built-in
-one.
+`pbt test`, `pbt docs` and the run report all treat your kind like a built-in
+one. `call.llm` is already cached, timed and skip-aware — there is nothing to
+opt into.
 
-`config_keys={"suffix"}` tells pbt which `config()` keys your type reads.
+`config_keys={"suffix"}` tells pbt which `config()` keys your kind reads.
 Without it, `pbt run` warns that `suffix` looks like a typo.
+
+### The full record
+
+The decorator is shorthand for building a `ModelKind` and registering it. The
+long form is what you want for a kind that has no `exec_fn` of its own:
+
+```python
+pbt.register_model_kind(pbt.ModelKind(
+    name="shout",
+    exec_fn=shout,
+    config_keys={"suffix"},
+))
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `name` | — | The `config(model_type=...)` value |
+| `exec_fn` | `None` | `async (rendered, call) -> Any`. `None` means the rendered text *is* the output |
+| `fan_out` | `False` | Render once per item of an upstream JSON list, run `exec_fn` on each concurrently |
+| `expand_fn` | `None` | `(spec, all_specs) -> list[ModelSpec] \| None` — rewrite this node into several |
+| `config_keys` | `frozenset()` | The `config()` keys this kind reads |
+| `accepts_global_instruction` | `True` | `False` when the rendered text is not a prompt for a model to answer |
+
+The five built-ins are nothing but this record. `template` is
+`ModelKind("template", exec_fn=None, accepts_global_instruction=False)`; `loop`
+is the plain LLM call with `fan_out=True`; `quality_check` is an `expand_fn` and
+nothing else.
 
 ### Optional extras
 
 **Skip the LLM entirely.** Anything you can compute, you can return:
 
 ```python
-@pbt.model_type("truncate", config_keys={"max_words"})
-class Truncate(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, _ = ctx.render(spec)
-        return " ".join(rendered.split()[:spec.config_int("max_words", 50)])
+@pbt.model_kind("truncate", config_keys={"max_words"})
+async def truncate(rendered, call):
+    return " ".join(rendered.split()[:call.spec.config_int("max_words", 50)])
 ```
 
 ```jinja
@@ -733,30 +757,34 @@ class Truncate(pbt.BaseModelType):
 {{ ref('article') }}
 ```
 
-Keep calling `ctx.render(spec)` even when you ignore the text. The `ref()` calls
-in the template are what tell pbt your model has to run after the models it
-references — reading `ctx.outputs` directly does not create that edge.
+The `ref()` calls in the template are what tell pbt your model has to run after
+the models it references — reading `call.outputs` directly does not create that
+edge.
 
-For a *one-off* calculation, you do not need a type at all:
+For a *one-off* calculation, you do not need a kind at all:
 [`execute_python`](#python-models-model_typeexecute_python) already runs a
-model's template as Python. Write a type when the behaviour is worth reusing across
-models and configuring per model, the way `truncate` takes `max_words`.
+model's template as Python. Write a kind when the behaviour is worth reusing
+across models and configuring per model, the way `truncate` takes `max_words`.
 
 **Cache expensive non-LLM work.** Anything slow and repeatable can go behind the
 same cache your LLM calls use, so it does not re-run when nothing changed:
 
 ```python
-rendered, state = ctx.render(spec)
-return await ctx.cached(rendered, spec, state, compute=lambda: scrape(rendered))
+return await call.compute(rendered, compute=lambda: scrape(rendered))
 ```
+
+**Fan out over a list.** Set `fan_out=True` and pbt finds the upstream
+dependency whose output is a JSON list, renders your template once per item
+(with `ref()` on that model yielding the current item), runs your `exec_fn` on
+each concurrently, and collects the results into a list. That is all `loop` is.
 
 **Opt out of the global instruction.** If your rendered template is not a prompt
 for a model to answer — Python source, or a value passed straight through — set
-`accepts_global_instruction = False` so your
+`accepts_global_instruction=False` so your
 [global instruction](#global-instructions-globalprompt) is not prepended to it.
 
-**Turn one model into several.** Override `expand(spec, all_specs)` to replace
-your node with a chain of nodes before the run starts — this is how
+**Turn one model into several.** Give the kind an `expand_fn(spec, all_specs)`
+to replace your node with a chain of nodes before the run starts — this is how
 `quality_check` builds its check-and-retry loop. Return a list of models, one of
 which must keep the original name so `ref()` still finds it.
 
@@ -766,3 +794,6 @@ Anywhere that runs before your models are read. `client.py` is the easiest spot,
 because pbt already imports it on every `pbt run`, `pbt test` and `pbt ls`.
 
 A worked example lives in [`examples/custom_model_type/`](examples/custom_model_type/).
+
+Upgrading from 0.3, where a custom type was a class? See
+[docs/MIGRATION_model_kinds.md](docs/MIGRATION_model_kinds.md).

@@ -18,10 +18,10 @@ from jinja2 import Environment, Undefined
 _REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)['"]\s*\)""")
 _PROMPTDATA_PATTERN = re.compile(r"""\bpromptdata\(\s*['"](\w+)['"]\s*\)""")
 
-# Every config() key pbt acts on regardless of model type.  Type-specific keys
-# (loop_over, quality_retries, …) are declared by the model type itself and come
-# from the registry, so registering a type is the only step needed to make its
-# keys legal.  Anything left over is either a typo or a key consumed by a custom
+# Every config() key pbt acts on regardless of model kind.  Kind-specific keys
+# (loop_over, quality_retries, …) are declared by the kind itself and come from
+# the registry, so registering a kind is the only step needed to make its keys
+# legal.  Anything left over is either a typo or a key consumed by a custom
 # llm_call(prompt, config=...) — see register_config_keys().
 _BUILTIN_CONFIG_KEYS = frozenset({
     "output_format",

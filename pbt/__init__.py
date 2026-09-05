@@ -15,26 +15,31 @@ from pbt.executor.parser_initial import (
 )
 from pbt.model_spec import ModelSpec
 from pbt.model_types import (
-    BaseModelType,
-    ModelType,
-    get_model_type,
-    known_model_types,
-    model_type,
-    register_model_type,
+    ModelCall,
+    ModelKind,
+    get_model_kind,
+    known_model_kinds,
+    model_kind,
+    register_model_kind,
 )
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
+
+# Registers the built-in kinds ("", template, loop, execute_python,
+# quality_check).  Imported here, after the registry exists, so that every entry
+# point into pbt has them without the registry needing a lazy-import hook.
+import pbt.executor.builtin_kinds  # noqa: E402,F401
 
 __all__ = [
     "run",
     "async_run",
     "ModelSpec",
-    "ModelType",
-    "BaseModelType",
-    "model_type",
-    "register_model_type",
-    "get_model_type",
-    "known_model_types",
+    "ModelKind",
+    "ModelCall",
+    "model_kind",
+    "register_model_kind",
+    "get_model_kind",
+    "known_model_kinds",
     "register_config_keys",
     "known_config_keys",
     "UnknownConfigKeyWarning",

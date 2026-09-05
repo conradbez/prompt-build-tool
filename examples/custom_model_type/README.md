@@ -31,24 +31,22 @@ the Moon and the Sun...
 _(173 words)_
 ```
 
-The headline is uppercase and ends in `!` because the `shout` type did that to
+The headline is uppercase and ends in `!` because the `shout` kind did that to
 the LLM's answer. The word count came from `execute_python`, which never called
 the LLM at all — you can see it and `report` finish in ~0 ms in the run output.
 
-## How a custom type is written
+## How a custom kind is written
 
-A class with one method, registered by name:
+One function, registered by name:
 
 ```python
 # client.py
 import pbt
 
-@pbt.model_type("shout", config_keys={"suffix"})
-class Shout(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, state = ctx.render(spec)
-        output = await ctx.call_llm(rendered, spec, state)
-        return output.upper() + spec.config.get("suffix", "")
+@pbt.model_kind("shout", config_keys={"suffix"})
+async def shout(rendered, call):
+    response = await call.llm(rendered)
+    return response.upper() + call.spec.config.get("suffix", "")
 ```
 
 Then any model can ask for it:
@@ -60,9 +58,11 @@ Write a single short headline for this article.
 {{ ref('article') }}
 ```
 
-`spec` is the model being run — `spec.name`, `spec.source`, `spec.config`,
-`spec.depends_on`. `ctx` is the run — `ctx.render(spec)` renders the template,
-`ctx.call_llm(...)` sends it, and `ctx.outputs` holds upstream outputs by name.
+pbt renders the template for you. `rendered` is that text; `call` carries what
+you might need with the model already bound — `call.llm(rendered)` sends it to
+the backend (cached, timed, skip-aware), `call.spec` is the model being run
+(`call.spec.name`, `call.spec.config`), and `call.outputs` holds upstream
+outputs by name.
 
 Whatever you return becomes the model's output: what `ref()` gives downstream
 models and what lands in `outputs/`.

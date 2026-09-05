@@ -1,12 +1,6 @@
 from pbt.executor.executor import execute_model, execute_run, ModelRunResult
 from pbt.executor.run_context import RunContext, parse_json_output
-from pbt.executor.builtin_types import (
-    LLMModelType,
-    LoopModelType,
-    PythonModelType,
-    QualityCheckModelType,
-    TemplateModelType,
-)
+from pbt.executor.builtin_kinds import LLM, LOOP, PYTHON, QUALITY_CHECK, TEMPLATE
 from pbt.executor.graph import (
     CyclicDependencyError,
     UnknownModelError,
@@ -24,10 +18,7 @@ from pbt.executor.parser_initial import (
     parse_model_config,
 )
 from pbt.model_spec import ModelSpec
-from pbt.model_types import BaseModelType, ModelType
-
-# Deprecated aliases — see pbt.executor.model_constructs.
-from pbt.executor.model_constructs import BaseModelHandler
+from pbt.model_types import ModelCall, ModelKind
 
 __all__ = [
     "execute_model",
@@ -36,13 +27,13 @@ __all__ = [
     "RunContext",
     "parse_json_output",
     "ModelSpec",
-    "ModelType",
-    "BaseModelType",
-    "LLMModelType",
-    "TemplateModelType",
-    "LoopModelType",
-    "PythonModelType",
-    "QualityCheckModelType",
+    "ModelKind",
+    "ModelCall",
+    "LLM",
+    "TEMPLATE",
+    "LOOP",
+    "PYTHON",
+    "QUALITY_CHECK",
     "CyclicDependencyError",
     "UnknownModelError",
     "load_models",
@@ -56,5 +47,4 @@ __all__ = [
     "parse_model_config",
     "detect_used_promptdata",
     "_RenderState",
-    "BaseModelHandler",
 ]

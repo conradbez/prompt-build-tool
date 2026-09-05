@@ -9,15 +9,14 @@ pbt/
   __init__.py          Python API (pbt.run) — also resolves llm/rag backends
   cli.py               Click commands — orchestrates discovery, calls execute_run
   executor/
-    graph.py           DAG building, spec parsing, model-type expansion
+    graph.py           DAG building, spec parsing, model-kind expansion
     parser_initial.py  Static analysis — extract_dependencies, parse_model_config
     parser_model.py    Jinja2 rendering (render_prompt), skip-function helpers
     executor.py        Pure execution loop — no file discovery, no CLI concerns
     run_context.py     RunContext — run-wide inputs, rendering, the prompt cache
-    builtin_types.py   The built-in model types (llm, template, loop, execute_python, quality_check)
-    model_constructs.py  Deprecated aliases for the pre-registry handler classes
+    builtin_kinds.py   The built-in model kinds (llm, template, loop, execute_python, quality_check)
   model_spec.py        ModelSpec — the parsed, inert description of one model
-  model_types.py       ModelType protocol + the public registry
+  model_types.py       ModelKind / ModelCall records + the public registry
   llm.py / rag.py / validator.py  Backend resolvers
   db.py                SQLite schema + queries
   tester.py / docs.py  pbt test and pbt docs implementations
@@ -41,32 +40,37 @@ pbt/
 
 **Validators must not return the raw `result` string when `output_format: json` is set.** The executor parses the LLM output into a Python `dict`/`list` before running validators, storing it in `model_outputs`. If the validator returns the string `result` unchanged, it overwrites the parsed object with a string — breaking any downstream loop model that expects a list. Passthrough validators should either `return True` or return the already-parsed value (e.g. `json.loads(result)`). Validators that don't need to transform JSON output should simply be omitted.
 
-**Model data, model behaviour, and run inputs are three separate things.** A `ModelSpec` (`pbt/model_spec.py`) is inert parsed data: source, deps, config, `model_type`. A `ModelType` (`pbt/model_types.py`) is a stateless strategy with one required method, `async execute(spec, ctx)`. A `RunContext` (`pbt/executor/run_context.py`) carries every run-wide input — the backends, promptdata, promptfiles, validators, the global instruction, accumulated outputs — plus the shared mechanisms `render()` and `call_llm()`. Keeping them apart is why a new run-wide input is one field on `RunContext` rather than a new parameter on six functions, and why a new model type is one class rather than an edit in the parser, the graph, and the executor.
+**Model data, model behaviour, and run inputs are three separate things.** A `ModelSpec` (`pbt/model_spec.py`) is inert parsed data: source, deps, config, `model_type`. A `ModelKind` (`pbt/model_types.py`) is a frozen record describing how that data becomes an output — at most one function, `async exec_fn(rendered, call)`, plus four declarative fields. A `RunContext` (`pbt/executor/run_context.py`) carries every run-wide input — the backends, promptdata, promptfiles, validators, the global instruction, accumulated outputs — plus the shared mechanisms `render()`, `call_llm()` and `cached()`. Keeping them apart is why a new run-wide input is one field on `RunContext` rather than a new parameter on six functions, and why a new model kind is one function rather than an edit in the parser, the graph, and the executor.
 
-**`config()` keys are validated, not enforced.** `known_config_keys()` in `parser_initial.py` unions three sources: `_BUILTIN_CONFIG_KEYS` (the keys pbt acts on for every model), the `config_keys` each registered model type declares, and anything passed to `pbt.register_config_keys(...)` for a custom `llm_call`. A key outside all three (or an unregistered `model_type`) triggers an `UnknownConfigKeyWarning` at load time naming the model and file. It stays a warning because the whole config dict is forwarded to any `llm_call` accepting a `config` parameter, so custom keys are legitimate. **A type-specific config key belongs on that type's `config_keys`**, not in `_BUILTIN_CONFIG_KEYS` — registering the type is then the only step needed.
+**A kind is data, not a class.** A kind holds no per-model state, so there is nothing for an instance to carry and nothing for a base class to supply. `ModelKind` is a frozen dataclass; the registry is `dict[str, ModelKind]`. Three of the five built-ins therefore contribute no execution code at all: `template` is `exec_fn=None`, `loop` is the plain LLM call with `fan_out=True`, and `quality_check` is an `expand_fn`.
 
-**`ModelType.expand()` enables DAG-build-time node expansion.** After each model is parsed, `graph.py` calls its type's `expand(spec, all_specs)`. Returning a list of specs replaces that one node with all of them, before the DAG is built; returning `None` leaves it alone. The list must contain exactly one node keeping the declared name, so downstream `ref()` calls still resolve — `graph.py` raises if it does not. `all_specs` is read-only, for looking up already-parsed upstream models. `quality_check` uses this to expand one node into an interleaved chain of check and retry nodes, terminating in a `template` node that carries the original name.
+**A kind never sees the `RunContext`.** The executor renders, then binds the model and that render's state onto a `ModelCall` (`spec`, `outputs`, `llm`, `compute`) and hands it to `exec_fn` alongside the rendered text. `call.llm(rendered)` and `call.compute(rendered, compute=fn)` are `functools.partial`s over `RunContext.call_llm` / `RunContext.cached`, already cached, timed and skip-aware. So a kind receives what it needs pre-loaded instead of a god object it must navigate, and caching stays outside the kind entirely.
 
-**The executor owns the lifecycle; a type owns one step.** `execute_model()` in `executor.py` resolves the strategy, asks it for a value, then applies skip propagation, `output_format` parsing, storage, and validation — identically for built-in and user-registered types. A strategy that wants caching calls `ctx.cached(rendered, spec, state, compute=...)`, which is the single caching path: `call_llm` is a thin wrapper over it, and `execute_python` uses it directly so unchanged code does not re-execute.
+**`config()` keys are validated, not enforced.** `known_config_keys()` in `parser_initial.py` unions three sources: `_BUILTIN_CONFIG_KEYS` (the keys pbt acts on for every model), the `config_keys` each registered model kind declares, and anything passed to `pbt.register_config_keys(...)` for a custom `llm_call`. A key outside all three (or an unregistered `model_type`) triggers an `UnknownConfigKeyWarning` at load time naming the model and file. It stays a warning because the whole config dict is forwarded to any `llm_call` accepting a `config` parameter, so custom keys are legitimate. **A kind-specific config key belongs on that kind's `config_keys`**, not in `_BUILTIN_CONFIG_KEYS` — registering the kind is then the only step needed.
+
+**`ModelKind.expand_fn` enables DAG-build-time node expansion.** After each model is parsed, `graph.py` calls its kind's `expand_fn(spec, all_specs)`, if it has one. Returning a list of specs replaces that one node with all of them, before the DAG is built; returning `None` leaves it alone. The list must contain exactly one node keeping the declared name, so downstream `ref()` calls still resolve — `graph.py` raises if it does not. `all_specs` is read-only, for looking up already-parsed upstream models. `quality_check` uses this to expand one node into an interleaved chain of check and retry nodes, terminating in a `template` node that carries the original name.
+
+**The executor owns the lifecycle; a kind owns one step.** `execute_model()` in `executor.py` resolves the kind, renders, asks its `exec_fn` for a value, then applies skip propagation, `output_format` parsing, storage, and validation — identically for built-in and user-registered kinds. `RunContext.cached()` is the single caching path: `call_llm` is a thin wrapper over it, and `execute_python` reaches it as `call.compute` so unchanged code does not re-execute.
+
+**Fan-out is the executor's job, not a kind's.** `fan_out=True` tells `execute_model()` to resolve the single upstream dependency whose output is a JSON list, render once per item (`primary=False`, so one skipped item does not mark the whole model skipped), run `exec_fn` on each concurrently via `asyncio.gather`, and collect the results in input order. `loop` is therefore the ordinary LLM call with one flag set, and any registered kind can fan out.
 
 **Storage keeps raw and validated output separately.** `mark_model_success` stores the raw output, which is what the prompt cache serves, so editing a validator never forces a new LLM call. When a validator transforms the output, the executor also calls `record_validated_output`, and `get_model_outputs_from_run` prefers it — so `pbt test` judges the value the pipeline actually passed downstream.
 
 ---
 
-## Adding a model type
+## Adding a model kind
 
-One class and one registration. Everything else — caching, skipping, JSON
-parsing, validation, storage — is the executor's job and already applies.
+One function and one registration. Everything else — rendering, caching,
+skipping, JSON parsing, validation, storage — is the executor's job and already
+applies.
 
 ```python
 import pbt
 
-@pbt.model_type("shout", config_keys={"suffix"})
-class Shout(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, state = ctx.render(spec)
-        output = await ctx.call_llm(rendered, spec, state)
-        return output.upper() + spec.config.get("suffix", "")
+@pbt.model_kind("shout", config_keys={"suffix"})
+async def shout(rendered, call):
+    response = await call.llm(rendered)
+    return response.upper() + call.spec.config.get("suffix", "")
 ```
 
 ```jinja
@@ -75,17 +79,36 @@ class Shout(pbt.BaseModelType):
 Summarise {{ ref('article') }}.
 ```
 
-The class may also set `accepts_global_instruction = False` (for a type whose
-rendered template is not a natural-language prompt) and override
-`expand(spec, all_specs)` to rewrite itself into several nodes.
+The decorator returns the function unchanged, so it stays directly callable and
+testable. The equivalent explicit form, which is also how you register a kind
+that has no `exec_fn` of its own:
+
+```python
+pbt.register_model_kind(pbt.ModelKind("shout", shout, config_keys={"suffix"}))
+```
+
+`ModelKind` fields:
+
+| Field | Meaning |
+|---|---|
+| `name` | The `config(model_type=...)` value. `""` is the plain LLM call |
+| `exec_fn` | `async (rendered, call) -> Any`. `None` means the rendered text *is* the output — no LLM call |
+| `fan_out` | Render once per item of an upstream JSON list and run `exec_fn` on each concurrently |
+| `expand_fn` | `(spec, all_specs) -> list[ModelSpec] \| None` — rewrite this node into several at DAG-build time |
+| `config_keys` | The `config()` keys this kind consumes, so they stop warning |
+| `accepts_global_instruction` | `False` when the rendered template is not a natural-language prompt |
+
+`call` is a `ModelCall`: `call.spec` (the model, for its name and `config()`),
+`call.outputs` (upstream outputs by name), `call.llm(rendered)` and
+`call.compute(rendered, compute=fn)` — both already cached, timed and
+skip-aware.
 
 Put the registration in `client.py`: pbt imports it before parsing any
-`.prompt` file, precisely so project-local types are available. Registering
+`.prompt` file, precisely so project-local kinds are available. Registering
 anywhere that runs earlier works too.
 
-Return value of `execute`: a `str` is parsed when the model sets
-`output_format="json"`; anything else (a list, a dict) is stored as-is, which is
-how a fan-out returns per-item results.
+Return value of `exec_fn`: a `str` is parsed when the model sets
+`output_format="json"`; anything else (a list, a dict) is stored as-is.
 
 ---
 
@@ -247,12 +270,11 @@ prompt-build-tool-for-LLMs/
 │   ├── __init__.py      # Python API (pbt.run)
 │   ├── cli.py           # Click CLI (pbt run, pbt test, pbt docs, …)
 │   ├── executor/
-│   │   ├── graph.py          # DAG builder, spec parsing, model-type expansion
+│   │   ├── graph.py          # DAG builder, spec parsing, model-kind expansion
 │   │   ├── parser_initial.py # Static analysis: deps, config, promptdata extraction
 │   │   ├── parser_model.py   # Jinja2 render_prompt, ref(), skip helpers
 │   │   ├── run_context.py    # RunContext: run-wide inputs, render, prompt cache
-│   │   ├── builtin_types.py  # Built-in model types
-│   │   ├── model_constructs.py # Deprecated aliases
+│   │   ├── builtin_kinds.py  # Built-in model kinds
 │   │   └── executor.py       # Pure execution loop, LLM calls, validation hooks
 │   ├── llm.py           # LLM backend resolver (loads client.py)
 │   ├── rag.py           # RAG resolver (rag.py → do_RAG)

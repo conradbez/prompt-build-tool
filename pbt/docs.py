@@ -99,7 +99,7 @@ def generate_docs(
         """The output this model actually passed downstream.
 
         ``llm_output`` holds the raw response, which is what the prompt cache
-        serves; a validator or a post-processing model type may have changed it
+        serves; a validator or a post-processing model kind may have changed it
         before anything downstream saw it.
         """
         return _column(row, "llm_output_validated") or row["llm_output"]

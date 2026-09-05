@@ -2,17 +2,24 @@
 :class:`RunContext` — every run-wide input and every shared mechanism, in one
 object that is threaded through the run instead of a dozen keyword arguments.
 
-A model type's strategy receives the context and uses two methods:
+The executor owns it.  A model kind never sees it: the executor calls
 
 ``ctx.render(spec)``
     Render the model's template, resolving ``ref()`` against outputs produced
     so far and applying the run's global instruction.
 
-``ctx.call_llm(rendered, spec, state)``
+and binds the two mechanisms a kind may need onto a
+:class:`~pbt.model_types.ModelCall`, with the model and its render state
+already applied:
+
+``ctx.call_llm(rendered, spec, state)`` → ``call.llm(rendered)``
     Send a rendered prompt.  This is the *only* place that builds a cache key,
     consults the prompt cache, inspects ``llm_call``'s signature for optional
     ``files``/``config`` parameters, times the call, and copes with the callable
     being sync or async.
+
+``ctx.cached(rendered, spec, state, compute=...)`` → ``call.compute(rendered, compute=...)``
+    The same treatment for work that is not an LLM call.
 
 Adding a new run-wide input is a field here, not a new parameter on six
 functions.
@@ -97,7 +104,12 @@ class _ModelAccounting:
 
 @dataclass
 class RunContext:
-    """Run-wide inputs and shared mechanisms, passed to every strategy."""
+    """Run-wide inputs and shared mechanisms, owned by the executor.
+
+    A model kind never sees this object: the executor binds the two pieces a
+    kind may need — the cached LLM call and cached compute — onto a
+    :class:`~pbt.model_types.ModelCall` for it.
+    """
 
     run_id: str
     storage: StorageBackend
@@ -158,16 +170,16 @@ class RunContext:
     def global_instruction_for(self, spec: ModelSpec) -> str | None:
         """Return the global instruction to render into *spec*, or None.
 
-        Suppressed when the model type does not accept one (its rendered
+        Suppressed when the model kind does not accept one (its rendered
         template is not natural language) or when the model opts out with
         ``{{ config(global_instruction=False) }}``.
         """
         if not self.global_instruction:
             return None
-        from pbt.model_types import get_model_type
+        from pbt.model_types import get_model_kind
 
-        model_type = get_model_type(spec.model_type)
-        if model_type is not None and not model_type.accepts_global_instruction:
+        kind = get_model_kind(spec.model_type)
+        if kind is not None and not kind.accepts_global_instruction:
             return None
         opt_out = str(spec.config.get("global_instruction", "")).strip().lower()
         if opt_out in _OPT_OUT_VALUES:
@@ -201,12 +213,12 @@ class RunContext:
         """Return the memoised result of *compute* for this rendered prompt.
 
         The one caching path in pbt.  Anything expensive and deterministic that
-        a strategy derives from a rendered template goes through here, whether
-        that is an LLM call or a block of Python — so every model type gets the
-        same cache, timing and skip behaviour.
+        a kind derives from a rendered template goes through here, whether that
+        is an LLM call or a block of Python — so every model kind gets the same
+        cache, timing and skip behaviour.
 
         When *state* carries a skip value the work is bypassed entirely and that
-        value is returned, so a strategy never has to branch on skipping.
+        value is returned, so a kind never has to branch on skipping.
         *compute* may be sync or async.
         """
         if state is not None and state.skip_value is not None:
@@ -326,8 +338,8 @@ class RunContext:
     def cache_artifact(self, name: str) -> str | None:
         """The raw result of this model's single LLM/compute call, if it made one.
 
-        The executor stores this under the cache key rather than the strategy's
-        return value.  A strategy that post-processes the response (uppercasing
+        The executor stores this under the cache key rather than the kind's
+        return value.  A kind that post-processes the response (uppercasing
         it, appending to it) must not have that processing baked into the cached
         entry, or the next run would apply it a second time.
         """

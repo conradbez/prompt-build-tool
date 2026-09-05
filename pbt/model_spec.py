@@ -2,11 +2,11 @@
 :class:`ModelSpec` — the parsed, inert description of one prompt model.
 
 A spec is pure data: what the parser read out of a .prompt file, with no
-execution logic attached.  The strategy that runs it is looked up separately by
+execution logic attached.  The kind that runs it is looked up separately by
 ``model_type`` (see :mod:`pbt.model_types`), and the run-wide inputs it needs
 live on the :class:`~pbt.executor.run_context.RunContext`.
 
-Keeping the three apart is what makes a new model type a single small class
+Keeping the three apart is what makes a new model kind a single small function
 instead of an edit in the parser, the graph, and the executor.
 """
 
@@ -26,7 +26,7 @@ class ModelSpec:
     path: Path = Path("<inline>")
 
     #: The ``config(model_type=...)`` value; "" for a plain LLM call.  Always a
-    #: registered type by the time the DAG is built — an unrecognised value is
+    #: registered kind by the time the DAG is built — an unrecognised value is
     #: warned about and reset to "" at parse time.
     model_type: str = ""
 
@@ -57,7 +57,7 @@ class ModelSpec:
     def derive(self, **changes: Any) -> "ModelSpec":
         """Return a copy of this spec with *changes* applied.
 
-        Used by :meth:`~pbt.model_types.BaseModelType.expand` to build the
-        sub-nodes a single declared model expands into.
+        Used by a kind's :attr:`~pbt.model_types.ModelKind.expand_fn` to build
+        the sub-nodes a single declared model expands into.
         """
         return replace(self, **changes)

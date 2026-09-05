@@ -4,9 +4,9 @@ Dependency graph for prompt models.
 Loads every *.prompt file under the models/ directory, extracts ref()
 dependencies, and validates the graph (cycle detection, unknown refs).
 
-Parsing produces plain :class:`~pbt.model_spec.ModelSpec` data.  The strategy
-that will run a model is looked up by name from :mod:`pbt.model_types` — the
-graph knows only that the name is registered, never which class implements it.
+Parsing produces plain :class:`~pbt.model_spec.ModelSpec` data.  The kind that
+will run a model is looked up by name from :mod:`pbt.model_types` — the graph
+knows only that the name is registered, and whether it rewrites its own node.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pbt.executor.parser_initial import (
     warn_unknown_config_keys,
 )
 from pbt.model_spec import ModelSpec
-from pbt.model_types import get_model_type, known_model_types
+from pbt.model_types import get_model_kind, known_model_kinds
 
 # Supported file extensions, longest first so stripping is unambiguous.
 _PROMPT_SUFFIXES = (".prompt.jinja", ".prompt")
@@ -46,13 +46,13 @@ def _resolve_model_type(config: dict, name: str, path: object = None) -> str:
     indication that the requested behaviour never happened.
     """
     model_type = config.get("model_type", "")
-    if model_type and get_model_type(model_type) is None:
+    if model_type and get_model_kind(model_type) is None:
         where = f"'{name}'" + (f" ({path})" if path else "")
         warnings.warn(
             f"Model {where}: unknown model_type '{model_type}' — running it as a "
             f"normal LLM call. Known model types: "
-            f"{', '.join(sorted(known_model_types()))}. Register your own with "
-            f"pbt.register_model_type('{model_type}', YourClass).",
+            f"{', '.join(sorted(known_model_kinds()))}. Register your own with "
+            f"pbt.register_model_kind(pbt.ModelKind('{model_type}', your_exec_fn)).",
             UnknownConfigKeyWarning,
             stacklevel=3,
         )
@@ -84,14 +84,15 @@ def build_spec(name: str, source: str, path: Path | None = None) -> ModelSpec:
 
 
 def _add_spec(specs: dict[str, ModelSpec], spec: ModelSpec) -> None:
-    """Add *spec* to *specs*, letting its model type expand it into more nodes.
+    """Add *spec* to *specs*, letting its model kind expand it into more nodes.
 
     Expansion happens here, before the DAG is built, so the rest of pbt only
-    ever sees ordinary nodes.  A type that expands must return exactly one node
+    ever sees ordinary nodes.  A kind that expands must return exactly one node
     keeping the declared name, so downstream ``ref()`` calls still resolve.
     """
-    strategy = get_model_type(spec.model_type)
-    replacements = strategy.expand(spec, specs) if strategy is not None else None
+    kind = get_model_kind(spec.model_type)
+    expand_fn = kind.expand_fn if kind is not None else None
+    replacements = expand_fn(spec, specs) if expand_fn is not None else None
 
     if replacements is None:
         specs[spec.name] = spec
@@ -99,7 +100,7 @@ def _add_spec(specs: dict[str, ModelSpec], spec: ModelSpec) -> None:
 
     if not any(node.name == spec.name for node in replacements):
         raise ValueError(
-            f"Model type '{spec.model_type}' expanded '{spec.name}' without "
+            f"Model kind '{spec.model_type}' expanded '{spec.name}' without "
             f"producing a node of that name, so downstream ref('{spec.name}') "
             "calls would break."
         )

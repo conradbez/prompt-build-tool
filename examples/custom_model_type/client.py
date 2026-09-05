@@ -1,6 +1,6 @@
-"""LLM backend + a custom model type for this project.
+"""LLM backend + a custom model kind for this project.
 
-pbt imports this file before it reads models/, so any model type registered
+pbt imports this file before it reads models/, so any model kind registered
 here is available to every .prompt file.
 """
 
@@ -11,19 +11,20 @@ from google import genai
 
 
 # ---------------------------------------------------------------------------
-# A custom model type
+# A custom model kind
 # ---------------------------------------------------------------------------
 # Use it from a .prompt file with:
 #     {{ config(model_type="shout", suffix="!") }}
 #
+# pbt renders the template and hands the text to this function; `call.llm` is
+# the cached LLM call, already bound to this model.
+#
 # config_keys tells pbt that "suffix" is a real option, not a typo.
 
-@pbt.model_type("shout", config_keys={"suffix"})
-class Shout(pbt.BaseModelType):
-    async def execute(self, spec, ctx):
-        rendered, state = ctx.render(spec)
-        output = await ctx.call_llm(rendered, spec, state)
-        return output.upper() + spec.config.get("suffix", "")
+@pbt.model_kind("shout", config_keys={"suffix"})
+async def shout(rendered, call):
+    response = await call.llm(rendered)
+    return response.upper() + call.spec.config.get("suffix", "")
 
 
 # ---------------------------------------------------------------------------

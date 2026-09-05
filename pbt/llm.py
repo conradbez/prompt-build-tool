@@ -4,7 +4,7 @@ LLM call resolution.
 Looks for a user-provided client.py exposing ``llm_call(prompt: str) -> str``.
 Raises a clear error if none is found — run `pbt init` to scaffold one.
 
-client.py is also where a project registers its own model types, so pbt imports
+client.py is also where a project registers its own model kinds, so pbt imports
 it *before* parsing any .prompt file (see :func:`load_client_module`).  The
 module is executed once per path and cached, so importing it early costs
 nothing later.
@@ -31,8 +31,8 @@ def load_client_module(models_dir: str) -> ModuleType | None:
     """Import the project's client.py, or return None when there isn't one.
 
     Executed once per path and cached.  Call this before loading models: any
-    ``pbt.register_model_type(...)`` in client.py must run before a .prompt file
-    naming that type is parsed, or the type looks unknown.
+    ``pbt.register_model_kind(...)`` in client.py must run before a .prompt file
+    naming that kind is parsed, or the kind looks unknown.
     """
     candidate = client_path(models_dir)
     if not os.path.isfile(candidate):

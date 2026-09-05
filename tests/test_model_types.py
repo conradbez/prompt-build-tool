@@ -1,4 +1,4 @@
-"""Model-type registry, the shared execution lifecycle, and the built-in types."""
+"""Model-kind registry, the shared execution lifecycle, and the built-in kinds."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pbt
 from pbt.executor.executor import execute_run
 from pbt.executor.graph import build_models_from_dict
 from pbt.model_spec import ModelSpec
-from pbt.model_types import get_model_type, known_model_types
+from pbt.model_types import get_model_kind, known_model_kinds
 from pbt.storage.memory import MemoryStorageBackend
 
 
@@ -42,33 +42,47 @@ def run_models(models: dict[str, str], *, storage=None, llm_call=stub_llm, **kwa
 # Registry
 # ---------------------------------------------------------------------------
 
-def test_builtin_types_are_registered():
-    assert known_model_types() == {
+def test_builtin_kinds_are_registered():
+    assert known_model_kinds() == {
         "template", "loop", "execute_python", "quality_check",
     }
     # The unnamed default is the plain LLM call.
-    assert get_model_type("") is not None
+    assert get_model_kind("") is not None
 
 
-def test_register_a_new_model_type_end_to_end():
-    @pbt.model_type("shout_test", config_keys={"suffix"})
-    class Shout(pbt.BaseModelType):
-        async def execute(self, spec, ctx):
-            rendered, state = ctx.render(spec)
-            output = await ctx.call_llm(rendered, spec, state)
-            return output.upper() + spec.config.get("suffix", "")
+def test_register_a_new_model_kind_end_to_end():
+    @pbt.model_kind("shout_test", config_keys={"suffix"})
+    async def shout(rendered, call):
+        response = await call.llm(rendered)
+        return response.upper() + call.spec.config.get("suffix", "")
 
     _, _, results = run_models(
         {"s": '{{ config(model_type="shout_test", suffix="!") }}\nhello'}
     )
     assert results["s"].llm_output == "RESP!"
+    # Registration returns the function unchanged, so it stays callable alone.
+    assert shout.__name__ == "shout"
 
 
-def test_registering_a_type_declares_its_config_keys():
-    @pbt.model_type("quiet_test", config_keys={"volume"})
-    class Quiet(pbt.BaseModelType):
-        async def execute(self, spec, ctx):
-            return "ok"
+def test_a_kind_with_no_exec_fn_uses_the_rendered_text_as_its_output():
+    calls: list[str] = []
+    pbt.register_model_kind(pbt.ModelKind("passthrough_test", exec_fn=None))
+
+    _, _, results = run_models(
+        {
+            "src": "Name a topic.",
+            "p": '{{ config(model_type="passthrough_test") }}\nGot: {{ ref("src") }}',
+        },
+        llm_call=lambda prompt: calls.append(prompt) or "resp",
+    )
+    assert results["p"].llm_output.strip() == "Got: resp"
+    assert len(calls) == 1  # only 'src' reached the LLM
+
+
+def test_registering_a_kind_declares_its_config_keys():
+    @pbt.model_kind("quiet_test", config_keys={"volume"})
+    async def quiet(rendered, call):
+        return "ok"
 
     assert "volume" in pbt.known_config_keys()
     with warnings.catch_warnings():
@@ -85,10 +99,12 @@ def test_unknown_model_type_warns_and_falls_back():
 
 
 def test_expansion_must_keep_the_declared_name():
-    @pbt.model_type("bad_expand_test")
-    class BadExpand(pbt.BaseModelType):
-        def expand(self, spec, all_specs):
-            return [spec.derive(name=f"{spec.name}_only", model_type="")]
+    pbt.register_model_kind(pbt.ModelKind(
+        "bad_expand_test",
+        expand_fn=lambda spec, all_specs: [
+            spec.derive(name=f"{spec.name}_only", model_type="")
+        ],
+    ))
 
     with pytest.raises(ValueError, match="without producing a node of that name"):
         build_models_from_dict({"x": '{{ config(model_type="bad_expand_test") }}\nHi'})
@@ -98,7 +114,7 @@ def test_expansion_must_keep_the_declared_name():
 # Built-in types
 # ---------------------------------------------------------------------------
 
-def test_template_type_renders_without_calling_the_llm():
+def test_template_kind_renders_without_calling_the_llm():
     calls: list[str] = []
 
     def counting_llm(prompt: str) -> str:
@@ -144,7 +160,7 @@ def test_loop_fans_out_over_a_json_list():
 
 
 # ---------------------------------------------------------------------------
-# The shared lifecycle — behaviour every type gets for free
+# The shared lifecycle — behaviour every kind gets for free
 # ---------------------------------------------------------------------------
 
 def test_execute_python_cache_hit_is_still_recorded_as_success():
@@ -186,7 +202,7 @@ def test_validated_output_is_what_downstream_readers_see():
     assert list(storage._cache.values()) == ["raw-output"]
 
 
-def test_cache_key_is_one_formula_for_every_type():
+def test_cache_key_is_one_formula_for_every_kind():
     from pbt.executor.run_context import RunContext
 
     ctx = RunContext(run_id="r", storage=MemoryStorageBackend(), llm_call=stub_llm)
@@ -194,18 +210,16 @@ def test_cache_key_is_one_formula_for_every_type():
     assert ctx.cache_key(spec, "rendered", None) == 'rendered\x00{"a": "1"}\x00'
 
 
-def test_post_processing_type_is_idempotent_across_cached_runs():
-    """A strategy that transforms the LLM response must not re-transform a cache hit.
+def test_post_processing_kind_is_idempotent_across_cached_runs():
+    """A kind that transforms the LLM response must not re-transform a cache hit.
 
     The cache has to hold the raw response, not this model's final output, or
     the second run applies the transform to an already-transformed value.
     """
-    @pbt.model_type("suffixer_test", config_keys={"suffix"})
-    class Suffixer(pbt.BaseModelType):
-        async def execute(self, spec, ctx):
-            rendered, state = ctx.render(spec)
-            output = await ctx.call_llm(rendered, spec, state)
-            return output + spec.config.get("suffix", "")
+    @pbt.model_kind("suffixer_test", config_keys={"suffix"})
+    async def suffixer(rendered, call):
+        response = await call.llm(rendered)
+        return response + call.spec.config.get("suffix", "")
 
     models = {"s": '{{ config(model_type="suffixer_test", suffix="!") }}\nHeadline?'}
 
