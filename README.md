@@ -197,7 +197,23 @@ results = pbt.run(
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
 | `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to models/) |
 
-Returns a list of `ModelRunResult` objects with fields: `model_name`, `status`, `prompt_rendered`, `llm_output`, `error`, `execution_ms`, `cached`.
+Returns a `dict` keyed by model name. Each value is the model's output string —
+or `ModelStatus.SKIPPED` when an upstream model failed, or a `ModelError`
+carrying the message when that model itself failed.
+
+```python
+results = pbt.run("models")
+
+if isinstance(results["article"], pbt.ModelError):
+    print("failed:", results["article"])
+elif results["article"] is pbt.ModelStatus.SKIPPED:
+    print("never ran")
+else:
+    print(results["article"])
+```
+
+`pbt.async_run(...)` takes the same arguments and returns the same dict, for
+calling from inside an existing event loop.
 
 ---
 

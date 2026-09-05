@@ -2,7 +2,7 @@
 pbt docs — generate a self-contained HTML report of all previous runs.
 
 The generated HTML includes:
-  - A summary table of every pbt run (status, models, timing, DAG hash)
+  - A summary table of every pbt run (status, model count, timing)
   - Expandable per-run model results
   - A Mermaid.js DAG diagram of the current model dependency graph
 """

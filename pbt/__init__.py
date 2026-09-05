@@ -115,7 +115,8 @@ async def async_run(
         also executed fresh; the prompt cache makes unchanged nodes instant.
     llm_call:
         Optional function ``(prompt: str) -> str`` to use as the LLM backend.
-        Falls back to ``models/client.py`` then the built-in Gemini client.
+        Falls back to ``llm_call`` in client.py alongside *models_dir*; with
+        neither, the run fails with a FileNotFoundError naming the fix.
     rag_call:
         Optional function ``(*args) -> list | str`` to back
         ``return_list_RAG_results()`` in templates.
@@ -151,7 +152,13 @@ async def async_run(
 
     Returns
     -------
-    List of ``ModelRunResult`` (one per model executed).
+    ``dict`` keyed by model name.  Each value is the model's output string, or
+    :class:`ModelStatus.SKIPPED` when an upstream model failed, or a
+    :class:`ModelError` carrying the message when that model itself failed.
+
+    The full per-model detail — rendered prompt, timing, cache hit — is not in
+    this return value; it is written to storage and read back by ``pbt test``
+    and ``pbt docs``.
     """
     import time
     from datetime import datetime
@@ -344,7 +351,11 @@ def run(
     storage_backend: "StorageBackend | None" = None,
     global_instruction: "str | Callable[[], str] | None" = None,
 ):
-    """Run prompt models synchronously."""
+    """Run prompt models synchronously.
+
+    Wraps :func:`async_run` in ``asyncio.run()``; same arguments, same dict
+    return value.  Call ``async_run`` directly from inside an event loop.
+    """
     import asyncio
 
     return asyncio.run(async_run(

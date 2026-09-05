@@ -2,37 +2,70 @@
 
 ---
 
-## Module map
+## Call order
+
+One `.prompt` file to one result, in the order the code actually runs:
 
 ```
-pbt/
-  __init__.py          Python API (pbt.run) — also resolves llm/rag backends
-  cli.py               Click commands — orchestrates discovery, calls execute_run
-  executor/
-    graph.py           DAG building, spec parsing, model-kind expansion
-    parser_initial.py  Static analysis — extract_dependencies, parse_model_config
-    parser_model.py    Jinja2 rendering (render_prompt), skip-function helpers
-    executor.py        Pure execution loop — no file discovery, no CLI concerns
-    run_context.py     RunContext — run-wide inputs, rendering, the prompt cache
-    builtin_kinds.py   The built-in model kinds (llm, template, loop, execute_python, quality_check)
-  model_spec.py        ModelSpec — the parsed, inert description of one model
-  model_types.py       ModelKind / ModelCall records + the public registry
-  llm.py / rag.py / validator.py  Backend resolvers
-  db.py                SQLite schema + queries
-  tester.py / docs.py  pbt test and pbt docs implementations
+1. pbt/__init__.py  ·  pbt/cli/          entry point
+     └─ llm.py / rag.py                  resolve backends by importing client.py,
+                                         which is also where custom kinds register
+
+2. pbt/model_types.py                    the registry must be populated FIRST —
+     └─ executor/builtin_kinds.py        build_spec asks it whether a model_type
+                                         is known, and warns at parse time if not
+
+3. pbt/executor/graph.py                 load_models → build_spec → expand → build_dag
+     ├─ executor/parser_initial.py       static analysis of raw template text:
+     │                                   config(), ref() deps, promptdata()
+     ├─ pbt/model_spec.py                → one frozen ModelSpec per node
+     └─ each kind's expand_fn            one node becomes several (quality_check)
+
+4. pbt/executor/executor.py              walk the DAG in topological order
+     ├─ executor/run_context.py          render, prompt cache, LLM call, timing
+     │    └─ executor/parser_model.py    the Jinja pass: ref(), promptdata(),
+     │                                   RAG, skip functions, global instruction
+     └─ each kind's exec_fn              given (rendered, call) — the only step
+                                         a model kind contributes
+
+5. pbt/storage/                          run rows, outputs, prompt cache
+     └─ sqlite.py | memory.py            (base.py is the interface)
+
+   pbt/validator.py · tester.py · docs.py   validation, `pbt test`, `pbt docs`
 ```
+
+Two things about that order are easy to get backwards:
+
+**The registry comes before parsing, not before execution.** `graph.build_spec()`
+calls `_resolve_model_type()`, which warns and falls back to a plain LLM call for
+any `model_type` it does not recognise. So `client.py` must be imported before
+`models/` is read, or a project-local kind looks like a typo and its models
+silently run as ordinary prompts.
+
+**There are two parsers, at two different times.** `parser_initial.py` is static
+analysis over the raw text during graph construction — it never renders anything.
+`parser_model.py` is the Jinja pass during execution, once per prompt. A change
+that affects the DAG belongs in the first; a change that affects a prompt's
+content belongs in the second.
+
+`ModelSpec` has no position in this order: it is the data step 3 produces and
+step 4 consumes, not a stage of its own.
+
+### Dependency resolution
+
+Step 3 scans every `*.prompt` for `ref('...')` with a regex, builds a directed
+graph with [NetworkX](https://networkx.org/), and topologically sorts it for the
+execution order. A cycle fails the run immediately with a clear error. At
+execution time, a model whose dependency errored is marked **skipped** rather
+than being sent to the LLM with a missing input.
 
 ---
 
 ## Key design decisions
 
-**`executor.py` is a pure executor.** It takes callables (`llm_call`, `rag_call`, `validators`) and never touches the filesystem. File discovery lives in `cli.py` and `pbt/__init__.py`. This keeps the executor testable with mock callables.
+**`executor.py` is a pure executor.** It takes callables (`llm_call`, `rag_call`, `validators`) and never touches the filesystem. File discovery lives in `pbt/cli/` and `pbt/__init__.py`. This keeps the executor testable with mock callables.
 
-**DAG hash covers structure and content.** `compute_dag_hash()` hashes model names, dependency edges, prompt source text, and config. Any change to structure or prompt content produces a new hash. The hash is also the stable key used to look up the DAG snapshot in the `dags` table.
-
-**DAG snapshots are persisted.** After each run, the full DAG (all model sources, configs, and edges) is stored in the `dags` table keyed by `dag_hash`. Pass `dag_id=<hash>` to `pbt.run()` or `--dag-id <hash>` to `pbt run` to replay a specific DAG version from DB without reading *.prompt files from disk.
-
-**Prompt cache is content-addressed.** SHA256 of the *rendered* prompt (post-Jinja, pre-LLM) is the cache key. Identical rendered prompts across any run reuse the stored output.
+**Prompt cache is content-addressed.** The key is the *rendered* prompt (post-Jinja, pre-LLM), the model's `config()` block as sorted JSON, and a hash of any attached promptfiles, joined by NULs — `RunContext.cache_key()`. SQLite stores the SHA256 of that as `model_results.prompt_hash`. Config and files are part of the key because changing `output_format` or swapping an attached PDF must not serve the old answer.
 
 **`--select` runs the full upstream chain fresh.** `pbt run --select tweet` runs `tweet` and all its ancestors in dependency order. The prompt cache makes unchanged upstream nodes instant — no stale-output risk, no need for a previous run of the same DAG.
 
@@ -151,9 +184,8 @@ All results are stored in `.pbt/pbt.db`.
 - DB at `.pbt/pbt.db` relative to cwd.
 - `PRAGMA journal_mode=WAL` — allows concurrent readers during a run.
 - `init_db()` is `CREATE TABLE IF NOT EXISTS` only — there is no migration path, so delete `.pbt/pbt.db` after a schema change.
-- `prompt_hash` is indexed for cache lookups; `dag_hash` is indexed on `runs` for test-run matching.
-- `dags` table stores one row per unique DAG content hash; `INSERT OR IGNORE` keeps it idempotent.
-
+- Three tables: `runs`, `model_results`, `test_results`.
+- `prompt_hash` is indexed (with `completed_at DESC`) for cache lookups.
 
 
 ### `runs`
@@ -163,6 +195,7 @@ One row per `pbt run` invocation.
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | TEXT PK | UUID for the run |
+| `run_date` | TEXT | Calendar date of the run |
 | `created_at` | TIMESTAMP | When the run started |
 | `status` | TEXT | `running` / `success` / `error` / `partial` |
 | `completed_at` | TIMESTAMP | When the run finished |
@@ -181,13 +214,17 @@ One row per model per run.
 | `status` | TEXT | `pending` / `running` / `success` / `error` / `skipped` |
 | `prompt_template` | TEXT | Raw `.prompt` file contents |
 | `prompt_rendered` | TEXT | Fully-rendered prompt sent to the LLM |
+| `prompt_hash` | TEXT | SHA256 of the cache key — the prompt cache's index |
 | `llm_output` | TEXT | Raw LLM response text (what the prompt cache serves) |
 | `llm_output_validated` | TEXT | Post-validation output, when a validator changed it |
+| `cached` | INTEGER | 1 when every call this model made was a cache hit |
 | `started_at` | TIMESTAMP | Execution start |
 | `completed_at` | TIMESTAMP | Execution end |
 | `execution_ms` | INTEGER | Wall-clock time in milliseconds |
 | `error` | TEXT | Error message if status = `error` |
 | `depends_on` | TEXT | JSON list of upstream model names |
+| `model_type` | TEXT | The model's kind; `''` for a plain LLM call |
+| `config` | TEXT | The model's `config()` block as JSON |
 
 Query results directly:
 
@@ -199,7 +236,10 @@ sqlite3 .pbt/pbt.db "SELECT model_name, status, execution_ms FROM model_results 
 
 ## Python API
 
-pbt can be used directly from Python without the CLI:
+`pbt.run()` is the sync entry point; `pbt.async_run()` is the same function
+without the `asyncio.run()` wrapper, for calling from inside an event loop. The
+[README](../README.md#python-api) documents every parameter — the notes here are
+the ones that matter when working on pbt itself.
 
 ```python
 import pbt
@@ -210,32 +250,21 @@ for name, output in results.items():
     print(name, output)
 ```
 
-### `pbt.run()`
+**Both return a `dict`, not a list.** Keyed by model name, the value is the
+model's output string — or `ModelStatus.SKIPPED` if an upstream model failed, or
+a `ModelError` carrying the message if this one did. `ModelRunResult` (with
+`prompt_rendered`, `execution_ms`, `cached`, …) is what `execute_run()` returns
+internally; the public API reduces it to the value a caller wants. Read the rest
+back out of storage, or out of `pbt docs`.
 
-```python
-results = pbt.run(
-    models_dir="models",       # path to *.prompt files
-    select=["article"],        # optional: run only these models
-    llm_call=my_llm_fn,        # optional: custom LLM backend
-    rag_call=my_rag_fn,        # optional: custom RAG function
-    promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
-    validation_dir="validation", # optional: per-model validation functions
-))
-```
+Three parameters exist for pbt's own tests and tooling rather than for everyday
+use:
 
-| Parameter | Type | Description |
+| Parameter | Type | Purpose |
 |---|---|---|
-| `models_dir` | `str` | Directory containing `*.prompt` files |
-| `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
-| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `client.py` (next to models/) |
-| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `rag.py` (next to models/) `do_RAG` |
-| `promptdata` | `dict \| None` | Variables injected into every template, accessed via `{{ promptdata('key') }}` |
-| `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` via `config()` |
-| `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
-
-Returns a list of `ModelRunResult` objects with fields: `model_name`, `status`, `prompt_rendered`, `llm_output`, `error`, `execution_ms`, `cached`.
-
-
+| `models_from_dict` | `dict[str, str] \| None` | Models as `{name: template_source}`, bypassing the filesystem entirely |
+| `storage_backend` | `StorageBackend \| None` | Swap SQLite for `MemoryStorageBackend` (or your own). Defaults to `.pbt/pbt.db` |
+| `verbose` | `bool` | The dbt-style progress log. `False` silences it |
 
 ### Passing functions inline
 
@@ -264,48 +293,22 @@ results = pbt.run("models", llm_call=my_llm, rag_call=my_rag)
 
 ## Project layout
 
+What a pbt *project* looks like — the package's own layout is the call order above.
+
 ```
-prompt-build-tool-for-LLMs/
-├── pbt/
-│   ├── __init__.py      # Python API (pbt.run)
-│   ├── cli.py           # Click CLI (pbt run, pbt test, pbt docs, …)
-│   ├── executor/
-│   │   ├── graph.py          # DAG builder, spec parsing, model-kind expansion
-│   │   ├── parser_initial.py # Static analysis: deps, config, promptdata extraction
-│   │   ├── parser_model.py   # Jinja2 render_prompt, ref(), skip helpers
-│   │   ├── run_context.py    # RunContext: run-wide inputs, render, prompt cache
-│   │   ├── builtin_kinds.py  # Built-in model kinds
-│   │   └── executor.py       # Pure execution loop, LLM calls, validation hooks
-│   ├── llm.py           # LLM backend resolver (loads client.py)
-│   ├── rag.py           # RAG resolver (rag.py → do_RAG)
-│   ├── db.py            # SQLite schema + query helpers
-│   ├── docs.py          # HTML report generator (pbt docs)
-│   ├── tester.py        # Test runner (pbt test)
-│   └── validator.py     # Validation framework (validation/*.py)
-├── client.py            # optional: custom LLM backend
-├── rag.py               # optional: RAG function (do_RAG)
+my-project/
+├── client.py            # optional: llm_call(prompt) + custom model kinds
+├── rag.py               # optional: do_RAG(...)
+├── global.prompt        # optional: instruction prepended to every prompt
 ├── models/
-│   ├── topic.prompt     # example: no dependencies
-│   ├── outline.prompt   # example: depends on topic
-│   └── article.prompt   # example: depends on topic + outline
-├── validation/          # optional: per-model validate(prompt, result)->bool files
-├── utils/
-│   └── server/          # FastAPI HTTP server (POST /run, GET /health)
-├── pyproject.toml
-└── README.md
+│   ├── topic.prompt     # no dependencies
+│   ├── outline.prompt   # depends on topic
+│   └── article.prompt   # depends on topic + outline
+├── validation/          # optional: per-model validate(prompt, result) -> bool
+├── outputs/             # written by `pbt run`
+└── .pbt/
+    ├── pbt.db           # runs, model results, test results, prompt cache
+    └── docs/index.html  # written by `pbt docs`
 ```
-
----
-
----
-
-## How dependency resolution works
-
-1. pbt scans every `*.prompt` file for `ref('...')` calls using a regex.
-2. It builds a directed acyclic graph (DAG) with [NetworkX](https://networkx.org/).
-3. A topological sort gives the safe execution order.
-4. If a model errors, all models that depend on it are marked **skipped** rather
-   than failing with a confusing LLM error.
-5. If a cycle is detected, pbt exits immediately with a clear error message.
 
 ---
