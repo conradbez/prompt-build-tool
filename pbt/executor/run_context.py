@@ -38,6 +38,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pbt.executor.parser_model import _RenderState, render_prompt
+from pbt.files import (
+    BlobStore,
+    FileOutputError,
+    MemoryBlobStore,
+    blob_store_for,
+    contains_files,
+    decode_output,
+    encode_output,
+    iter_files,
+    persist_files,
+    select_path,
+    split_model_path,
+)
 from pbt.model_spec import ModelSpec
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile
@@ -71,6 +84,11 @@ def _files_hash(model_files: list | None) -> str:
         return ""
     digest = hashlib.sha256()
     for handle in model_files:
+        # Files from an upstream model already carry their hash.
+        known = getattr(handle, "sha256", None)
+        if isinstance(known, str):
+            digest.update(known.encode("ascii"))
+            continue
         try:
             if isinstance(handle, (str, Path)):
                 digest.update(Path(handle).read_bytes())
@@ -120,6 +138,10 @@ class RunContext:
     validators: dict | None = None
     global_instruction: str | None = None
 
+    #: Where file outputs' bytes live.  Defaults to the storage backend's own
+    #: blob store, or an in-memory one for a backend that has none.
+    blobs: BlobStore | None = None
+
     #: model name → output value.  A JSON-format model's entry is the parsed
     #: object, so downstream templates can do ``{{ ref('m').key }}``.
     outputs: dict[str, Any] = field(default_factory=dict)
@@ -132,6 +154,10 @@ class RunContext:
 
     _accounting: dict[str, _ModelAccounting] = field(default_factory=dict)
     _files: dict[str, list | None] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.blobs is None:
+            self.blobs = blob_store_for(self.storage) or MemoryBlobStore()
 
     # -- rendering ----------------------------------------------------------
 
@@ -161,6 +187,7 @@ class RunContext:
             model_name=spec.name,
             global_instruction=self.global_instruction_for(spec),
         )
+        state.extra_outputs = extra_outputs
         acct = self._acct(spec.name)
         acct.rendered.append(rendered)
         if primary:
@@ -220,19 +247,29 @@ class RunContext:
         When *state* carries a skip value the work is bypassed entirely and that
         value is returned, so a kind never has to branch on skipping.
         *compute* may be sync or async.
+
+        *compute* may return files (:mod:`pbt.files`).  Their bytes go to the
+        blob store and the cache keeps the encoded manifest; a hit decodes it
+        back to the same objects.  A hit whose blobs have since gone missing
+        is treated as a miss.
         """
         if state is not None and state.skip_value is not None:
             return state.skip_value
 
         acct = self._acct(spec.name)
-        key = self.cache_key(spec, rendered, self.files_for(spec))
+        key = self.cache_key(spec, rendered, self.files_for(spec, state))
 
         hit = self.storage.get_cached_llm_output(key)
         if hit is not None:
-            acct.calls += 1
-            acct.cache_hits += 1
-            self._record_artifact(acct, hit)
-            return hit
+            try:
+                value = decode_output(hit, self.blobs, check_blobs=True)
+            except FileOutputError:
+                pass  # the cached files are gone — recompute them
+            else:
+                acct.calls += 1
+                acct.cache_hits += 1
+                self._record_artifact(acct, hit)
+                return value
 
         started = time.monotonic()
         result = compute()
@@ -240,7 +277,9 @@ class RunContext:
             result = await result
         acct.calls += 1
         acct.elapsed_ms += int((time.monotonic() - started) * 1000)
-        self._record_artifact(acct, result)
+        if contains_files(result):
+            persist_files(result, self.blobs)
+        self._record_artifact(acct, encode_output(result))
         return result
 
     @staticmethod
@@ -262,13 +301,15 @@ class RunContext:
         lets a fan-out model issue its calls concurrently.
         """
         return await self.cached(
-            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec)
+            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec, state)
         )
 
-    async def _invoke_llm(self, rendered: str, spec: ModelSpec) -> str:
+    async def _invoke_llm(
+        self, rendered: str, spec: ModelSpec, state: _RenderState | None = None
+    ) -> str:
         kwargs: dict = {}
         params = inspect.signature(self.llm_call).parameters
-        files = self.files_for(spec)
+        files = self.files_for(spec, state)
         if files and "files" in params:
             kwargs["files"] = files
         if "config" in params:
@@ -285,21 +326,46 @@ class RunContext:
             output = await output
         return output
 
-    def files_for(self, spec: ModelSpec) -> list | None:
+    def files_for(self, spec: ModelSpec, state: _RenderState | None = None) -> list | None:
         """Open and return the promptfiles *spec* declares, or None.
 
+        A name is either a run-level promptfile (``--promptfile name=path``) or
+        an upstream model — ``"logo"`` attaches every file that model produced,
+        ``"logo.image"`` just the one under that key.  Upstream models win when
+        a name could be both.
+
         Opened once per model and reused, so every call for a fan-out model
-        shares one set of handles.
+        shares one set of handles — except when *state* rendered a loop item,
+        whose ``ref()`` overlay may pick different upstream files per item.
         """
-        if spec.name in self._files:
+        overlay = getattr(state, "extra_outputs", None)
+        if overlay is None and spec.name in self._files:
             return self._files[spec.name]
 
-        if not spec.promptfiles_used or not self.promptfiles:
-            self._files[spec.name] = None
-            return None
+        opened = self._open_files(spec, overlay) if spec.promptfiles_used else None
+        if overlay is None:
+            self._files[spec.name] = opened
+        return opened
 
+    def _open_files(self, spec: ModelSpec, overlay: dict | None) -> list | None:
+        outputs = {**self.outputs, **overlay} if overlay else self.outputs
         opened: list = []
         for name in spec.promptfiles_used:
+            upstream = split_model_path(name, outputs)
+            if upstream is not None and upstream[0] != spec.name:
+                model, path = upstream
+                value = select_path(outputs[model], path, name)
+                found = [file for _, file in iter_files(value)]
+                if not found:
+                    raise ValueError(
+                        f"Model '{spec.name}' attaches promptfile '{name}', but "
+                        f"model '{model}' produced no files there."
+                    )
+                opened.extend(file.open() for file in found)
+                continue
+
+            if not self.promptfiles:
+                continue  # no run-level files at all: nothing to attach
             if name not in self.promptfiles:
                 raise ValueError(
                     f"Model '{spec.name}' declares promptfile '{name}' in config "
@@ -311,8 +377,7 @@ class RunContext:
                 handle = open(handle, "rb")  # noqa: WPS515 — closed by the consumer
             opened.append(handle)
 
-        self._files[spec.name] = opened
-        return opened
+        return opened or None
 
     # -- accounting, read by the executor -----------------------------------
 

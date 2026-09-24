@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from fastapi import FastAPI, File, Form, Request, UploadFile
-    from fastapi.responses import HTMLResponse
+    from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+    from fastapi.responses import HTMLResponse, Response
     from pydantic import BaseModel
     from jinja2 import Environment, FileSystemLoader
 except ImportError as exc:
@@ -20,6 +20,8 @@ except ImportError as exc:
     ) from exc
 
 import pbt
+from pbt.files import contains_files, safe_name, to_jsonable, FileOutputError
+from urllib.parse import quote
 
 
 _TEMPLATES = Environment(
@@ -41,6 +43,21 @@ class RunResponse(BaseModel):
     errors: list[str] = []
 
 
+def _with_urls(value: Any) -> Any:
+    """Add a download ``url`` to every file manifest in a to_jsonable() value."""
+    if isinstance(value, dict):
+        out = {k: _with_urls(v) for k, v in value.items()}
+        if out.get("type") == "file" and "sha256" in out:
+            out["url"] = f"/blobs/{out['sha256']}?name={quote(str(out.get('name', 'file')))}"
+        if out.get("type") == "dir" and isinstance(out.get("entries"), dict):
+            for rel, entry in out["entries"].items():
+                entry["url"] = f"/blobs/{entry['sha256']}?name={quote(rel.rsplit('/', 1)[-1])}"
+        return out
+    if isinstance(value, list):
+        return [_with_urls(v) for v in value]
+    return value
+
+
 def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
     serialised: dict[str, Any] = {}
     errors: list[str] = []
@@ -48,6 +65,9 @@ def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
         if isinstance(value, pbt.ModelStatus):
             serialised[name] = value.value
             errors.append(f"{name}: {value.value}")
+        elif contains_files(value):
+            # Files come back as manifests with a /blobs URL to fetch the bytes.
+            serialised[name] = _with_urls(to_jsonable(value))
         else:
             serialised[name] = value
     return serialised, errors
@@ -81,6 +101,44 @@ def create_app(
         description="Run pbt prompt models via HTTP.",
         version=pbt.__version__,
     )
+
+    def _blob_store():
+        from pbt.llm import resolve_blob_store
+        from pbt.storage.sqlite import SQLiteStorageBackend
+
+        return resolve_blob_store(models_dir) or SQLiteStorageBackend().blob_store()
+
+    # ------------------------------------------------------------------
+    # GET /blobs/{sha256} — the bytes of a file a model produced
+    # ------------------------------------------------------------------
+    @app.get("/blobs/{sha256}", summary="Download a file a model produced")
+    def get_blob(sha256: str, name: str = "file") -> Response:
+        """Return a stored file's bytes, always as a download.
+
+        Served as ``application/octet-stream`` with ``Content-Disposition:
+        attachment`` whatever the file is, so a model-generated HTML or SVG
+        file can never run as a page on this server's origin.
+        """
+        import re
+
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise HTTPException(status_code=400, detail="Invalid sha256.")
+        try:
+            filename = safe_name(name)
+        except FileOutputError:
+            filename = "file"
+        try:
+            data = _blob_store().get(sha256)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="No such blob.") from None
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     # ------------------------------------------------------------------
     # POST /run — multipart form: promptdata (JSON), select (JSON), file
@@ -176,6 +234,9 @@ def create_app(
         parts = ['<h6>Model outputs</h6>']
         for model_name, output in serialised.items():
             is_error = isinstance(output, str) and output.startswith("error")
+            if contains_files(outputs.get(model_name)):
+                # The text a downstream model would see, file handles included.
+                output = str(outputs[model_name])
             content = f'<ins>{_html.escape(str(output))}</ins>' if is_error else _html.escape(str(output))
             parts.append(
                 f'<article>'

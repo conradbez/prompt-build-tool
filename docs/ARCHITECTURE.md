@@ -87,6 +87,8 @@ than being sent to the LLM with a missing input.
 
 **Fan-out is the executor's job, not a kind's.** `fan_out=True` tells `execute_model()` to resolve the single upstream dependency whose output is a JSON list, render once per item (`primary=False`, so one skipped item does not mark the whole model skipped), run `exec_fn` on each concurrently via `asyncio.gather`, and collect the results in input order. `loop` is therefore the ordinary LLM call with one flag set, and any registered kind can fan out.
 
+**Files are content-addressed blobs plus a manifest in the output string.** `pbt/files.py` holds `File`, `Dir` and `Output`. Anything that produces an output can return them: `llm_call`, `call.compute`, a kind's `exec_fn`, a validator or a skip. `RunContext.cached()` and `execute_model()` write their bytes to a `BlobStore` (sha256 → bytes; `put`/`get`/`exists`) and store `encode_output(value)`: plain text and file-free JSON unchanged, anything with files as `$pbt:v1\n` + JSON with each file tagged by the `"$pbt"` marker key. `encode_output` is the only producer of markers. It escapes marker-looking keys in model data (`$pbt` → `$$pbt`) and text that starts with `$pbt:`. `decode_output` is the only reader, and it validates every marker. So text or JSON from a model can never pose as a file reference. `StorageBackend` is unchanged apart from an optional `blob_store()`; the SQLite backend keeps blobs in a `blobs` table unless given another store, and `client.py` can supply one (`blob_store`). A `promptfiles` name that names a model becomes a DAG edge (`graph._link_promptfile_deps`), and `RunContext.files_for()` resolves it to that model's files, per loop item when fanning out.
+
 **Storage keeps raw and validated output separately.** `mark_model_success` stores the raw output, which is what the prompt cache serves, so editing a validator never forces a new LLM call. When a validator transforms the output, the executor also calls `record_validated_output`, and `get_model_outputs_from_run` prefers it — so `pbt test` judges the value the pipeline actually passed downstream.
 
 ---
@@ -305,10 +307,12 @@ my-project/
 │   ├── outline.prompt   # depends on topic
 │   └── article.prompt   # depends on topic + outline
 ├── validation/          # optional: per-model validate(prompt, result) -> bool
-├── outputs/             # written by `pbt run`
+├── outputs/             # written by `pbt run` (files in outputs/<model>/)
 └── .pbt/
-    ├── pbt.db           # runs, model results, test results, prompt cache
-    └── docs/index.html  # written by `pbt docs`
+    ├── pbt.db           # runs, model results, test results, prompt cache, file blobs
+    └── docs/
+        ├── index.html   # written by `pbt docs`
+        └── files/       # files models produced, linked from the report
 ```
 
 ---

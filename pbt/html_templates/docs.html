@@ -47,6 +47,40 @@
     }
     #modal-body { max-height: 65vh; overflow: auto; }
     #modal-body pre { white-space: pre-wrap; }
+    #modal-body img.full { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+
+    /* Files produced by models */
+    .file-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .file-thumb {
+      width: 44px; height: 44px; object-fit: cover; border-radius: 4px;
+      border: 1px solid var(--pico-muted-border-color); cursor: zoom-in;
+      background: var(--pico-code-background-color);
+    }
+    .file-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 0.75em; padding: 2px 8px; border-radius: 4px;
+      border: 1px solid var(--pico-muted-border-color);
+      white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+      text-decoration: none;
+    }
+    .file-chip.missing { color: var(--pico-del-color); border-style: dashed; }
+    .gallery {
+      display: grid; gap: var(--pico-spacing);
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+    .gallery article { margin: 0; padding: 0; overflow: hidden; }
+    .gallery .preview {
+      height: 140px; display: flex; align-items: center; justify-content: center;
+      background: var(--pico-code-background-color); cursor: zoom-in;
+    }
+    .gallery .preview img { max-width: 100%; max-height: 140px; object-fit: contain; }
+    .gallery .preview .mime {
+      font-family: var(--pico-font-family-monospace); font-size: 0.8em;
+      color: var(--pico-muted-color); cursor: default;
+    }
+    .gallery .meta { padding: 8px 10px; font-size: 0.8em; }
+    .gallery .meta .name { font-weight: 600; overflow-wrap: anywhere; }
+    .gallery .meta small { color: var(--pico-muted-color); display: block; }
   </style>
 </head>
 <body>
@@ -57,11 +91,53 @@
   <span class="badge" style="background:{{ status_colours.get(status, '#6b7280') }}">{{ status }}</span>
   {% endmacro %}
 
+  {% macro file_strip(files) %}
+  <div class="file-strip">
+    {% for f in files %}
+      {% if f.missing %}
+      <span class="file-chip missing" title="{{ f.label }} — blob missing from the store">⚠ {{ f.name }}</span>
+      {% elif f.preview %}
+      <img class="file-thumb" src="{{ f.href }}" alt="{{ f.name }}" loading="lazy"
+           title="{{ f.label }} · {{ f.mime }} · {{ f.size }}"
+           onclick="openImage(this)" data-title="{{ f.label }}" data-href="{{ f.href }}">
+      {% else %}
+      <a class="file-chip" href="{{ f.href }}" download="{{ f.name }}"
+         title="{{ f.label }} · {{ f.mime }} · {{ f.size }} · sha256:{{ f.sha }}">📄 {{ f.name }}</a>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endmacro %}
+
   <main class="container">
     <hgroup>
       <h1>pbt docs</h1>
       <p>prompt-build-tool run history &mdash; generated {{ generated_at }}</p>
     </hgroup>
+
+    {% if latest_files %}
+    <section>
+      <h2>Files <small style="font-weight:400;color:var(--pico-muted-color)">— latest run {{ latest_run.short_id }}</small></h2>
+      <div class="gallery">
+        {% for f in latest_files %}
+        <article>
+          {% if f.preview %}
+          <div class="preview" onclick="openImage(this)" data-title="{{ f.model_name }} — {{ f.label }}" data-href="{{ f.href }}">
+            <img src="{{ f.href }}" alt="{{ f.name }}" loading="lazy">
+          </div>
+          {% else %}
+          <div class="preview"><span class="mime">{{ '⚠ missing' if f.missing else f.mime }}</span></div>
+          {% endif %}
+          <div class="meta">
+            <div class="name">{{ f.name }}</div>
+            <small><code>{{ f.model_name }}</code>{% if f.label != f.name %} · {{ f.label }}{% endif %}</small>
+            <small>{{ f.size }} · sha256:{{ f.sha }}</small>
+            {% if not f.missing %}<a href="{{ f.href }}" download="{{ f.name }}">Download</a>{% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
 
     <section>
       <h2>Run History</h2>
@@ -92,7 +168,7 @@
                 <div class="detail-inner">
                   <table style="margin-bottom:0">
                     <thead>
-                      <tr><th>Model</th><th>Type</th><th>Config</th><th>Status</th><th>Time</th><th>Input</th><th>Output preview</th></tr>
+                      <tr><th>Model</th><th>Type</th><th>Config</th><th>Status</th><th>Time</th><th>Input</th><th>Output preview</th><th>Files</th></tr>
                     </thead>
                     <tbody>
                       {% for r in run.results %}
@@ -115,8 +191,9 @@
                         <td class="output-cell"
                             {% if r.output %}onclick="openContent(this)"
                             data-title="{{ r.model_name }} — output"
-                            data-content="{{ r.output }}"{% endif %}>{{ r.output_preview or '—' }}</td>
+                            data-content="{{ r.output }}"{% endif %}>{{ r.output_preview or ('—' if not r.files else '') }}</td>
                         {% endif %}
+                        <td>{% if r.files %}{{ file_strip(r.files) }}{% else %}<span style="color:var(--pico-muted-color)">—</span>{% endif %}</td>
                       </tr>
                       {% endfor %}
                     </tbody>
@@ -171,6 +248,26 @@
       // so it is not trusted to be inert HTML.
       document.getElementById('modal-body').innerHTML =
         DOMPurify.sanitize(marked.parse(cell.dataset.content || ''));
+      modal.showModal();
+    }
+
+    function openImage(el) {
+      // Built with DOM calls, not innerHTML: the title comes from model output.
+      document.getElementById('modal-title').textContent = el.dataset.title || '';
+      var body = document.getElementById('modal-body');
+      body.replaceChildren();
+      var img = document.createElement('img');
+      img.className = 'full';
+      img.src = el.dataset.href;
+      img.alt = el.dataset.title || '';
+      var link = document.createElement('a');
+      link.href = el.dataset.href;
+      link.download = '';
+      link.textContent = 'Download';
+      var p = document.createElement('p');
+      p.style.textAlign = 'center';
+      p.appendChild(link);
+      body.append(img, p);
       modal.showModal();
     }
 

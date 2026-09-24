@@ -9,7 +9,10 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from pbt.files import BlobStore
 
 # Columns added to model_results after the first release.  pbt does not migrate
 # databases — this exists so that opening an older one fails with an
@@ -24,11 +27,24 @@ class StaleDatabaseError(RuntimeError):
 
 
 class SQLiteStorageBackend:
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(self, path: str | Path | None = None, blob_store: "BlobStore | None" = None) -> None:
         self._db_path = Path(path) if path is not None else Path(".pbt") / "pbt.db"
+        self._blob_store = blob_store
 
     def db_path(self) -> Path:
         return self._db_path
+
+    def blob_store(self) -> "BlobStore":
+        """Where file outputs' bytes live: the ``blobs`` table of this database
+        unless another :class:`~pbt.files.BlobStore` (S3, …) was passed in."""
+        if self._blob_store is None:
+            from pbt.files import SQLiteBlobStore
+            self._blob_store = SQLiteBlobStore(self._db_path)
+        return self._blob_store
+
+    def set_blob_store(self, store: "BlobStore | None") -> None:
+        """Replace the blob store, e.g. with one client.py provides."""
+        self._blob_store = store
 
     @contextmanager
     def get_conn(self):

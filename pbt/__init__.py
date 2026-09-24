@@ -22,6 +22,14 @@ from pbt.model_types import (
     model_kind,
     register_model_kind,
 )
+from pbt.files import (
+    BlobStore,
+    Dir,
+    File,
+    MemoryBlobStore,
+    Output,
+    SQLiteBlobStore,
+)
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile, PromptModelsDict
 
@@ -48,6 +56,12 @@ __all__ = [
     "PromptModelsDict",
     "PromptFile",
     "StorageBackend",
+    "File",
+    "Dir",
+    "Output",
+    "BlobStore",
+    "MemoryBlobStore",
+    "SQLiteBlobStore",
     "__version__",
 ]
 
@@ -102,6 +116,7 @@ async def async_run(
     validation_dir: str | None = "validation",
     storage_backend: StorageBackend | None = None,
     global_instruction: str | Callable[[], str] | None = None,
+    blob_store: BlobStore | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -148,11 +163,17 @@ async def async_run(
         Individual models opt out with
         ``{{ config(global_instruction=False) }}``, and ``execute_python``
         models never receive it.
+    blob_store:
+        Where the bytes of file outputs (:class:`File`, :class:`Dir`,
+        :class:`Output`) are kept.  Falls back to ``blob_store`` in client.py,
+        then to the storage backend's own store (the SQLite database).
 
 
     Returns
     -------
-    ``dict`` keyed by model name.  Each value is the model's output string, or
+    ``dict`` keyed by model name.  Each value is the model's output string —
+    or, for a model that produced files, its :class:`File` / :class:`Dir` /
+    :class:`Output` value (or the dict/list holding them) — or
     :class:`ModelStatus.SKIPPED` when an upstream model failed, or a
     :class:`ModelError` carrying the message when that model itself failed.
 
@@ -229,6 +250,9 @@ async def async_run(
     if rag_call is None and models_from_dict is None:
         from pbt.rag import resolve_rag_call
         rag_call = resolve_rag_call(models_dir)
+    if blob_store is None and models_from_dict is None:
+        from pbt.llm import resolve_blob_store
+        blob_store = resolve_blob_store(models_dir)
 
     # Global instruction: explicit argument wins, else global.prompt on disk.
     from pbt.global_instruction import (
@@ -306,6 +330,7 @@ async def async_run(
         promptfiles=promptfiles,
         validators=validators or None,
         global_instruction=global_instruction,
+        blob_store=blob_store,
     )
 
     errors = sum(1 for r in results if r.status == "error")
@@ -333,6 +358,10 @@ async def async_run(
             return ModelStatus.SKIPPED
         if r.status == "error":
             return ModelError(r.error or "error")
+        from pbt.files import contains_files
+
+        if contains_files(r.value) or isinstance(r.value, str):
+            return r.value
         return r.llm_output
 
     return {r.model_name: _value(r) for r in results}
@@ -350,6 +379,7 @@ def run(
     validation_dir: "str | None" = "validation",
     storage_backend: "StorageBackend | None" = None,
     global_instruction: "str | Callable[[], str] | None" = None,
+    blob_store: "BlobStore | None" = None,
 ):
     """Run prompt models synchronously.
 
@@ -370,4 +400,5 @@ def run(
         validation_dir=validation_dir,
         storage_backend=storage_backend,
         global_instruction=global_instruction,
+        blob_store=blob_store,
     ))

@@ -82,3 +82,29 @@ def resolve_llm_call(models_dir: str) -> Callable[[str], str]:
         "No client.py found. Create one alongside your models/ directory with an "
         "'llm_call(prompt: str) -> str' function, or run `pbt init` to scaffold a starter project."
     )
+
+
+def resolve_blob_store(models_dir: str):
+    """Return the blob store client.py declares, or None.
+
+    client.py opts in by defining ``blob_store`` — a
+    :class:`~pbt.files.BlobStore` instance, or a zero-argument function
+    returning one — to keep file outputs somewhere other than the run
+    database (S3, a shared volume, …).
+    """
+    module = try_load_client_module(models_dir)
+    provider = getattr(module, "blob_store", None) if module is not None else None
+    if provider is None:
+        return None
+    import inspect
+
+    from pbt.files import BlobStore
+
+    is_factory = inspect.isfunction(provider) or inspect.isclass(provider)
+    store = provider() if is_factory else provider
+    if not isinstance(store, BlobStore):
+        raise TypeError(
+            f"{client_path(models_dir)}: blob_store must provide put(), get() and "
+            f"exists(); got {type(store).__name__}."
+        )
+    return store

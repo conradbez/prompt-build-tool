@@ -8,9 +8,11 @@ injecting upstream outputs via ref() and evaluating skip logic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from jinja2 import Environment, StrictUndefined, meta
+
+from pbt.files import contains_files
 
 
 class _Meta:
@@ -44,8 +46,12 @@ class _RenderState:
     ``skip_value is not None``  → skip the LLM call; use the value as output.
     ``skip_downstream``  → also propagate a skip signal to all downstream models.
     """
-    skip_value: str | None = None
+    skip_value: Any = None
     skip_downstream: bool = False
+
+    #: The ref() overlay this render used — a loop item — so promptfiles
+    #: naming the looped model attach that item's files.
+    extra_outputs: dict | None = None
 
 
 def render_prompt(
@@ -119,7 +125,14 @@ def render_prompt(
     }
 
     def skip_and_set_to_value(value) -> str:
-        """Skip the LLM call and use the Jinja-rendered *value* as both prompt and output."""
+        """Skip the LLM call and use the Jinja-rendered *value* as both prompt and output.
+
+        A value holding files (``ref()`` of a file-producing model) passes
+        through unchanged, so a skip does not reduce a file to its handle.
+        """
+        if contains_files(value):
+            state.skip_value = value
+            return str(value)
         rendered_value = env.from_string(str(value)).render(**{**context, "skip_and_set_to_value": lambda nested_value="": str(nested_value)})
         state.skip_value = rendered_value
         return rendered_value

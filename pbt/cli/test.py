@@ -166,6 +166,9 @@ def register_command(main) -> None:
             err_console.print(f"[red]Error:[/red] {exc}")
             sys.exit(1)
 
+        from pbt.cli import use_client_blob_store
+        use_client_blob_store(models_dir)
+
         # ------------------------------------------------------------------
         # Resolve LLM backend (needed for both modes)
         # ------------------------------------------------------------------

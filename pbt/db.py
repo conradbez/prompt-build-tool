@@ -103,5 +103,14 @@ def get_latest_runs(limit: int = 10):
     return _DEFAULT_BACKEND.get_latest_runs(limit)
 
 
+def blob_store():
+    """The store holding file outputs' bytes (see :mod:`pbt.files`)."""
+    return _DEFAULT_BACKEND.blob_store()
+
+
+def set_blob_store(store) -> None:
+    _DEFAULT_BACKEND.set_blob_store(store)
+
+
 def clear_cache() -> int:
     return _DEFAULT_BACKEND.clear_cache()

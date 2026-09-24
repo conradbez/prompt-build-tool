@@ -15,6 +15,12 @@ class MemoryStorageBackend:
         self._results: dict[str, dict[str, dict[str, Any]]] = {}
         self._tests: dict[str, list[dict[str, Any]]] = {}
         self._cache: dict[str, str] = {}
+        from pbt.files import MemoryBlobStore
+        self._blob_store = MemoryBlobStore()
+
+    def blob_store(self):
+        """File outputs' bytes, kept in memory alongside everything else."""
+        return self._blob_store
 
     def init_db(self) -> None:
         return None

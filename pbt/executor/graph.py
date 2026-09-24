@@ -24,6 +24,7 @@ from pbt.executor.parser_initial import (
     parse_model_config,
     warn_unknown_config_keys,
 )
+from pbt.files import split_model_path
 from pbt.model_spec import ModelSpec
 from pbt.model_types import get_model_kind, known_model_kinds
 
@@ -113,6 +114,27 @@ def _add_spec(specs: dict[str, ModelSpec], spec: ModelSpec) -> None:
         specs[node.name] = node
 
 
+def _link_promptfile_deps(specs: dict[str, ModelSpec]) -> dict[str, ModelSpec]:
+    """Make each model depend on the upstream models its promptfiles name.
+
+    ``{{ config(promptfiles=["logo"]) }}`` attaches the files model ``logo``
+    produced, so ``logo`` must run first — exactly as if the template had
+    called ``ref('logo')``.  Names that are not models stay run-level
+    promptfiles, supplied with ``--promptfile``.
+    """
+    for name, spec in list(specs.items()):
+        extra = []
+        for file_name in spec.promptfiles_used:
+            upstream = split_model_path(file_name, specs)
+            if upstream is None or upstream[0] == name:
+                continue
+            if upstream[0] not in spec.depends_on and upstream[0] not in extra:
+                extra.append(upstream[0])
+        if extra:
+            specs[name] = spec.derive(depends_on=[*spec.depends_on, *extra])
+    return specs
+
+
 class CyclicDependencyError(Exception):
     pass
 
@@ -158,7 +180,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, ModelSpec]:
             f"No *.prompt / *.prompt.jinja files found in '{models_dir}'."
         )
 
-    return specs
+    return _link_promptfile_deps(specs)
 
 
 def build_models_from_dict(models: dict[str, str]) -> dict[str, ModelSpec]:
@@ -166,7 +188,7 @@ def build_models_from_dict(models: dict[str, str]) -> dict[str, ModelSpec]:
     specs: dict[str, ModelSpec] = {}
     for name, source in models.items():
         _add_spec(specs, build_spec(name, source))
-    return specs
+    return _link_promptfile_deps(specs)
 
 
 def build_dag(models: dict[str, ModelSpec]) -> nx.DiGraph:
@@ -219,9 +241,15 @@ def get_dag_promptfiles(models: dict[str, ModelSpec]) -> list[str]:
     """
     Return a deduplicated list of all promptfile names declared across every
     model in the DAG (via ``{{ config(promptfiles="...") }}``), in first-seen order.
+
+    Names that refer to an upstream model's files are left out: those are
+    produced by the run, not supplied to it.
     """
     seen: dict[str, None] = {}
     for model in models.values():
         for v in model.promptfiles_used:
+            upstream = split_model_path(v, models)
+            if upstream is not None and upstream[0] != model.name:
+                continue
             seen[v] = None
     return list(seen)

@@ -179,7 +179,22 @@ def execute_tests(
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
         )
 
+    from pbt.files import FileOutputError, blob_store_for, decode_output
     from pbt.promptparams import parse_promptparams_row
+
+    # Stored outputs of file-producing models decode to File/Dir/Output
+    # objects, so ref() in a test renders their handle, not the raw envelope.
+    blobs = blob_store_for(storage_backend)
+
+    def _decoded(raw):
+        if not isinstance(raw, str):
+            return raw
+        try:
+            return decode_output(raw, blobs)
+        except FileOutputError:
+            return raw
+
+    model_outputs = {name: _decoded(raw) for name, raw in model_outputs.items()}
 
     # Build the list of (test_name_display, source, promptdata, promptfiles) to run.
     # Without rows: one entry per test, no params.

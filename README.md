@@ -149,7 +149,11 @@ pbt serve
 
 ### `pbt docs`
 
-Generate a self-contained HTML report of all previous runs with expandable model details and a DAG diagram.
+Generate an HTML report of all previous runs with expandable model details and a DAG diagram.
+Files the models produced get a gallery for the latest run, plus a preview and
+download link next to each model's output. They are copied into
+`.pbt/docs/files/` beside the report, so the folder can be opened, zipped or
+served as it is. `pbt serve` serves them too.
 
 ```bash
 pbt docs                        # writes to .pbt/docs/index.html
@@ -348,6 +352,106 @@ def llm_call(prompt: str, files: list[str] | None = None, config: dict | None = 
 ```
 
 Both parameters are optional and independent — declare either, both, or neither.
+
+---
+
+## Models that produce files (`pbt.File`, `pbt.Dir`, `pbt.Output`)
+
+A model can output images, zips, PDFs or whole folders, with or without text,
+and pass them to the models downstream of it. `llm_call` returns a file object
+instead of a string, or a dict/list with file objects inside:
+
+```python
+# client.py
+import pbt
+
+def llm_call(prompt, files=None, config=None):
+    ...
+    return pbt.File(png_bytes, name="logo.png")                        # one file
+    return pbt.Dir("build/site")                                       # a folder
+    return pbt.Output("Here's the logo.", files=[pbt.File(png_bytes, name="logo.png")])  # text + files
+    return {"caption": text, "image": pbt.File(png_bytes, name="logo.png")}              # anywhere in JSON
+```
+
+Downstream models use it in three ways:
+
+```jinja
+{# 1. As text: a one-line handle with the name, type, size and hash #}
+Describe {{ ref('logo') }}          {# → [file: logo.png (image/png, 48.2 KB, sha256:ab12cd34ef56)] #}
+{{ ref('logo_with_caption').caption }}
+
+{# 2. Attached: the bytes go to llm_call(files=[...]) #}
+{{ config(promptfiles=["logo"]) }}                 {# every file that model produced #}
+{{ config(promptfiles=["logo_with_caption.image"]) }}   {# just one of them #}
+```
+
+Naming a model in `promptfiles` makes it a dependency, just like `ref()`. Any
+other name is still a run-level `--promptfile`. Attached files are binary file
+objects with `.name`, so the same `llm_call` code handles both kinds.
+
+```python
+# 3. In Python models: the objects themselves
+{{ config(model_type="execute_python") }}
+logo = ref('logo')
+data = logo.read_bytes()          # also: logo.text, logo.open(), logo.path (a read-only copy on disk)
+(out_dir / "thumb.png").write_bytes(make_thumbnail(data))   # files written to out_dir become the output
+print("made a thumbnail")                                    # ...and printed text sits alongside them
+```
+
+`File`, `Dir` and `Output` are available in Python models without an import.
+A `loop` model can iterate over a list of files, or over the files of a `Dir`;
+`{{ config(promptfiles=[...]) }}` then attaches each item's own file.
+
+**Caching.** File bytes are stored once, by sha256, in the `blobs` table of
+`.pbt/pbt.db`. The model's output keeps a small manifest of those hashes, so the
+prompt cache serves files exactly as it serves text. A downstream model's cache
+key covers the hashes of any files attached to it, so changed bytes mean a fresh
+call. If a cached file's bytes have gone missing, pbt recomputes it.
+
+**Where the files end up.** `pbt run` writes each model's files to
+`outputs/<model>/`, next to its text in `outputs/<model>.md`. `pbt docs` shows
+them in a gallery. `pbt show-result <model> --save-files DIR` exports any past
+run's files. `pbt.run()` returns the `File`/`Dir`/`Output` objects.
+
+**Keeping bytes elsewhere (e.g. S3).** A blob store is three methods (`put`,
+`get` and `exists`), keyed by sha256. Define `blob_store` in `client.py`, as an
+instance or a zero-argument function, and every command uses it:
+
+```python
+# client.py
+import boto3
+
+class S3BlobStore:
+    def __init__(self, bucket, prefix="pbt/blobs/"):
+        self.s3, self.bucket, self.prefix = boto3.client("s3"), bucket, prefix
+    def put(self, sha256, data):
+        if not self.exists(sha256):
+            self.s3.put_object(Bucket=self.bucket, Key=self.prefix + sha256, Body=data)
+    def get(self, sha256):
+        try:
+            return self.s3.get_object(Bucket=self.bucket, Key=self.prefix + sha256)["Body"].read()
+        except self.s3.exceptions.NoSuchKey:
+            raise KeyError(sha256) from None
+    def exists(self, sha256):
+        try:
+            self.s3.head_object(Bucket=self.bucket, Key=self.prefix + sha256)
+            return True
+        except Exception:
+            return False
+
+blob_store = S3BlobStore("my-bucket")
+```
+
+From Python, pass `pbt.run(..., blob_store=S3BlobStore("my-bucket"))` or
+`SQLiteStorageBackend(blob_store=...)`.
+
+**Safety.** Model output is never trusted to name a file. A stored file
+reference is an object tagged `"$pbt"`, and only pbt writes those tags: the
+same key in JSON a model returns is escaped, so it reads back as plain data.
+Every reference is still checked when it is read back (hash format, file name,
+relative paths, MIME type, the folder's tree hash), and every read checks the
+bytes against their hash. `pbt.Dir` refuses symlinks, and file names can never
+contain a path.
 
 ---
 

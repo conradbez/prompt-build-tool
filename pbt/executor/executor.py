@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
 from pbt.executor.parser_model import _RenderState
 from pbt.executor.run_context import RunContext, parse_json_output
+from pbt.files import BlobStore, Dir, contains_files, decode_output, encode_output, persist_files
 from pbt.model_spec import ModelSpec
 from pbt.model_types import ModelCall, ModelKind, get_model_kind
 from pbt.storage.base import StorageBackend
@@ -47,14 +49,27 @@ class ModelRunResult:
     execution_ms: int = 0
     cached: bool = False
     prompt_skipped: bool = False  # True when a skip function fired during rendering
+    #: The output as downstream models see it — a parsed JSON value, or
+    #: File/Dir/Output objects for a model that produced files.  ``llm_output``
+    #: is its stored string form.
+    value: Any = None
+
+
+def _as_items(value: Any) -> list | None:
+    """The items a loop iterates over: a JSON list, or the files of a Dir."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, Dir):
+        return value.files()
+    return None
 
 
 def _resolve_fan_out_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
     """Pick the upstream dependency a fan-out model iterates over."""
     list_deps = {
-        dep: ctx.outputs[dep]
+        dep: _as_items(ctx.outputs.get(dep))
         for dep in spec.depends_on
-        if isinstance(ctx.outputs.get(dep), list)
+        if _as_items(ctx.outputs.get(dep)) is not None
     }
 
     pinned = spec.config.get("loop_over", "")
@@ -84,6 +99,28 @@ def _resolve_fan_out_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
     return next(iter(list_deps.items()))
 
 
+#: A template whose whole body is one ref(), optionally after its config().
+_SOLE_REF = re.compile(
+    r"^\s*(?:\{\{\s*config\(.*?\)\s*\}\}\s*)?"
+    r"\{\{\s*ref\(\s*(['\"])(?P<name>[^'\"]+)\1\s*\)\s*\}\}\s*$",
+    re.DOTALL,
+)
+
+
+def _passthrough_files(spec: ModelSpec, ctx: RunContext) -> Any:
+    """The upstream value a pure ``{{ ref('x') }}`` template forwards, if it has files.
+
+    Rendering would turn files into their text handle.  A template that is
+    nothing but one ref() — quality_check's terminal node, or a user's alias
+    model — forwards the files themselves instead.
+    """
+    match = _SOLE_REF.match(spec.source)
+    if match is None:
+        return None
+    value = ctx.outputs.get(match.group("name"))
+    return value if contains_files(value) else None
+
+
 async def _produce_one(
     kind: ModelKind,
     spec: ModelSpec,
@@ -99,7 +136,8 @@ async def _produce_one(
     touches the cache, the clock or the skip state itself.
     """
     if kind.exec_fn is None:
-        return rendered
+        passthrough = _passthrough_files(spec, ctx)
+        return rendered if passthrough is None else passthrough
 
     call = ModelCall(
         spec=spec,
@@ -131,7 +169,7 @@ async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
 
     async def one(rendered: str, state: _RenderState) -> Any:
         value = await _produce_one(kind, spec, ctx, rendered, state)
-        if state.skip_value is None and spec.output_format == "json":
+        if state.skip_value is None and isinstance(value, str) and spec.output_format == "json":
             return parse_json_output(value)
         return value
 
@@ -149,6 +187,8 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
     """
     kind = get_model_kind(spec.model_type) or get_model_kind("")
     value = await _produce(kind, spec, ctx)
+    # Files a kind built itself, outside the cached call, still need storing.
+    persist_files(value, ctx.blobs)
 
     # --- skip propagation, from the model's own (primary) render -----------
     state = ctx.primary_state(spec.name)
@@ -165,7 +205,7 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         value = parse_json_output(value)
 
     ctx.outputs[spec.name] = value
-    output = value if isinstance(value, str) else json.dumps(value)
+    output = encode_output(value)
     rendered = ctx.prompt_rendered(spec.name)
 
     # --- persist ------------------------------------------------------------
@@ -190,13 +230,23 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
     if not skipped and ctx.validators:
         from pbt.validator import run_validator
 
-        validated = run_validator(spec.name, ctx.validators, rendered, output)
-        if isinstance(validated, (dict, list)):
+        # A validator of a file-producing model gets the objects, not the
+        # encoded string, so it can inspect the files themselves.
+        given = value if contains_files(value) else output
+        validated = run_validator(spec.name, ctx.validators, rendered, given)
+        if contains_files(given) and (validated is given or validated is True):
+            pass  # accepted as is
+        elif contains_files(validated):
+            persist_files(validated, ctx.blobs)
+            ctx.outputs[spec.name] = validated
+            output = encode_output(validated)
+        elif isinstance(validated, (dict, list)):
             ctx.outputs[spec.name] = validated
             output = json.dumps(validated)
         else:
-            output = validated if isinstance(validated, str) else str(validated)
-            ctx.outputs[spec.name] = output
+            text = validated if isinstance(validated, str) else str(validated)
+            ctx.outputs[spec.name] = text
+            output = encode_output(text)
 
     if output != cached_value:
         # Record the model's actual output next to the cached raw response, so
@@ -213,6 +263,7 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         execution_ms=ctx.elapsed_ms(spec.name),
         cached=ctx.served_from_cache(spec.name),
         prompt_skipped=skipped,
+        value=ctx.outputs[spec.name],
     )
 
 
@@ -229,6 +280,7 @@ async def execute_run(
     promptfiles: dict[str, PromptFile] | None = None,
     validators: dict | None = None,
     global_instruction: str | None = None,
+    blob_store: BlobStore | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in dependency order.
@@ -255,6 +307,9 @@ async def execute_run(
         analogue of dbt's query-comment.  Individual models opt out with
         ``{{ config(global_instruction=False) }}``, and model kinds whose
         rendered template is not natural language never receive it.
+    blob_store:
+        Where file outputs' bytes are kept.  Defaults to the storage
+        backend's own blob store (see :mod:`pbt.files`).
 
     Returns
     -------
@@ -275,8 +330,10 @@ async def execute_run(
         promptfiles=promptfiles,
         validators=validators,
         global_instruction=global_instruction,
-        outputs=dict(preloaded_outputs or {}),
+        blobs=blob_store,
     )
+    for name, raw in (preloaded_outputs or {}).items():
+        ctx.outputs[name] = decode_output(raw, ctx.blobs) if isinstance(raw, str) else raw
 
     # Register all models as 'pending' up front (mirrors dbt's deferred state).
     for spec in ordered_models:

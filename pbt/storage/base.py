@@ -6,6 +6,11 @@ cache serves.  When a validator transforms that output, the executor also calls
 what the pipeline actually passed downstream rather than the raw text.  That
 method is optional: a backend that does not define it simply keeps the raw
 output, and the executor skips the call.
+
+``blob_store`` is optional too.  A backend that defines it returns the
+:class:`~pbt.files.BlobStore` holding the bytes of file outputs; one that does
+not gets an in-memory store per run, so files work within a run but a cached
+file output is recomputed next time.
 """
 
 from __future__ import annotations

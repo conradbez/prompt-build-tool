@@ -13,6 +13,7 @@ pbt show-result  Print the stored output for a specific model + run.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,10 +32,11 @@ from pbt.executor.graph import (
     UnknownModelError,
 )
 from pbt.executor.executor import execute_run
-from pbt.llm import resolve_llm_call, try_load_client_module
+from pbt.llm import resolve_blob_store, resolve_llm_call, try_load_client_module
 from pbt.rag import resolve_rag_call
 from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
+from pbt.files import FileOutputError, contains_files, decode_output, display_text, export_files, iter_files
 from pbt.validator import load_validators
 from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
 from pbt.cli.type_hints import register_command as _register_type_hints, generate_stubs as _generate_stubs
@@ -47,6 +49,17 @@ from pbt.cli.pretty_print import console, err_console
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
+
+def use_client_blob_store(models_dir: str) -> None:
+    """Point the run database at the blob store client.py declares, if any."""
+    try:
+        store = resolve_blob_store(models_dir)
+    except TypeError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+    if store is not None:
+        db.set_blob_store(store)
+
 
 def init_db_or_exit() -> None:
     """Open the run database, reporting a pre-schema one as advice, not a crash."""
@@ -176,6 +189,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     except FileNotFoundError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
+    use_client_blob_store(models_dir)
     # ------------------------------------------------------------------
     # --select: run chosen models AND their full upstream dependency chain.
     # ------------------------------------------------------------------
@@ -297,14 +311,26 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 
     # Write outputs/ directory — one file per successful model.
     # Extension comes from {{ config(output_extension="html") }}; defaults to "md".
+    # A model that produced files gets them in outputs/<model>/, and its text
+    # part (if any) in the usual outputs/<model>.<ext>.
     outputs_dir = Path("outputs")
     outputs_dir.mkdir(exist_ok=True)
     written: list[str] = []
     for result in all_results:
         if result.status == "success" and result.llm_output:
-            ext = all_models[result.model_name].config.get("output_extension", "md")
-            out_file = outputs_dir / f"{result.model_name}.{ext}"
-            out_file.write_text(result.llm_output, encoding="utf-8")
+            value = result.value
+            if contains_files(value):
+                files_dir = outputs_dir / result.model_name
+                if files_dir.is_dir():
+                    shutil.rmtree(files_dir)  # last run's files for this model
+                export_files(value, files_dir)
+                text = display_text(value)
+            else:
+                text = value if isinstance(value, str) else result.llm_output
+            if text:
+                ext = all_models[result.model_name].config.get("output_extension", "md")
+                out_file = outputs_dir / f"{result.model_name}.{ext}"
+                out_file.write_text(text, encoding="utf-8")
             written.append(result.model_name)
 
     pretty_print.print_run_summary(c, all_results, outputs_dir, written, run_id)
@@ -374,9 +400,14 @@ def show_runs(limit: int) -> None:
     default="output",
     show_default=True,
 )
-def show_result(model_name: str, run_id: str | None, show: str) -> None:
+@click.option("--models-dir", default="models", show_default=True,
+              help="Used to find client.py, for a custom blob store.")
+@click.option("--save-files", "save_files", default=None, metavar="DIR",
+              help="Write the files this model produced into DIR.")
+def show_result(model_name: str, run_id: str | None, show: str, models_dir: str, save_files: str | None) -> None:
     """Print stored output for MODEL_NAME."""
     init_db_or_exit()
+    use_client_blob_store(models_dir)
 
     with db.get_conn() as conn:
         if run_id:
@@ -405,9 +436,31 @@ def show_result(model_name: str, run_id: str | None, show: str) -> None:
         console.rule("[dim]Rendered prompt[/dim]")
         console.print(row["prompt_rendered"] or "")
 
+    stored = row["llm_output_validated"] or row["llm_output"]
+    try:
+        value = decode_output(stored, db.blob_store())
+    except FileOutputError as exc:
+        err_console.print(f"[red]Cannot read stored files:[/red] {exc}")
+        value = stored
+
     if show in ("output", "all"):
         console.rule("[dim]LLM output[/dim]")
-        console.print(row["llm_output"] or "")
+        if contains_files(value):
+            text = display_text(value)
+            if text:
+                console.print(text, markup=False, highlight=False)
+            console.rule("[dim]Files[/dim]")
+            for label, file in iter_files(value):
+                console.print(f"{label}  [dim]{file.mime}, {file.size} bytes, sha256:{file.sha256[:12]}[/dim]")
+        else:
+            console.print(value or "", markup=False, highlight=False)
+
+    if save_files:
+        if not contains_files(value):
+            err_console.print(f"Model '{model_name}' produced no files in this run.")
+            sys.exit(1)
+        for path in export_files(value, save_files):
+            console.print(f"[green]saved[/green] {path}")
 
     if row["error"]:
         console.rule("[red]Error[/red]")
@@ -455,6 +508,7 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
         models = load_models(models_dir)
     except (FileNotFoundError, Exception):
         pass
+    use_client_blob_store(models_dir)
 
     output_path = Path(output)
     generate_docs(
@@ -462,6 +516,7 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
         run_results=run_results,
         models=models,
         output_path=output_path,
+        blob_store=db.blob_store(),
     )
 
     console.print(f"[green]Docs generated:[/green] [bold]{output_path}[/bold]")
@@ -527,6 +582,10 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
         def docs_report():  # noqa: ANN201
             return html_content
 
+        # Files models produced, exported by `pbt docs` beside the report and
+        # linked as files/<sha256>/<name> — relative to /docs-report, so /files.
+        _serve_docs_files(app, docs_path.parent / "files")
+
         docs_url = f"http://{host}:{port}/docs-report"
         console.print(f"[dim]Docs report:[/dim] {docs_url}")
         console.print(f"[dim]Test runner: [/dim] {test_url}")
@@ -548,6 +607,45 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _serve_docs_files(app, files_dir: Path) -> None:
+    """Serve the report's exported files without letting them act as pages.
+
+    Model output is untrusted, and it shares this server's origin.  Images the
+    report previews are served as images; everything else is a download.  A
+    sandboxing CSP covers both, so even an SVG opened directly cannot run
+    script.
+    """
+    import mimetypes
+    import re
+
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    from pbt.docs import PREVIEW_MIMES
+    from pbt.files import safe_name
+
+    @app.get("/files/{sha256}/{name}", include_in_schema=False)
+    def docs_file(sha256: str, name: str):  # noqa: ANN202
+        try:
+            safe_name(name)
+        except FileOutputError:
+            raise HTTPException(status_code=404) from None
+        path = files_dir / sha256 / name
+        if not re.fullmatch(r"[0-9a-f]{64}", sha256) or not path.is_file():
+            raise HTTPException(status_code=404)
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        inline = mime in PREVIEW_MIMES
+        return FileResponse(
+            path,
+            media_type=mime if inline else "application/octet-stream",
+            headers={
+                "Content-Disposition": "inline" if inline else "attachment",
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
 
 def _git_sha() -> str | None:
     try:
