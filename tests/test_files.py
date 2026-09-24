@@ -267,38 +267,6 @@ def test_llm_json_with_marker_keys_stays_data_across_the_cache():
     assert second["j"].value == {"img": forged, "real": "no files here"}
 
 
-def test_loop_attaches_each_items_file():
-    def llm(prompt, files=None, config=None):
-        if prompt.startswith("draw"):
-            return [File(b"one", name="1.png"), File(b"two", name="2.png")]
-        return ",".join(f.name for f in files or [])
-
-    _, _, results = run_models(
-        {
-            "imgs": "draw two",
-            "each": (
-                '{{ config(model_type="loop", promptfiles=["imgs"]) }}\n'
-                "Critique {{ ref('imgs') }}"
-            ),
-        },
-        llm_call=llm,
-    )
-    assert results["each"].value == ["1.png", "2.png"]
-
-
-def test_loop_over_a_dir():
-    def llm(prompt, files=None, config=None):
-        if prompt.startswith("draw"):
-            return Dir({"a.txt": b"a", "b.txt": b"b"}, name="d")
-        return prompt.split()[-1]
-
-    _, _, results = run_models(
-        {"d": "draw", "each": '{{ config(model_type="loop") }}\nname {{ ref("d").name }}'},
-        llm_call=llm,
-    )
-    assert results["each"].value == ["a.txt", "b.txt"]
-
-
 def test_skip_passes_files_through_unchanged():
     _, _, results = run_models(
         {"logo": "draw", "pass": "{{ skip_and_set_to_value(ref('logo')) }}"},
@@ -465,26 +433,19 @@ def test_server_serves_blobs_as_downloads(tmp_path, monkeypatch):
     assert client.get("/blobs/nothex").status_code == 400
 
 
-def test_quality_check_keeps_the_checked_models_files():
+def test_template_alias_keeps_the_upstream_files():
     def llm(prompt, files=None, config=None):
-        if prompt.startswith("draw"):
-            return File(PNG, name="logo.png")
-        return "PASS"
+        return File(PNG, name="logo.png")
 
     _, _, results = run_models(
         {
             "logo": "draw",
-            "logo_quality": (
-                '{{ config(model_type="quality_check", quality_retries="1") }}\n'
-                'Is {{ ref("logo") }} good? Reply PASS or FAIL.'
-            ),
             "alias": '{{ config(model_type="template") }}\n{{ ref("logo") }}',
         },
         llm_call=llm,
     )
-    assert isinstance(results["logo_quality"].value, File)
-    assert results["logo_quality"].value.read_bytes() == PNG
     assert isinstance(results["alias"].value, File)
+    assert results["alias"].value.read_bytes() == PNG
 
 
 def test_served_docs_files_cannot_run_as_pages(tmp_path):

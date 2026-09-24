@@ -55,9 +55,5 @@ class ModelSpec:
             return default
 
     def derive(self, **changes: Any) -> "ModelSpec":
-        """Return a copy of this spec with *changes* applied.
-
-        Used by a kind's :attr:`~pbt.model_types.ModelKind.expand_fn` to build
-        the sub-nodes a single declared model expands into.
-        """
+        """Return a copy of this spec with *changes* applied."""
         return replace(self, **changes)

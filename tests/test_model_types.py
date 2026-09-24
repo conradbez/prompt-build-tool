@@ -43,9 +43,7 @@ def run_models(models: dict[str, str], *, storage=None, llm_call=stub_llm, **kwa
 # ---------------------------------------------------------------------------
 
 def test_builtin_kinds_are_registered():
-    assert known_model_kinds() == {
-        "template", "loop", "execute_python", "quality_check",
-    }
+    assert known_model_kinds() == {"template", "execute_python"}
     # The unnamed default is the plain LLM call.
     assert get_model_kind("") is not None
 
@@ -98,18 +96,6 @@ def test_unknown_model_type_warns_and_falls_back():
     assert models["a"].model_type == ""
 
 
-def test_expansion_must_keep_the_declared_name():
-    pbt.register_model_kind(pbt.ModelKind(
-        "bad_expand_test",
-        expand_fn=lambda spec, all_specs: [
-            spec.derive(name=f"{spec.name}_only", model_type="")
-        ],
-    ))
-
-    with pytest.raises(ValueError, match="without producing a node of that name"):
-        build_models_from_dict({"x": '{{ config(model_type="bad_expand_test") }}\nHi'})
-
-
 # ---------------------------------------------------------------------------
 # Built-in types
 # ---------------------------------------------------------------------------
@@ -130,33 +116,6 @@ def test_template_kind_renders_without_calling_the_llm():
     )
     assert "Got: resp" in results["t"].llm_output
     assert len(calls) == 1  # only 'src' reached the LLM
-
-
-def test_quality_check_expands_and_keeps_the_declared_name():
-    models = build_models_from_dict({
-        "article": "Write an article.",
-        "article_quality": (
-            '{{ config(model_type="quality_check", quality_retries="2") }}\n'
-            'Is {{ ref("article") }} good? Reply PASS or FAIL.'
-        ),
-    })
-    assert set(models) == {
-        "article",
-        "article_quality_1", "article_1",
-        "article_quality_2", "article_2",
-        "article_quality",
-    }
-    # The node downstream models ref() is the terminal pass-through.
-    assert models["article_quality"].depends_on == ["article_2"]
-
-
-def test_loop_fans_out_over_a_json_list():
-    _, _, results = run_models({
-        "items": '{{ config(output_format="json") }}\nList things.',
-        "each": '{{ config(model_type="loop") }}\nDescribe {{ ref("items") }}',
-    })
-    assert json.loads(results["each"].llm_output) == ["resp", "resp"]
-    assert "[loop over 2 items from 'items']" in results["each"].prompt_rendered
 
 
 # ---------------------------------------------------------------------------

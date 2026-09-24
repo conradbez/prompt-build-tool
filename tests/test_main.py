@@ -3,7 +3,7 @@ Main test suite — exercises all model types via the Python API.
 
 Uses models_from_dict so no filesystem is needed.  Each parametrized
 select-test runs just that model (plus its ancestors) to surface
-dependency or expansion bugs model-by-model before testing the whole DAG.
+dependency bugs model-by-model before testing the whole DAG.
 """
 
 from __future__ import annotations
@@ -49,11 +49,8 @@ async def test_full_run_no_errors() -> None:
 
 async def test_full_run_no_unexpected_skips() -> None:
     outputs = await _run()
-    # Only the internal quality-check expansion nodes (topic_quality_1, topic_1)
-    # may be skipped (when quality passes); user-visible models must not be.
-    user_models = set(MODELS.keys())
-    skipped = {k for k, v in outputs.items() if v == pbt.ModelStatus.SKIPPED and k in user_models}
-    assert not skipped, f"User-visible models were skipped: {skipped}"
+    skipped = {k for k, v in outputs.items() if v == pbt.ModelStatus.SKIPPED}
+    assert not skipped, f"Models were skipped: {skipped}"
 
 
 # ---------------------------------------------------------------------------
@@ -75,26 +72,6 @@ async def test_execute_python_uppercases_topic() -> None:
     assert outputs["transform"] == "MOCK RESPONSE"
 
 
-async def test_loop_produces_list_output() -> None:
-    import json
-    outputs = await _run(select=["items_loop"])
-    raw = outputs["items_loop"]
-    assert not isinstance(raw, pbt.ModelError)
-    parsed = json.loads(raw)
-    assert isinstance(parsed, list) and len(parsed) == 2
-
-
-async def test_quality_check_expands_dag() -> None:
-    """topic_quality node must expand: result dict contains the terminal name."""
-    outputs = await _run(select=["topic_quality"])
-    _assert_ok(outputs, "topic_quality")
-    # Expanded intermediate nodes should also be present
-    assert "topic_quality_1" in outputs
-
-
-async def test_quality_check_retries_skip_when_pass() -> None:
-    """When stub always returns PASS, retry nodes should be skipped."""
-    outputs = await _run(select=["topic_quality"])
-    # topic_1 is the retry node — it should be skipped because quality_1 returns PASS
-    if "topic_1" in outputs:
-        assert outputs["topic_1"] == pbt.ModelStatus.SKIPPED or not isinstance(outputs["topic_1"], pbt.ModelError)
+async def test_template_renders_upstream_output() -> None:
+    outputs = await _run(select=["header"])
+    assert outputs["header"].strip() == "# mock response"

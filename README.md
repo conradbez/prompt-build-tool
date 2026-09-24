@@ -399,8 +399,6 @@ print("made a thumbnail")                                    # ...and printed te
 ```
 
 `File`, `Dir` and `Output` are available in Python models without an import.
-A `loop` model can iterate over a list of files, or over the files of a `Dir`;
-`{{ config(promptfiles=[...]) }}` then attaches each item's own file.
 
 **Caching.** File bytes are stored once, by sha256, in the `blobs` table of
 `.pbt/pbt.db`. The model's output keeps a small manifest of those hashes, so the
@@ -473,10 +471,7 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `output_format` | `"json"` parses and validates the output as JSON; defaults to `"text"` |
 | `output_extension` | File extension for `outputs/<model>.<ext>`; defaults to `"md"` |
 | `promptfiles` | Names of files this model receives at runtime — see [Passing files to models](#passing-files-to-models-promptfiles) |
-| `model_type` | `"template"`, `"loop"`, `"execute_python"`, `"quality_check"`, or a type you register; defaults to a plain LLM call |
-| `loop_over` | For loop models: which upstream model to fan out over |
-| `quality_retries` | For quality-check models: retry count (default `2`) |
-| `quality_pass_marker` | Substring marking a passing quality check (default `"PASS"`) |
+| `model_type` | `"template"`, `"execute_python"`, or a type you register; defaults to a plain LLM call |
 | `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
 
 Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
@@ -582,40 +577,6 @@ invalidates itself — the next `pbt run` re-runs affected models without
 
 ---
 
-## Looping over a list (`model_type="loop"`)
-
-Set `model_type="loop"` in `config()` to call the LLM once per item in an upstream list, then combine the results back into a list.
-
-**1. Upstream model returns a JSON list:**
-
-```jinja
-{# models/articles.prompt #}
-{{ config(output_format="json") }}
-Return a JSON array of 3 article titles about {{ promptdata("topic") }}.
-```
-
-**2. Loop model processes each item:**
-
-```jinja
-{# models/summaries.prompt #}
-{{ config(model_type="loop") }}
-
-Write a one-paragraph summary for this article title:
-{{ ref('articles') }}
-```
-
-`ref('articles')` returns the **current item** on each iteration — no new syntax needed.
-
-**Result:** `summaries` outputs a JSON list with one entry per item from `articles`. Downstream models receive the full combined list via `ref('summaries')`.
-
-**Multiple list dependencies** — if more than one upstream model returns a list, specify which to loop over:
-
-```jinja
-{{ config(model_type="loop", loop_over="articles") }}
-```
-
----
-
 ## Template models (`model_type="template"`)
 
 A `template` model renders its Jinja and uses the result as its output, with no
@@ -716,55 +677,6 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 ---
 
-## Quality checks with automatic retries (`model_type="quality_check"`)
-
-Add a quality-check node after any model to automatically retry it until it passes (or a retry limit is reached).
-
-**1. Write the quality check:**
-
-```jinja
-{# models/article_quality.prompt #}
-{{ config(model_type="quality_check", quality_retries="2") }}
-Does this article have a clear introduction, body, and conclusion?
-Reply PASS if yes, FAIL and explain why if not.
-
-Article: {{ ref('article') }}
-```
-
-**2. The upstream model can use the feedback:**
-
-```jinja
-{# models/article.prompt #}
-{% if model.meta.feedback_from_previous_run %}
-A previous attempt was rejected. Feedback: {{ model.meta.feedback_from_previous_run }}
-Rewrite the article addressing that feedback.
-{% else %}
-Write an article about {{ ref('topic') }}.
-{% endif %}
-```
-
-pbt expands `article_quality` into an interleaved retry chain at run time:
-
-```
-article             ← original run
-article_quality_1   ← quality check (contains PASS or FAIL + reason)
-article_1           ← retry (skipped if quality_1 passed)
-article_quality_2   ← quality check on article_1
-article_2           ← retry (skipped if quality_2 passed)
-article_quality     ← terminal pass-through (output of best attempt)
-```
-
-Downstream models depend on `article_quality` as normal — they always receive the best passing output.
-
-**Config options:**
-
-| Option | Default | Description |
-|---|---|---|
-| `quality_retries` | `"2"` | Number of retry attempts |
-| `quality_pass_marker` | `"PASS"` | Substring to detect in quality check output to mark success |
-
----
-
 ## How to dynamically skip a model
 
 Use `{{ skip_and_set_to_value("value") }}` to skip the LLM call during Jinja rendering and provide the output directly:
@@ -784,9 +696,9 @@ The model is recorded as a successful run, downstream templates can detect it wi
 ## Writing your own model kind (`model_type=`)
 
 Every `.prompt` file is run by a *model kind*. Leave `model_type` unset and pbt
-sends the rendered prompt to your LLM; set it to `loop`, `template`,
-`execute_python` or `quality_check` and pbt runs it differently. If none of
-those do what you need, you can add your own.
+sends the rendered prompt to your LLM; set it to `template` or
+`execute_python` and pbt runs it differently. If neither does what you need,
+you can add your own.
 
 A kind is a function and a registration, both in `client.py`:
 
@@ -861,15 +773,12 @@ pbt.register_model_kind(pbt.ModelKind(
 |---|---|---|
 | `name` | — | The `config(model_type=...)` value |
 | `exec_fn` | `None` | `async (rendered, call) -> Any`. `None` means the rendered text *is* the output |
-| `fan_out` | `False` | Render once per item of an upstream JSON list, run `exec_fn` on each concurrently |
-| `expand_fn` | `None` | `(spec, all_specs) -> list[ModelSpec] \| None` — rewrite this node into several |
 | `config_keys` | `frozenset()` | The `config()` keys this kind reads |
 | `accepts_global_instruction` | `True` | `False` when the rendered text is not a prompt for a model to answer |
 
-The five built-ins are nothing but this record. `template` is
-`ModelKind("template", exec_fn=None, accepts_global_instruction=False)`; `loop`
-is the plain LLM call with `fan_out=True`; `quality_check` is an `expand_fn` and
-nothing else.
+The built-ins are nothing but this record. The default kind's `exec_fn` is
+just `await call.llm(rendered)`; `template` is
+`ModelKind("template", exec_fn=None, accepts_global_instruction=False)`.
 
 ### Optional extras
 
@@ -901,11 +810,6 @@ same cache your LLM calls use, so it does not re-run when nothing changed:
 ```python
 return await call.compute(rendered, compute=lambda: scrape(rendered))
 ```
-
-**Fan out over a list.** Set `fan_out=True` and pbt finds the upstream
-dependency whose output is a JSON list, renders your template once per item
-(with `ref()` on that model yielding the current item), runs your `exec_fn` on
-each concurrently, and collects the results into a list. That is all `loop` is.
 
 **Produce or read files.** Upstream files arrive in `call.outputs` as `pbt.File`,
 `pbt.Dir` and `pbt.Output` objects, and returning one makes your model output
@@ -962,11 +866,6 @@ them.
 for a model to answer — Python source, or a value passed straight through — set
 `accepts_global_instruction=False` so your
 [global instruction](#global-instructions-globalprompt) is not prepended to it.
-
-**Turn one model into several.** Give the kind an `expand_fn(spec, all_specs)`
-to replace your node with a chain of nodes before the run starts — this is how
-`quality_check` builds its check-and-retry loop. Return a list of models, one of
-which must keep the original name so `ref()` still finds it.
 
 ### Where to register it
 

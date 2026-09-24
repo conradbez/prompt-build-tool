@@ -163,24 +163,6 @@ def test_config_key_does_not_warn() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Loop models
-# ---------------------------------------------------------------------------
-
-async def test_loop_model_gets_it_per_item() -> None:
-    models = {
-        "items": '{{ config(output_format="json") }}\nList things.',
-        "items_loop": '{{ config(model_type="loop") }}\nDescribe: {{ ref("items") }}',
-    }
-    llm = RecordingLLM()
-    await _run(models, llm, global_instruction="GLOBAL.")
-    loop_prompts = [
-        p for p in llm.prompts
-        if p.startswith("GLOBAL.\n\n") and "Describe:" in p
-    ]
-    assert len(loop_prompts) == 2, llm.prompts
-
-
-# ---------------------------------------------------------------------------
 # Caching
 # ---------------------------------------------------------------------------
 

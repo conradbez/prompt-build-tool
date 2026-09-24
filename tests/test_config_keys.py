@@ -1,19 +1,14 @@
 """
 config() key validation — unrecognised keys warn instead of being swallowed.
-
-Also covers loop_over, which pins the dependency a loop model fans out over.
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
 import pbt
 from pbt.executor.graph import build_models_from_dict, load_models
 from pbt.executor.parser_initial import _extra_config_keys
-from pbt.storage import MemoryStorageBackend
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +23,7 @@ def test_unknown_key_warns():
 def test_known_keys_do_not_warn(recwarn):
     build_models_from_dict({
         "a": '{{ config(output_format="json", output_extension="html") }}\nHi',
-        "b": '{{ config(model_type="loop", loop_over="a") }}\n{{ ref("a") }}',
+        "b": '{{ config(model_type="template", global_instruction=False) }}\n{{ ref("a") }}',
     })
     assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
 
@@ -84,82 +79,10 @@ def test_unknown_model_type_warns():
     assert models["a"].model_type == ""  # fell back to the plain handler
 
 
-@pytest.mark.parametrize("model_type", ["loop", "execute_python", "quality_check"])
+@pytest.mark.parametrize("model_type", ["template", "execute_python"])
 def test_known_model_types_do_not_warn(model_type, recwarn):
     build_models_from_dict({
         "src": '{{ config(output_format="json") }}\nList things.',
         "a": f'{{{{ config(model_type="{model_type}") }}}}\n{{{{ ref("src") }}}}',
     })
     assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
-
-
-# ---------------------------------------------------------------------------
-# loop_over
-# ---------------------------------------------------------------------------
-
-LOOP_MODELS = {
-    "one": '{{ config(output_format="json") }}\nList A.',
-    "two": '{{ config(output_format="json") }}\nList B.',
-    "fan": (
-        '{{ config(model_type="loop", loop_over="two") }}\n'
-        'Describe {{ ref("one") }} and {{ ref("two") }}'
-    ),
-}
-
-
-def _llm(prompt: str, config: dict | None = None) -> str:
-    if (config or {}).get("output_format") == "json":
-        return json.dumps(["x", "y", "z"])
-    return "described"
-
-
-async def _run(models: dict, select: list[str] | None = None) -> dict:
-    return await pbt.async_run(
-        models_from_dict=models,
-        select=select,
-        llm_call=_llm,
-        verbose=False,
-        storage_backend=MemoryStorageBackend(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_loop_over_disambiguates_multiple_list_deps():
-    """Without loop_over this DAG is ambiguous and raises."""
-    outputs = await _run(LOOP_MODELS)
-    assert not isinstance(outputs["fan"], pbt.ModelError), outputs["fan"]
-    # One call per item in 'two' (3 items), not per item in 'one'.
-    assert json.loads(outputs["fan"]) == ["described", "described", "described"]
-
-
-@pytest.mark.asyncio
-async def test_ambiguous_loop_without_loop_over_errors():
-    models = {**LOOP_MODELS, "fan": '{{ config(model_type="loop") }}\n{{ ref("one") }}{{ ref("two") }}'}
-    outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
-    assert "loop_over" in str(outputs["fan"])
-
-
-@pytest.mark.asyncio
-async def test_loop_over_non_dependency_errors():
-    models = {
-        **LOOP_MODELS,
-        "fan": '{{ config(model_type="loop", loop_over="nope") }}\n{{ ref("one") }}{{ ref("two") }}',
-    }
-    outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
-    assert "not a dependency" in str(outputs["fan"])
-
-
-@pytest.mark.asyncio
-async def test_loop_over_non_list_dependency_errors():
-    models = {
-        "text": "Just prose.",
-        "fan": (
-            '{{ config(model_type="loop", loop_over="text") }}\n'
-            'Describe {{ ref("text") }}'
-        ),
-    }
-    outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
-    assert "does not return a JSON list" in str(outputs["fan"])

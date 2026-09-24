@@ -56,7 +56,7 @@ Three things happen in that diff:
 | `spec.config` / `spec.name` | `call.spec.config` / `call.spec.name` |
 | `ctx.outputs` | `call.outputs` |
 | `accepts_global_instruction = False` (class attribute) | `accepts_global_instruction=False` (kind field) |
-| `def expand(self, spec, all_specs)` | `expand_fn=(spec, all_specs) -> …` (kind field) |
+| `def expand(self, spec, all_specs)` | *(removed — kinds can no longer rewrite the DAG)* |
 | `pbt.get_model_type` / `pbt.known_model_types` | `pbt.get_model_kind` / `pbt.known_model_kinds` |
 | `pbt.executor.builtin_types` | `pbt.executor.builtin_kinds` |
 | `pbt.executor.model_constructs` (`BaseModelHandler`, …) | *(deleted — it aliased the pre-registry classes)* |
@@ -72,24 +72,21 @@ pbt.register_model_kind(pbt.ModelKind("passthrough", exec_fn=None))
 
 That is all the built-in `template` kind is.
 
-**A type that fanned out over a list** no longer writes its own
-`asyncio.gather`. Set `fan_out=True` and the executor resolves the upstream JSON
-list, renders once per item, runs your `exec_fn` on each concurrently, and
-collects the results in order:
+## Removed after 0.4
 
-```python
-pbt.register_model_kind(pbt.ModelKind("per_item", exec_fn=my_exec, fan_out=True))
-```
-
-That is all the built-in `loop` kind is.
-
-**An `expand`-only type** (a DAG rewrite with no execution of its own) is now a
-kind with just an `expand_fn` and no `exec_fn` to write.
+The `loop` and `quality_check` built-in kinds are gone, along with the
+`ModelKind.fan_out` and `ModelKind.expand_fn` hooks that existed only to support
+them, the `loop_over` / `quality_retries` / `quality_pass_marker` config keys,
+and `model.meta` in templates. A `.prompt` file still using
+`model_type="loop"` or `"quality_check"` now warns about an unknown
+`model_type` and runs as a plain LLM call. A kind that needs one call per item
+can loop inside its own `exec_fn` over `call.outputs`.
 
 ## What did not change in 0.4
 
-- `.prompt` files, including the `model_type=` config key and every built-in
-  name (`template`, `loop`, `execute_python`, `quality_check`).
+- `.prompt` files, including the `model_type=` config key and the built-in
+  names of the time (`template`, `execute_python`, and the since-removed
+  `loop` and `quality_check`).
 - Stored runs. `.pbt/pbt.db` and the prompt cache carry over — a 0.3 cache still
   serves 0.4 runs, because the cache key formula is unchanged.
 - Where you register: `client.py`, or anywhere that runs before models are read.

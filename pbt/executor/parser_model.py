@@ -7,7 +7,7 @@ injecting upstream outputs via ref() and evaluating skip logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from jinja2 import Environment, StrictUndefined, meta
@@ -15,27 +15,10 @@ from jinja2 import Environment, StrictUndefined, meta
 from pbt.files import contains_files
 
 
-class _Meta:
-    """Open namespace for template-settable model metadata.
-
-    Attributes are set dynamically (e.g. ``feedback_from_previous_run`` in
-    quality retry nodes).  Any unset attribute returns ``None`` so
-    ``{% if model.meta.feedback_from_previous_run %}`` is always safe.
-    """
-    def __getattr__(self, name: str):
-        return None
-
-    def _set(self, **kwargs) -> str:
-        for k, v in kwargs.items():
-            object.__setattr__(self, k, v)
-        return ""
-
-
 @dataclass
 class _ModelContext:
     """Metadata about the current model, available as ``{{ model }}`` in templates."""
     name: str = ""
-    meta: _Meta = field(default_factory=_Meta)
 
 
 @dataclass
@@ -48,10 +31,6 @@ class _RenderState:
     """
     skip_value: Any = None
     skip_downstream: bool = False
-
-    #: The ref() overlay this render used — a loop item — so promptfiles
-    #: naming the looped model attach that item's files.
-    extra_outputs: dict | None = None
 
 
 def render_prompt(

@@ -24,10 +24,7 @@ or, equivalently, with the decorator::
         ...
 
 There is no base class to subclass and no instance to construct: a kind holds
-no per-model state, so it is data.  The two things it may *not* express as a
-plain exec_fn get their own fields — ``fan_out`` (one node, many prompts) and
-``expand_fn`` (one node, many nodes) — because both are handled by code outside
-execution.
+no per-model state, so it is data.
 
 Registering also declares the ``config()`` keys the kind consumes, so they stop
 triggering :class:`~pbt.executor.parser_initial.UnknownConfigKeyWarning` — there
@@ -79,9 +76,6 @@ class ModelCall:
 #: ``async def exec_fn(rendered: str, call: ModelCall) -> Any``
 ExecFn = Callable[[str, ModelCall], Any]
 
-#: ``def expand_fn(spec, all_specs) -> list[ModelSpec] | None``
-ExpandFn = Callable[["ModelSpec", "dict[str, ModelSpec]"], "list[ModelSpec] | None"]
-
 
 @dataclass(frozen=True)
 class ModelKind:
@@ -93,18 +87,6 @@ class ModelKind:
     #: Produces the output from the rendered prompt.  ``None`` means the
     #: rendered text *is* the output — no LLM call, no execution.
     exec_fn: ExecFn | None = None
-
-    #: One node, many prompts: the executor resolves the upstream JSON list,
-    #: renders once per item, runs ``exec_fn`` on each concurrently, and
-    #: collects the results into a list in input order.
-    fan_out: bool = False
-
-    #: One node, many nodes: rewrite this model at DAG-build time.  Called once
-    #: per model right after parsing, before the DAG exists.  Returns the specs
-    #: that replace it — exactly one of which must keep the declared name, so
-    #: downstream ``ref()`` calls still resolve — or None to leave it alone.
-    #: ``all_specs`` holds the models parsed so far and is read-only.
-    expand_fn: ExpandFn | None = None
 
     #: config() keys this kind consumes, beyond the ones pbt always knows.
     config_keys: frozenset[str] = field(default_factory=frozenset)
@@ -135,8 +117,6 @@ def register_model_kind(kind: ModelKind) -> ModelKind:
 def model_kind(
     name: str,
     *,
-    fan_out: bool = False,
-    expand_fn: ExpandFn | None = None,
     config_keys: "frozenset[str] | set[str] | None" = None,
     accepts_global_instruction: bool = True,
 ):
@@ -155,8 +135,6 @@ def model_kind(
         register_model_kind(ModelKind(
             name=name,
             exec_fn=fn,
-            fan_out=fan_out,
-            expand_fn=expand_fn,
             config_keys=frozenset(config_keys or ()),
             accepts_global_instruction=accepts_global_instruction,
         ))

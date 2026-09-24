@@ -1,5 +1,0 @@
-Does the following JSON summaries object contain at least 3 key points in the first summary entry?
-
-{{ ref('summaries') }}
-
-Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.

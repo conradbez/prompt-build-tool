@@ -1,3 +1,0 @@
-{{ config(model_type="loop") }}
-
-Describe this fruit in exactly one sentence: {{ ref("list_items") }}

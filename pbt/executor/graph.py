@@ -6,7 +6,7 @@ dependencies, and validates the graph (cycle detection, unknown refs).
 
 Parsing produces plain :class:`~pbt.model_spec.ModelSpec` data.  The kind that
 will run a model is looked up by name from :mod:`pbt.model_types` — the graph
-knows only that the name is registered, and whether it rewrites its own node.
+knows only that the name is registered.
 """
 
 from __future__ import annotations
@@ -84,36 +84,6 @@ def build_spec(name: str, source: str, path: Path | None = None) -> ModelSpec:
     )
 
 
-def _add_spec(specs: dict[str, ModelSpec], spec: ModelSpec) -> None:
-    """Add *spec* to *specs*, letting its model kind expand it into more nodes.
-
-    Expansion happens here, before the DAG is built, so the rest of pbt only
-    ever sees ordinary nodes.  A kind that expands must return exactly one node
-    keeping the declared name, so downstream ``ref()`` calls still resolve.
-    """
-    kind = get_model_kind(spec.model_type)
-    expand_fn = kind.expand_fn if kind is not None else None
-    replacements = expand_fn(spec, specs) if expand_fn is not None else None
-
-    if replacements is None:
-        specs[spec.name] = spec
-        return
-
-    if not any(node.name == spec.name for node in replacements):
-        raise ValueError(
-            f"Model kind '{spec.model_type}' expanded '{spec.name}' without "
-            f"producing a node of that name, so downstream ref('{spec.name}') "
-            "calls would break."
-        )
-    for node in replacements:
-        if node.name != spec.name and node.name in specs:
-            raise ValueError(
-                f"Expanding '{spec.name}' produced node '{node.name}' which "
-                "conflicts with an existing model name."
-            )
-        specs[node.name] = node
-
-
 def _link_promptfile_deps(specs: dict[str, ModelSpec]) -> dict[str, ModelSpec]:
     """Make each model depend on the upstream models its promptfiles name.
 
@@ -173,7 +143,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, ModelSpec]:
                 "Model names must be unique across all subdirectories."
             )
         source = prompt_file.read_text(encoding="utf-8")
-        _add_spec(specs, build_spec(name, source, prompt_file))
+        specs[name] = build_spec(name, source, prompt_file)
 
     if not specs:
         raise FileNotFoundError(
@@ -185,9 +155,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, ModelSpec]:
 
 def build_models_from_dict(models: dict[str, str]) -> dict[str, ModelSpec]:
     """Build a models dict from {name: template_source} without the filesystem."""
-    specs: dict[str, ModelSpec] = {}
-    for name, source in models.items():
-        _add_spec(specs, build_spec(name, source))
+    specs = {name: build_spec(name, source) for name, source in models.items()}
     return _link_promptfile_deps(specs)
 
 

@@ -105,18 +105,17 @@ def _files_hash(model_files: list | None) -> str:
 class _ModelAccounting:
     """Per-model tallies the executor turns into a ModelRunResult."""
 
-    rendered: list[str] = field(default_factory=list)
-    note: str = ""
+    rendered: str = ""
+    render_state: _RenderState | None = None
     elapsed_ms: int = 0
     calls: int = 0
     cache_hits: int = 0
-    primary_state: _RenderState | None = None
 
     #: What ctx.cached() actually computed (or served) for this model — the raw
     #: LLM response, before any post-processing the strategy applies to it.
     #: This, not the strategy's return value, is what belongs under the cache
-    #: key. None when the model made no calls, or more than one (a fan-out),
-    #: where there is no single artifact to attribute.
+    #: key. None when the model made no calls, or more than one, where there is
+    #: no single artifact to attribute.
     cache_artifact: str | None = None
 
 
@@ -161,37 +160,23 @@ class RunContext:
 
     # -- rendering ----------------------------------------------------------
 
-    def render(
-        self,
-        spec: ModelSpec,
-        extra_outputs: dict | None = None,
-        primary: bool = True,
-    ) -> tuple[str, _RenderState]:
+    def render(self, spec: ModelSpec) -> tuple[str, _RenderState]:
         """Render *spec*'s template and record it for the run report.
 
-        *extra_outputs* overlays the outputs used to resolve ``ref()`` — a loop
-        uses it to make ``ref('items')`` yield the current item.
-
-        *primary* marks the render whose skip functions govern the model as a
-        whole.  Per-item renders inside a fan-out pass ``primary=False``, so one
-        skipped item does not mark the whole model skipped.  Skip propagation
-        itself is applied by the executor, from the primary state.
+        Skip propagation is applied by the executor, from the recorded state.
         """
-        outputs = {**self.outputs, **extra_outputs} if extra_outputs else self.outputs
         rendered, state = render_prompt(
             spec.source,
-            outputs,
+            self.outputs,
             promptdata=self.promptdata,
             rag_call=self.rag_call,
             prompt_skipped_models=self.skipped,
             model_name=spec.name,
             global_instruction=self.global_instruction_for(spec),
         )
-        state.extra_outputs = extra_outputs
         acct = self._acct(spec.name)
-        acct.rendered.append(rendered)
-        if primary:
-            acct.primary_state = state
+        acct.rendered = rendered
+        acct.render_state = state
         return rendered, state
 
     def global_instruction_for(self, spec: ModelSpec) -> str | None:
@@ -212,10 +197,6 @@ class RunContext:
         if opt_out in _OPT_OUT_VALUES:
             return None
         return self.global_instruction
-
-    def note(self, spec: ModelSpec, text: str) -> None:
-        """Set a one-line header shown above a multi-prompt model's rendered text."""
-        self._acct(spec.name).note = text
 
     # -- the LLM call -------------------------------------------------------
 
@@ -257,7 +238,7 @@ class RunContext:
             return state.skip_value
 
         acct = self._acct(spec.name)
-        key = self.cache_key(spec, rendered, self.files_for(spec, state))
+        key = self.cache_key(spec, rendered, self.files_for(spec))
 
         hit = self.storage.get_cached_llm_output(key)
         if hit is not None:
@@ -297,19 +278,17 @@ class RunContext:
 
         Optional ``files`` and ``config`` parameters are passed only when the
         backend's signature declares them, so a two-line ``llm_call`` stays
-        valid.  A synchronous backend runs in a worker thread, which is what
-        lets a fan-out model issue its calls concurrently.
+        valid.  A synchronous backend runs in a worker thread, so it does not
+        block the event loop.
         """
         return await self.cached(
-            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec, state)
+            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec)
         )
 
-    async def _invoke_llm(
-        self, rendered: str, spec: ModelSpec, state: _RenderState | None = None
-    ) -> str:
+    async def _invoke_llm(self, rendered: str, spec: ModelSpec) -> str:
         kwargs: dict = {}
         params = inspect.signature(self.llm_call).parameters
-        files = self.files_for(spec, state)
+        files = self.files_for(spec)
         if files and "files" in params:
             kwargs["files"] = files
         if "config" in params:
@@ -326,7 +305,7 @@ class RunContext:
             output = await output
         return output
 
-    def files_for(self, spec: ModelSpec, state: _RenderState | None = None) -> list | None:
+    def files_for(self, spec: ModelSpec) -> list | None:
         """Open and return the promptfiles *spec* declares, or None.
 
         A name is either a run-level promptfile (``--promptfile name=path``) or
@@ -334,27 +313,22 @@ class RunContext:
         ``"logo.image"`` just the one under that key.  Upstream models win when
         a name could be both.
 
-        Opened once per model and reused, so every call for a fan-out model
-        shares one set of handles — except when *state* rendered a loop item,
-        whose ``ref()`` overlay may pick different upstream files per item.
+        Opened once per model and reused, so every call a model makes shares
+        one set of handles.
         """
-        overlay = getattr(state, "extra_outputs", None)
-        if overlay is None and spec.name in self._files:
-            return self._files[spec.name]
+        if spec.name not in self._files:
+            self._files[spec.name] = (
+                self._open_files(spec) if spec.promptfiles_used else None
+            )
+        return self._files[spec.name]
 
-        opened = self._open_files(spec, overlay) if spec.promptfiles_used else None
-        if overlay is None:
-            self._files[spec.name] = opened
-        return opened
-
-    def _open_files(self, spec: ModelSpec, overlay: dict | None) -> list | None:
-        outputs = {**self.outputs, **overlay} if overlay else self.outputs
+    def _open_files(self, spec: ModelSpec) -> list | None:
         opened: list = []
         for name in spec.promptfiles_used:
-            upstream = split_model_path(name, outputs)
+            upstream = split_model_path(name, self.outputs)
             if upstream is not None and upstream[0] != spec.name:
                 model, path = upstream
-                value = select_path(outputs[model], path, name)
+                value = select_path(self.outputs[model], path, name)
                 found = [file for _, file in iter_files(value)]
                 if not found:
                     raise ValueError(
@@ -384,18 +358,12 @@ class RunContext:
     def _acct(self, name: str) -> _ModelAccounting:
         return self._accounting.setdefault(name, _ModelAccounting())
 
-    def primary_state(self, name: str) -> _RenderState | None:
-        return self._acct(name).primary_state
+    def render_state(self, name: str) -> _RenderState | None:
+        return self._acct(name).render_state
 
     def prompt_rendered(self, name: str) -> str:
-        """The rendered prompt(s) for *name*, as one string for storage.
-
-        A fan-out model rendered many prompts; they are joined so the run report
-        and the docs page show exactly what was sent.
-        """
-        acct = self._acct(name)
-        body = "\n---\n".join(acct.rendered)
-        return f"{acct.note}\n{body}" if acct.note else body
+        """The rendered prompt for *name*, for storage and the run report."""
+        return self._acct(name).rendered
 
     def elapsed_ms(self, name: str) -> int:
         return self._acct(name).elapsed_ms
