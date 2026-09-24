@@ -62,7 +62,10 @@ class ModelCall:
     #: The model being run, for its name and its ``config()`` block.
     spec: "ModelSpec"
 
-    #: Every upstream output produced so far, by model name.
+    #: Every upstream output produced so far, by model name.  A model that
+    #: produced files appears as :class:`~pbt.files.File` / ``Dir`` /
+    #: ``Output`` objects (or a dict/list holding them); return the same types
+    #: from an exec_fn to produce files.
     outputs: dict[str, Any]
 
     #: ``await call.llm(rendered)`` — send this prompt to the LLM backend.

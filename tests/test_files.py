@@ -511,3 +511,55 @@ def test_served_docs_files_cannot_run_as_pages(tmp_path):
     assert png.headers["content-type"] == "image/png"
     assert png.content == PNG
     assert client.get("/files/nothex/logo.png").status_code == 404
+
+
+@pytest.fixture
+def unregister_kinds():
+    """Remove kinds a test registers, so they don't leak into registry tests."""
+    from pbt.model_types import _REGISTRY
+
+    before = set(_REGISTRY)
+    yield
+    for name in set(_REGISTRY) - before:
+        del _REGISTRY[name]
+
+
+def test_readme_zip_kind_example(unregister_kinds):
+    """The file-producing kind shown in the README's model-kind section."""
+    import io
+    import zipfile
+
+    @pbt.model_kind("zip_files_test", config_keys={"zip_name"})
+    async def zip_files(rendered, call):
+        def build():
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as zf:
+                for name in call.spec.depends_on:
+                    value = call.outputs[name]
+                    files = value.files.values() if isinstance(value, pbt.Output) else [value]
+                    for f in files:
+                        if isinstance(f, pbt.File):
+                            # A fixed timestamp keeps the zip's bytes, and so its hash, stable.
+                            info = zipfile.ZipInfo(f"{name}/{f.name}", date_time=(1980, 1, 1, 0, 0, 0))
+                            zf.writestr(info, f.read_bytes())
+            name = call.spec.config.get("zip_name", "bundle.zip")
+            return pbt.File(buf.getvalue(), name=name)
+
+        return await call.compute(rendered, compute=build)
+
+    models = {
+        "logo": "draw",
+        "bundle": (
+            '{{ config(model_type="zip_files_test", zip_name="assets.zip") }}\n'
+            "Bundle {{ ref('logo') }}"
+        ),
+    }
+    storage, _, first = run_models(models, llm_call=image_llm)
+    _, _, second = run_models(models, llm_call=image_llm, storage=storage)
+
+    zipped = first["bundle"].value
+    assert zipped.name == "assets.zip"
+    with zipfile.ZipFile(io.BytesIO(zipped.read_bytes())) as zf:
+        assert zf.read("logo/logo.png") == PNG
+    assert second["bundle"].cached
+    assert second["bundle"].value == zipped

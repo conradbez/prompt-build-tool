@@ -824,7 +824,16 @@ pbt renders the template for you and hands your function two things:
 Whatever you return becomes the model's output — the thing `ref('loud')` gives
 downstream models, and the thing written to `outputs/`. Return a string and it
 is parsed for you if the model sets `output_format="json"`. Return a list or a
-dict and it is kept as-is.
+dict and it is kept as-is. Return a `pbt.File`, `pbt.Dir` or `pbt.Output`, or a
+list/dict with them inside, and the model produces
+[files](#models-that-produce-files-pbtfile-pbtdir-pbtoutput): pbt stores the
+bytes, caches them, and hands them downstream. See
+[Produce or read files](#optional-extras) below.
+
+`call.llm()` returns whatever your `llm_call` returns. That is usually a string,
+but it can be a file object if your backend produces files. A kind that changes
+the response, like `shout` above, should check the type before using string
+methods on it.
 
 Everything else keeps working without you doing anything: the prompt cache,
 `{{ config(output_format="json") }}`, the skip functions, `validation/`,
@@ -897,6 +906,57 @@ return await call.compute(rendered, compute=lambda: scrape(rendered))
 dependency whose output is a JSON list, renders your template once per item
 (with `ref()` on that model yielding the current item), runs your `exec_fn` on
 each concurrently, and collects the results into a list. That is all `loop` is.
+
+**Produce or read files.** Upstream files arrive in `call.outputs` as `pbt.File`,
+`pbt.Dir` and `pbt.Output` objects, and returning one makes your model output
+files. This kind zips every file its upstream models produced:
+
+```python
+import io, zipfile
+import pbt
+
+@pbt.model_kind("zip_files", config_keys={"zip_name"})
+async def zip_files(rendered, call):
+    def build():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for name in call.spec.depends_on:
+                value = call.outputs[name]
+                files = value.files.values() if isinstance(value, pbt.Output) else [value]
+                for f in files:
+                    if isinstance(f, pbt.File):
+                        # A fixed timestamp keeps the zip's bytes, and so its hash, stable.
+                        info = zipfile.ZipInfo(f"{name}/{f.name}", date_time=(1980, 1, 1, 0, 0, 0))
+                        zf.writestr(info, f.read_bytes())
+        return pbt.File(buf.getvalue(), name=call.spec.config.get("zip_name", "bundle.zip"))
+
+    return await call.compute(rendered, compute=build)
+```
+
+```jinja
+{{ config(model_type="zip_files", zip_name="assets.zip") }}
+Bundle {{ ref('logo') }} and {{ ref('diagram') }}
+```
+
+Three things make this work well:
+
+- **`ref()` in the template does more than build the DAG edge.** A file renders
+  as a handle that includes its hash, so `rendered` changes whenever an upstream
+  file's bytes change. The cache key is built from `rendered`, so
+  `call.compute(rendered, ...)` re-zips exactly when an input changed, and not
+  otherwise.
+- **Deterministic bytes.** A file's hash is its identity, so the same inputs
+  should give the same bytes. Zips normally stamp the current time on each
+  entry; the fixed `date_time` above prevents that. Without it, every re-zip
+  would be a "new" file to downstream models.
+- **No storage code.** pbt writes the bytes to the blob store, caches the
+  manifest, shows the file in `pbt docs` and writes it to `outputs/<model>/`.
+  The same happens for files returned from `call.llm()`, and for files a kind
+  builds without `call.compute`.
+
+A kind can also send an upstream model's files to the LLM without any code:
+the model sets `{{ config(promptfiles=["logo"]) }}` and `call.llm()` attaches
+them.
 
 **Opt out of the global instruction.** If your rendered template is not a prompt
 for a model to answer — Python source, or a value passed straight through — set

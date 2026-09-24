@@ -143,7 +143,14 @@ Put the registration in `client.py`: pbt imports it before parsing any
 anywhere that runs earlier works too.
 
 Return value of `exec_fn`: a `str` is parsed when the model sets
-`output_format="json"`; anything else (a list, a dict) is stored as-is.
+`output_format="json"`; anything else (a list, a dict) is stored as-is. A
+`File`/`Dir`/`Output`, alone or inside a list/dict, is a file output. The
+executor persists its bytes and encodes the manifest (`persist_files` +
+`encode_output`), whether it came back from `call.llm`/`call.compute` or was
+built by the kind itself, so a kind never touches the blob store. Upstream
+files reach a kind as those same objects in `call.outputs`. Since a file's
+`ref()` handle carries its hash, `call.compute(rendered, ...)` re-runs exactly
+when an upstream file's bytes change.
 
 ---
 

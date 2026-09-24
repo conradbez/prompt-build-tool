@@ -92,13 +92,17 @@ one-off calculation, `execute_python` is less code.
 
 Your type behaves like a built-in one. The prompt cache, `output_format="json"`
 parsing, the skip functions, `validation/`, `pbt test`, `pbt docs` and the run
-report all work without any extra code.
+report all work without any extra code. The same goes for files: return a
+`pbt.File`, `pbt.Dir` or `pbt.Output` and pbt stores it, caches it, shows it in
+`pbt docs` and passes it downstream. Upstream files arrive in `call.outputs` as
+those same objects.
 
 ## Where registration goes
 
 `client.py`, because pbt already imports it on every `pbt run`, `pbt test` and
 `pbt ls` — before it reads your models. Anywhere earlier works too.
 
-See the README section *Writing your own model type* for the remaining hooks:
-caching non-LLM work, opting out of the global instruction, and expanding one
-model into several.
+See the README section *Writing your own model kind* for the remaining hooks:
+producing and reading files (with a worked `zip_files` kind), caching non-LLM
+work, opting out of the global instruction, and expanding one model into
+several.
