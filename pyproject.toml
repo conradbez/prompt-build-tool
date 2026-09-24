@@ -16,6 +16,9 @@ dependencies = [
     "python-dotenv>=1.2.2",
 ]
 
+[project.optional-dependencies]
+agent = ["mini-swe-agent>=2.0"]
+
 [project.scripts]
 pbt = "pbt.cli:main"
 
@@ -35,6 +38,7 @@ dev = [
     "openai>=2.26.0",
     "python-multipart>=0.0.22",
     "google-genai>=1.0",
+    "mini-swe-agent>=2.0",
 ]
 
 [tool.pytest.ini_options]

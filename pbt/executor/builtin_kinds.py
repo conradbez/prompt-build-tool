@@ -10,15 +10,19 @@ including the ones you register yourself.
 ``""`` (plain LLM)   send the rendered prompt to the backend
 ``template``         the rendered text *is* the output (``exec_fn=None``)
 ``execute_python``   run the rendered text as Python
+``agent``            hand the rendered text to mini-swe-agent as its task
 
 Importing this module registers them; :mod:`pbt` does that on import.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import os
 import tempfile
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -102,6 +106,83 @@ def _collect_out_dir(out_dir: Path) -> list:
     return items
 
 
+async def run_agent(rendered: str, call: ModelCall) -> dict:
+    """Run mini-swe-agent with the rendered template as its task.
+
+    The agent works in ``agent_dir`` (created if missing), running shell
+    commands there until it submits.  The output is a dict::
+
+        {"output": <what the agent submitted>,
+         "logs": <the full message trajectory>,
+         "time_run": <seconds the agent ran>}
+
+    so a downstream model reads ``ref('fix')['output']``.
+
+    Config keys:
+
+    ``agent_dir``         working directory (required)
+    ``agent_model``       litellm model name; defaults to ``MSWEA_MODEL_NAME``
+    ``agent_step_limit``  max LLM calls, 0 for none (default 0)
+    ``agent_cost_limit``  max spend in dollars, 0 for none (default 3)
+
+    Needs ``pip install mini-swe-agent``.  Results are cached on the rendered
+    prompt like any other kind, so an unchanged task does not re-run.
+    """
+    raw = await call.compute(
+        rendered, compute=lambda: asyncio.to_thread(_exec_agent, rendered, call)
+    )
+    return json.loads(raw)
+
+
+def _exec_agent(task: str, call: ModelCall) -> str:
+    try:
+        import yaml
+        from minisweagent import package_dir
+        from minisweagent.agents.default import DefaultAgent
+        from minisweagent.environments.local import LocalEnvironment
+    except ImportError as exc:
+        raise ImportError(
+            "model_type=\"agent\" needs mini-swe-agent: pip install mini-swe-agent"
+        ) from exc
+
+    config = call.spec.config
+    workdir = config.get("agent_dir")
+    if not workdir:
+        raise ValueError(
+            f"Model '{call.spec.name}': model_type=\"agent\" needs "
+            "config(agent_dir=\"...\") — the directory the agent works in."
+        )
+    workdir = Path(workdir).expanduser().resolve()
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    defaults = yaml.safe_load((package_dir / "config" / "default.yaml").read_text())
+    agent_cfg = defaults["agent"] | {
+        "step_limit": call.spec.config_int("agent_step_limit", 0),
+        "cost_limit": float(config.get("agent_cost_limit", 3.0)),
+    }
+    agent = DefaultAgent(
+        _agent_model(config.get("agent_model") or os.getenv("MSWEA_MODEL_NAME"), defaults["model"]),
+        LocalEnvironment(cwd=str(workdir), **defaults["environment"]),
+        **agent_cfg,
+    )
+
+    started = time.monotonic()
+    result = agent.run(task)
+    time_run = round(time.monotonic() - started, 3)
+
+    return json.dumps(
+        {"output": result.get("submission", ""), "logs": agent.messages, "time_run": time_run},
+        default=str,
+    )
+
+
+def _agent_model(name: str | None, model_cfg: dict):
+    """The mini-swe-agent model to drive the agent — a seam for tests."""
+    from minisweagent.models import get_model
+
+    return get_model(name, model_cfg)
+
+
 # ---------------------------------------------------------------------------
 # The kinds
 # ---------------------------------------------------------------------------
@@ -121,5 +202,12 @@ PYTHON = ModelKind(
     accepts_global_instruction=False,
 )
 
-for _kind in (LLM, TEMPLATE, PYTHON):
+#: mini-swe-agent working in a directory, with the rendered text as its task.
+AGENT = ModelKind(
+    name="agent",
+    exec_fn=run_agent,
+    config_keys=frozenset({"agent_dir", "agent_model", "agent_step_limit", "agent_cost_limit"}),
+)
+
+for _kind in (LLM, TEMPLATE, PYTHON, AGENT):
     register_model_kind(_kind)

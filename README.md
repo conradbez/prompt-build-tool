@@ -620,6 +620,47 @@ file as trusted code.
 
 ---
 
+## Agent models (`model_type="agent"`)
+
+An `agent` model hands its rendered template to
+[mini-swe-agent](https://mini-swe-agent.com) as a task. The agent runs shell
+commands in `agent_dir` until it submits.
+
+```bash
+pip install "prompt-build-tool[agent]"
+export MSWEA_MODEL_NAME=anthropic/claude-sonnet-5   # any litellm model name
+```
+
+```jinja
+{# models/fix_tests.prompt #}
+{{ config(model_type="agent", agent_dir="./repo", agent_step_limit="30") }}
+Make the failing test in tests/test_math.py pass. Explain the fix in your final output.
+
+{{ ref('bug_report') }}
+```
+
+The output is a dict:
+
+| key        | value                                   |
+|------------|-----------------------------------------|
+| `output`   | what the agent submitted                |
+| `logs`     | the full message trajectory             |
+| `time_run` | seconds the agent ran                   |
+
+Downstream: `{{ ref('fix_tests')['output'] }}`.
+
+| config key         | meaning                                      |
+|--------------------|----------------------------------------------|
+| `agent_dir`        | working directory (required; created if missing) |
+| `agent_model`      | litellm model name; default `MSWEA_MODEL_NAME` |
+| `agent_step_limit` | max LLM calls, `0` = no limit (default `0`)  |
+| `agent_cost_limit` | max spend in dollars, `0` = no limit (default `3`) |
+
+Results are cached on the rendered prompt, so an unchanged task does not
+re-run. The agent runs commands on your machine with no sandbox.
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.

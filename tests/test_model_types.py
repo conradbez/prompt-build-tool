@@ -43,7 +43,7 @@ def run_models(models: dict[str, str], *, storage=None, llm_call=stub_llm, **kwa
 # ---------------------------------------------------------------------------
 
 def test_builtin_kinds_are_registered():
-    assert known_model_kinds() == {"template", "execute_python"}
+    assert known_model_kinds() == {"template", "execute_python", "agent"}
     # The unnamed default is the plain LLM call.
     assert get_model_kind("") is not None
 
