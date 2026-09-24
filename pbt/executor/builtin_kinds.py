@@ -167,13 +167,26 @@ def _exec_agent(task: str, call: ModelCall) -> str:
     )
 
     started = time.monotonic()
-    result = agent.run(task)
+    result = agent.run(task + _SUBMIT_INSTRUCTION)
     time_run = round(time.monotonic() - started, 3)
 
     return json.dumps(
         {"output": result.get("submission", ""), "logs": agent.messages, "time_run": time_run},
         default=str,
     )
+
+
+#: mini-swe-agent's own prompt says to submit with a bare
+#: ``echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT``, which submits nothing.  pbt
+#: wants a final output, which is whatever the agent prints after that marker.
+_SUBMIT_INSTRUCTION = """
+
+When you are done, submit your final output (the answer to pass on to the next
+step) by printing COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT on the first line and
+the output after it, e.g.:
+
+    printf 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\\n%s\\n' "your final output"
+"""
 
 
 def _agent_model(name: str | None, model_cfg: dict):
