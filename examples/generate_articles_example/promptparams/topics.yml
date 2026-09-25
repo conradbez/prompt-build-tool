@@ -1,0 +1,12 @@
+# Each case only lists what it changes. Run with: pbt test
+cases:
+  - name: Default topic and audience
+
+  - name: Space topic for kids
+    extends: for_kids
+    promptdata:
+      topic: How rockets reach orbit
+
+  - name: Generic article, no topic given
+    promptdata:
+      topic: null        # null removes the inherited topic
