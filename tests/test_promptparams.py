@@ -1,209 +1,302 @@
 """
-Tests for promptparams.csv support — parameterised test runs.
+Tests for promptparams YAML cases — parameterised test runs.
 
 Covers:
-- load_promptparams: missing file, valid CSV
-- parse_promptparams_row: promptdata/promptfile columns, JSON array paths
-- write_example: generates correct headers + placeholder row
-- execute_tests cross-join: test × row combinations, correct naming
-- CLI pbt test: loads promptparams.csv, generates .example file
+- find/load: defaults, combining files and directories, stable order
+- baselines: implicit default, extends (string/list/chained), null removal,
+  opting out, cross-file baselines, loop and unknown-baseline errors
+- names: descriptive names, generated names, duplicates
+- promptfile paths resolve relative to the YAML file
+- save_case / write_example
+- execute_tests cross-join with named cases
+- CLI pbt test: per-case runs, --case, inline params with baselines,
+  --save-case, the example file, and the CSV migration error
 """
 
 from __future__ import annotations
 
-import csv
 import json
 import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from pbt.promptparams import (
-    load_promptparams,
-    parse_promptparams_row,
+    PromptParamsError,
+    TestCase,
+    find_promptparams_files,
+    load_cases,
+    save_case,
     write_example,
-    append_promptparams_row,
-    get_promptparams_columns,
-    PROMPTDATA_PREFIX,
-    PROMPTFILE_PREFIX,
 )
-from pbt.tester import execute_tests, load_tests
+from pbt.tester import execute_tests
 from pbt.storage.memory import MemoryStorageBackend
 from tests.conftest import run_pbt
 
 
-# ---------------------------------------------------------------------------
-# load_promptparams
-# ---------------------------------------------------------------------------
-
-def test_load_promptparams_missing_file(tmp_path: Path) -> None:
-    rows = load_promptparams(tmp_path / "nonexistent.csv")
-    assert rows == []
+def write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
-def test_load_promptparams_returns_rows(tmp_path: Path) -> None:
-    csv_file = tmp_path / "promptparams.csv"
-    csv_file.write_text(
-        "promptdata.tone,promptdata.audience\n"
-        "formal,engineers\n"
-        "casual,developers\n",
-        encoding="utf-8",
-    )
-    rows = load_promptparams(csv_file)
-    assert len(rows) == 2
-    assert rows[0] == {"promptdata.tone": "formal", "promptdata.audience": "engineers"}
-    assert rows[1] == {"promptdata.tone": "casual", "promptdata.audience": "developers"}
+@pytest.fixture()
+def in_tmp(tmp_path: Path, monkeypatch) -> Path:
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
-# parse_promptparams_row
+# Finding and combining files
 # ---------------------------------------------------------------------------
 
-def test_parse_promptparams_row_promptdata() -> None:
-    row = {"promptdata.tone": "formal", "promptdata.audience": "engineers"}
-    pd, pf = parse_promptparams_row(row)
-    assert pd == {"tone": "formal", "audience": "engineers"}
-    assert pf == {}
+def test_no_files_means_no_cases(in_tmp: Path) -> None:
+    assert load_cases() == []
 
 
-def test_parse_promptparams_row_promptfile_single_path() -> None:
-    row = {"promptfile.document": "report.pdf"}
-    pd, pf = parse_promptparams_row(row)
-    assert pd == {}
-    assert pf == {"document": "report.pdf"}
+def test_explicit_missing_path_is_an_error(in_tmp: Path) -> None:
+    with pytest.raises(PromptParamsError, match="not found"):
+        load_cases(["nope.yml"])
 
 
-def test_parse_promptparams_row_promptfile_json_array() -> None:
-    row = {"promptfile.docs": '["a.pdf", "b.pdf"]'}
-    pd, pf = parse_promptparams_row(row)
-    assert pf == {"docs": ["a.pdf", "b.pdf"]}
+def test_default_file_and_directory_are_combined_in_order(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", "cases:\n  - name: root\n")
+    write(in_tmp / "promptparams" / "b.yml", "cases:\n  - name: b\n")
+    write(in_tmp / "promptparams" / "a" / "nested.yaml", "cases:\n  - name: nested\n")
+    write(in_tmp / "promptparams" / "notes.txt", "ignored")
+
+    assert [c.name for c in load_cases()] == ["root", "nested", "b"]
 
 
-def test_parse_promptparams_row_mixed() -> None:
-    row = {
-        "promptdata.tone": "formal",
-        "promptfile.report": "annual.pdf",
-        "promptfile.chart": '["q1.png", "q2.png"]',
+def test_a_file_named_twice_loads_once(in_tmp: Path) -> None:
+    write(in_tmp / "cases" / "one.yml", "cases:\n  - name: one\n")
+    assert len(find_promptparams_files(["cases", "cases/one.yml"])) == 1
+    assert [c.name for c in load_cases(["cases", "cases/one.yml"])] == ["one"]
+
+
+def test_empty_file_is_fine(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", "")
+    assert load_cases() == []
+
+
+# ---------------------------------------------------------------------------
+# Baselines and inheritance
+# ---------------------------------------------------------------------------
+
+BASE = """\
+baselines:
+  default:
+    promptdata:
+      tone: formal
+      audience: engineers
+  casual:
+    extends: default
+    promptdata:
+      tone: casual
+  long:
+    promptdata:
+      length: long
+"""
+
+
+def cases_by_name(in_tmp: Path, cases_yaml: str) -> dict[str, TestCase]:
+    write(in_tmp / "promptparams" / "base.yml", BASE)
+    write(in_tmp / "promptparams" / "cases.yml", cases_yaml)
+    return {c.name: c for c in load_cases()}
+
+
+def test_case_without_extends_inherits_default(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, "cases:\n  - name: Plain\n")
+    assert cases["Plain"].promptdata == {"tone": "formal", "audience": "engineers"}
+
+
+def test_case_values_override_the_baseline(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, """\
+cases:
+  - name: Devs
+    promptdata:
+      audience: developers
+""")
+    assert cases["Devs"].promptdata == {"tone": "formal", "audience": "developers"}
+
+
+def test_chained_and_listed_baselines(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, """\
+cases:
+  - name: Casual
+    extends: casual
+  - name: Casual and long
+    extends: [casual, long]
+""")
+    assert cases["Casual"].promptdata == {"tone": "casual", "audience": "engineers"}
+    assert cases["Casual and long"].promptdata == {
+        "tone": "casual", "audience": "engineers", "length": "long",
     }
-    pd, pf = parse_promptparams_row(row)
-    assert pd == {"tone": "formal"}
-    assert pf["report"] == "annual.pdf"
-    assert pf["chart"] == ["q1.png", "q2.png"]
 
 
-def test_parse_promptparams_row_skips_empty_cells() -> None:
-    row = {"promptdata.tone": "formal", "promptdata.audience": ""}
-    pd, pf = parse_promptparams_row(row)
-    assert "audience" not in pd
+def test_null_removes_an_inherited_key(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, """\
+cases:
+  - name: No audience
+    promptdata:
+      audience: null
+""")
+    assert cases["No audience"].promptdata == {"tone": "formal"}
+
+
+def test_empty_extends_opts_out_of_default(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, """\
+cases:
+  - name: Alone
+    extends: []
+    promptdata:
+      tone: terse
+""")
+    assert cases["Alone"].promptdata == {"tone": "terse"}
+
+
+def test_extending_another_baseline_does_not_add_default_twice(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, "cases:\n  - name: Long\n    extends: long\n")
+    # `long` does not extend default, and naming it replaces the implicit default.
+    assert cases["Long"].promptdata == {"length": "long"}
+
+
+def test_native_yaml_values_are_kept(in_tmp: Path) -> None:
+    cases = cases_by_name(in_tmp, """\
+cases:
+  - name: Rich
+    promptdata:
+      count: 3
+      brief: |
+        Two lines
+        of brief.
+""")
+    assert cases["Rich"].promptdata["count"] == 3
+    assert cases["Rich"].promptdata["brief"] == "Two lines\nof brief.\n"
+
+
+def test_empty_baseline_is_allowed(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", "baselines:\n  default:\ncases:\n  - name: X\n")
+    assert load_cases()[0].promptdata == {}
+
+
+def test_unknown_baseline_is_an_error(in_tmp: Path) -> None:
+    with pytest.raises(PromptParamsError, match="unknown baseline 'nope'"):
+        cases_by_name(in_tmp, "cases:\n  - name: X\n    extends: nope\n")
+
+
+def test_baseline_loop_is_an_error(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", """\
+baselines:
+  a: {extends: b}
+  b: {extends: a}
+cases:
+  - {name: X, extends: a}
+""")
+    with pytest.raises(PromptParamsError, match="loop"):
+        load_cases()
+
+
+def test_baseline_defined_twice_is_an_error(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams" / "a.yml", "baselines:\n  default: {}\n")
+    write(in_tmp / "promptparams" / "b.yml", "baselines:\n  default: {}\n")
+    with pytest.raises(PromptParamsError, match="already defined"):
+        load_cases()
+
+
+def test_typos_in_keys_are_errors(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", "cases:\n  - name: X\n    promtdata: {a: 1}\n")
+    with pytest.raises(PromptParamsError, match="promtdata"):
+        load_cases()
 
 
 # ---------------------------------------------------------------------------
-# get_promptparams_columns
+# Names
 # ---------------------------------------------------------------------------
 
-def test_get_promptparams_columns() -> None:
-    rows = [
-        {"promptdata.tone": "formal", "promptfile.doc": "a.pdf"},
-        {"promptdata.tone": "casual", "promptfile.doc": "b.pdf"},
+def test_unnamed_cases_get_file_based_names(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams" / "edge.yml", "cases:\n  - promptdata: {a: 1}\n  - promptdata: {a: 2}\n")
+    assert [c.name for c in load_cases()] == ["edge_1", "edge_2"]
+
+
+def test_duplicate_case_names_across_files_are_an_error(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams" / "a.yml", "cases:\n  - name: Same\n")
+    write(in_tmp / "promptparams" / "b.yml", "cases:\n  - name: Same\n")
+    with pytest.raises(PromptParamsError, match="already used"):
+        load_cases()
+
+
+# ---------------------------------------------------------------------------
+# Promptfile paths
+# ---------------------------------------------------------------------------
+
+def test_promptfiles_are_relative_to_the_declaring_file(in_tmp: Path) -> None:
+    write(in_tmp / "shared" / "base.yml", """\
+baselines:
+  default:
+    promptfiles:
+      doc: docs/report.pdf
+""")
+    write(in_tmp / "promptparams" / "cases.yml", """\
+cases:
+  - name: Default doc
+  - name: Two charts
+    promptfiles:
+      charts: [q1.png, q2.png]
+""")
+    cases = {c.name: c for c in load_cases(["shared", "promptparams"])}
+    assert cases["Default doc"].promptfiles == {"doc": str(Path("shared/docs/report.pdf"))}
+    assert cases["Two charts"].promptfiles["charts"] == [
+        str(Path("promptparams/q1.png")), str(Path("promptparams/q2.png")),
     ]
-    pd_keys, pf_keys = get_promptparams_columns(rows)
-    assert pd_keys == ["tone"]
-    assert pf_keys == ["doc"]
 
 
 # ---------------------------------------------------------------------------
-# write_example
+# Writing
 # ---------------------------------------------------------------------------
 
-def test_write_example_creates_file(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv.example"
+def test_save_case_round_trips_and_keeps_inheriting(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams" / "base.yml", BASE)
+    write(in_tmp / "report.pdf", "x")
+    path = save_case("promptparams", "Playful tone!", {"tone": "playful"}, {"doc": "report.pdf"})
+
+    assert path == Path("promptparams/playful_tone.yml")
+    saved = yaml.safe_load(path.read_text())
+    assert saved == {"cases": [{
+        "name": "Playful tone!",
+        "promptdata": {"tone": "playful"},
+        "promptfiles": {"doc": "../report.pdf"},
+    }]}
+    case = {c.name: c for c in load_cases()}["Playful tone!"]
+    assert case.promptdata == {"tone": "playful", "audience": "engineers"}
+    assert case.promptfiles == {"doc": "report.pdf"}
+
+
+def test_save_case_refuses_to_overwrite(in_tmp: Path) -> None:
+    save_case("promptparams", "One", {"a": "1"}, {})
+    with pytest.raises(PromptParamsError, match="already exists"):
+        save_case("promptparams", "one", {"a": "2"}, {})
+
+
+def test_write_example_is_valid_yaml_with_a_default_baseline(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.yml.example"
     write_example(out, ["tone", "audience"], ["document"])
 
-    assert out.exists()
-    with out.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
-
-    assert rows[0] == [
-        "promptdata.tone",
-        "promptdata.audience",
-        "promptfile.document",
+    doc = yaml.safe_load(out.read_text())
+    assert doc["baselines"]["default"] == {
+        "promptdata": {"tone": "<tone>", "audience": "<audience>"},
+        "promptfiles": {"document": "<path/to/document>"},
+    }
+    assert [c["name"] for c in doc["cases"]] == [
+        "Baseline inputs", "<describe what this case checks>",
     ]
-    # Placeholder row
-    assert rows[1][0] == "<tone>"
-    assert rows[1][1] == "<audience>"
-    assert rows[1][2] == "<path/to/document>"
 
 
-def test_write_example_no_columns_does_nothing(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv.example"
+def test_write_example_no_inputs_does_nothing(tmp_path: Path) -> None:
+    out = tmp_path / "promptparams.yml.example"
     write_example(out, [], [])
     assert not out.exists()
-
-
-def test_write_example_only_promptdata(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv.example"
-    write_example(out, ["topic"], [])
-    with out.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
-    assert rows[0] == ["promptdata.topic"]
-
-
-# ---------------------------------------------------------------------------
-# append_promptparams_row
-# ---------------------------------------------------------------------------
-
-def test_append_creates_file(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv"
-    append_promptparams_row(out, {"tone": "formal"}, {})
-
-    rows = load_promptparams(out)
-    assert rows == [{"promptdata.tone": "formal"}]
-
-
-def test_append_preserves_existing_rows(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv"
-    out.write_text("promptdata.tone\nformal\n", encoding="utf-8")
-
-    append_promptparams_row(out, {"tone": "casual"}, {})
-
-    rows = load_promptparams(out)
-    assert rows == [
-        {"promptdata.tone": "formal"},
-        {"promptdata.tone": "casual"},
-    ]
-
-
-def test_append_unions_new_columns(tmp_path: Path) -> None:
-    """A new column is added to the header; older rows get an empty cell."""
-    out = tmp_path / "promptparams.csv"
-    out.write_text("promptdata.tone\nformal\n", encoding="utf-8")
-
-    append_promptparams_row(out, {"tone": "casual", "audience": "devs"}, {})
-
-    with out.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
-    assert rows[0] == ["promptdata.tone", "promptdata.audience"]
-    assert rows[1] == ["formal", ""]          # old row padded for new column
-    assert rows[2] == ["casual", "devs"]
-
-
-def test_append_promptfile_list_is_json_encoded(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv"
-    append_promptparams_row(out, {}, {"docs": ["a.pdf", "b.pdf"]})
-
-    # Round-trips back through parse_promptparams_row
-    rows = load_promptparams(out)
-    pd, pf = parse_promptparams_row(rows[0])
-    assert pf == {"docs": ["a.pdf", "b.pdf"]}
-
-
-def test_append_mixed_promptdata_and_promptfile(tmp_path: Path) -> None:
-    out = tmp_path / "promptparams.csv"
-    append_promptparams_row(out, {"tone": "formal"}, {"report": "annual.pdf"})
-
-    rows = load_promptparams(out)
-    assert rows[0]["promptdata.tone"] == "formal"
-    assert rows[0]["promptfile.report"] == "annual.pdf"
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +304,6 @@ def test_append_mixed_promptdata_and_promptfile(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def _stub_llm_pass(prompt: str) -> str:
-    return json.dumps({"results": "pass"})
-
-
-def _stub_llm_echo_promptdata(prompt: str) -> str:
-    """Return pass; the test inspects the rendered prompt instead."""
     return json.dumps({"results": "pass"})
 
 
@@ -229,113 +317,66 @@ Always respond with exactly this JSON: {"results": "pass"}
 """
 
 
-def test_execute_tests_no_promptparams() -> None:
-    """Without promptparams, each test runs once with its base name."""
-    tests = {"smoke": NO_PARAMS_TEST_SOURCE}
+def _run_tests(tests, llm_call=_stub_llm_pass, **kwargs):
     storage = MemoryStorageBackend()
     storage.init_db()
     run_id = storage.create_run(model_count=0)
-
-    results = execute_tests(
+    return execute_tests(
         run_id=run_id,
         tests=tests,
         model_outputs={},
         storage_backend=storage,
-        llm_call=_stub_llm_pass,
-        promptparams_rows=None,
+        llm_call=llm_call,
+        **kwargs,
     )
 
-    assert len(results) == 1
-    assert results[0].test_name == "smoke"
-    assert results[0].status == "pass"
-    assert results[0].param_label == ""
+
+def test_execute_tests_no_cases() -> None:
+    """Without cases, each test runs once with its base name."""
+    results = _run_tests({"smoke": NO_PARAMS_TEST_SOURCE})
+    assert [(r.test_name, r.status, r.param_label) for r in results] == [("smoke", "pass", "")]
 
 
-def test_execute_tests_cross_join_naming() -> None:
-    """With 2 rows × 2 tests → 4 results named test[row_N]."""
-    tests = {
-        "alpha": NO_PARAMS_TEST_SOURCE,
-        "beta": NO_PARAMS_TEST_SOURCE,
-    }
-    rows = [
-        {"promptdata.tone": "formal"},
-        {"promptdata.tone": "casual"},
+def test_execute_tests_cross_join_uses_case_names() -> None:
+    cases = [
+        TestCase("Formal tone", {"tone": "formal"}),
+        TestCase("Casual [short]", {"tone": "casual"}),
     ]
-    storage = MemoryStorageBackend()
-    storage.init_db()
-    run_id = storage.create_run(model_count=0)
+    results = _run_tests({"alpha": NO_PARAMS_TEST_SOURCE, "beta": NO_PARAMS_TEST_SOURCE}, cases=cases)
 
-    results = execute_tests(
-        run_id=run_id,
-        tests=tests,
-        model_outputs={},
-        storage_backend=storage,
-        llm_call=_stub_llm_pass,
-        promptparams_rows=rows,
-    )
-
-    assert len(results) == 4
-    names = {r.test_name for r in results}
-    assert names == {"alpha[row_1]", "alpha[row_2]", "beta[row_1]", "beta[row_2]"}
-
-    for r in results:
-        assert r.param_label in ("row_1", "row_2")
-        assert r.status == "pass"
+    assert {r.test_name for r in results} == {
+        "alpha[Formal tone]", "alpha[Casual [short]]",
+        "beta[Formal tone]", "beta[Casual [short]]",
+    }
+    # The label is the case name exactly, brackets and all.
+    assert {r.param_label for r in results} == {"Formal tone", "Casual [short]"}
+    assert all(r.status == "pass" for r in results)
 
 
 def test_execute_tests_promptdata_injected() -> None:
-    """promptdata from each row is rendered into the test template."""
-    captured_prompts: list[str] = []
+    captured: list[str] = []
 
     def recording_llm(prompt: str) -> str:
-        captured_prompts.append(prompt)
+        captured.append(prompt)
         return json.dumps({"results": "pass"})
 
-    tests = {"pd_test": SIMPLE_TEST_SOURCE}
-    rows = [
-        {"promptdata.topic": "cats"},
-        {"promptdata.topic": "dogs"},
-    ]
-    storage = MemoryStorageBackend()
-    storage.init_db()
-    run_id = storage.create_run(model_count=0)
-
-    execute_tests(
-        run_id=run_id,
-        tests=tests,
-        model_outputs={},
-        storage_backend=storage,
+    _run_tests(
+        {"pd_test": SIMPLE_TEST_SOURCE},
         llm_call=recording_llm,
-        promptparams_rows=rows,
+        cases=[TestCase("Cats", {"topic": "cats"}), TestCase("Dogs", {"topic": "dogs"})],
     )
+    assert any("cats" in p for p in captured)
+    assert any("dogs" in p for p in captured)
 
-    assert any("cats" in p for p in captured_prompts)
-    assert any("dogs" in p for p in captured_prompts)
 
-
-def test_execute_tests_single_row_suffix() -> None:
-    """Single row → test name ends with [row_1]."""
-    tests = {"t": NO_PARAMS_TEST_SOURCE}
-    rows = [{"promptdata.x": "1"}]
-    storage = MemoryStorageBackend()
-    storage.init_db()
-    run_id = storage.create_run(model_count=0)
-
-    results = execute_tests(
-        run_id=run_id,
-        tests=tests,
-        model_outputs={},
-        storage_backend=storage,
-        llm_call=_stub_llm_pass,
-        promptparams_rows=rows,
-    )
-
-    assert results[0].test_name == "t[row_1]"
-    assert results[0].param_label == "row_1"
+def test_execute_tests_param_label_suffix() -> None:
+    results = _run_tests({"t": NO_PARAMS_TEST_SOURCE}, param_label="Formal tone")
+    assert results[0].test_name == "t[Formal tone]"
+    assert results[0].param_label == "Formal tone"
 
 
 # ---------------------------------------------------------------------------
-# CLI integration: pbt test with promptparams.csv
+# CLI integration
 # ---------------------------------------------------------------------------
 
 SIMPLE_PROMPTPARAMS_CLIENT_PY = """\
@@ -348,8 +389,26 @@ def llm_call(prompt: str, config: dict | None = None) -> str:
 """
 
 SIMPLE_TEST_PROMPT_WITH_PROMPTDATA = """\
-Does the following style match 'formal'? promptdata value: {{ promptdata("tone") }}
+Tone {{ promptdata("tone") }} for {{ promptdata("audience") }}.
 Respond ONLY with valid JSON: {"results": "pass"} if it does, {"results": "fail"} if not.
+"""
+
+PROJECT_CASES = """\
+baselines:
+  default:
+    promptdata:
+      tone: formal
+      audience: engineers
+  casual:
+    promptdata:
+      tone: casual
+      audience: everyone
+
+cases:
+  - name: Formal for engineers
+  - name: Formal for managers
+    promptdata:
+      audience: managers
 """
 
 
@@ -359,76 +418,97 @@ def promptparams_proj(tmp_path: Path) -> Path:
     (proj / "models").mkdir(parents=True)
     (proj / "tests").mkdir()
 
-    (proj / "models" / "greet.prompt").write_text(
-        "Say hello in one word.", encoding="utf-8"
-    )
-    (proj / "tests" / "tone_test.prompt").write_text(
-        SIMPLE_TEST_PROMPT_WITH_PROMPTDATA, encoding="utf-8"
-    )
+    (proj / "models" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
+    (proj / "tests" / "tone_test.prompt").write_text(SIMPLE_TEST_PROMPT_WITH_PROMPTDATA, encoding="utf-8")
     (proj / "client.py").write_text(SIMPLE_PROMPTPARAMS_CLIENT_PY, encoding="utf-8")
-
-    # Write a promptparams.csv with two rows
-    (proj / "promptparams.csv").write_text(
-        "promptdata.tone\nformal\ncasual\n", encoding="utf-8"
-    )
+    write(proj / "promptparams" / "tone.yml", PROJECT_CASES)
+    write(proj / "promptparams" / "more.yml", "cases:\n  - name: Casual\n    extends: casual\n")
 
     yield proj
     shutil.rmtree(proj)
 
 
-def test_cli_test_uses_promptparams(promptparams_proj: Path) -> None:
-    """pbt run + pbt test should execute 2 test cases (1 test × 2 rows)."""
-    run_pbt("run", cwd=promptparams_proj)
+def output(result) -> str:
+    return result.stdout + result.stderr
+
+
+def test_cli_runs_every_named_case_from_combined_files(promptparams_proj: Path) -> None:
     result = run_pbt("test", cwd=promptparams_proj, check=False)
+    out = output(result)
+    assert result.returncode == 0, out
+    assert "3 cases" in out
+    for name in ("Formal for engineers", "Formal for managers", "Casual"):
+        assert f"tone_test[{name}]" in out
 
-    # Both parameterised variants should appear in output
-    assert "tone_test[row_1]" in result.stdout or "tone_test[row_1]" in result.stderr
-    assert "tone_test[row_2]" in result.stdout or "tone_test[row_2]" in result.stderr
+
+def test_cli_case_filter(promptparams_proj: Path) -> None:
+    result = run_pbt("test", "--case", "formal*", cwd=promptparams_proj, check=False)
+    out = output(result)
+    assert "2 cases" in out
+    assert "tone_test[Casual]" not in out
+
+    missing = run_pbt("test", "--case", "nothing", cwd=promptparams_proj, check=False)
+    assert missing.returncode != 0
+    assert "no promptparams case matches" in output(missing)
 
 
-def test_cli_test_add_to_csv_appends_row(promptparams_proj: Path) -> None:
-    """`pbt test --promptdata ... --add-to-csv` appends the inline params as a row."""
-    before = load_promptparams(promptparams_proj / "promptparams.csv")
+def test_cli_explicit_promptparams_path(promptparams_proj: Path) -> None:
+    result = run_pbt("test", "--promptparams", "promptparams/tone.yml", cwd=promptparams_proj, check=False)
+    out = output(result)
+    assert "2 cases" in out
+    assert "tone_test[Casual]" not in out
 
+
+def test_cli_inline_params_inherit_default_and_save_case(promptparams_proj: Path) -> None:
     result = run_pbt(
-        "test",
-        "--promptdata", "tone=playful",
-        "--add-to-csv",
-        cwd=promptparams_proj,
-        check=False,
+        "test", "--promptdata", "tone=playful", "--save-case", "Playful tone",
+        cwd=promptparams_proj, check=False,
     )
+    out = output(result)
+    assert result.returncode == 0, out
+    assert "1 case" in out
+    assert "tone=playful, audience=engineers" in out  # the default baseline filled the gap
+    assert "tone_test[Playful tone]" in out
 
-    after = load_promptparams(promptparams_proj / "promptparams.csv")
-    assert len(after) == len(before) + 1
-    assert after[-1] == {"promptdata.tone": "playful"}
-    # Only the inline row runs, so it is reported as a single row.
-    assert "1 row" in result.stdout or "1 row" in result.stderr
+    saved = promptparams_proj / "promptparams" / "playful_tone.yml"
+    assert yaml.safe_load(saved.read_text()) == {
+        "cases": [{"name": "Playful tone", "promptdata": {"tone": "playful"}}]
+    }
+    # ...and it joins the next parameterised run.
+    assert "4 cases" in output(run_pbt("test", cwd=promptparams_proj, check=False))
 
 
-def test_cli_test_add_to_csv_requires_params(promptparams_proj: Path) -> None:
-    """`--add-to-csv` without inline params is an error and changes nothing."""
-    before = (promptparams_proj / "promptparams.csv").read_text(encoding="utf-8")
+def test_cli_inline_extends(promptparams_proj: Path) -> None:
+    result = run_pbt(
+        "test", "--promptdata", "audience=kids", "--extends", "casual",
+        cwd=promptparams_proj, check=False,
+    )
+    assert "tone=casual, audience=kids" in output(result)
 
-    result = run_pbt("test", "--add-to-csv", cwd=promptparams_proj, check=False)
 
+def test_cli_save_case_requires_params(promptparams_proj: Path) -> None:
+    result = run_pbt("test", "--save-case", "X", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
-    after = (promptparams_proj / "promptparams.csv").read_text(encoding="utf-8")
-    assert after == before
+    assert not (promptparams_proj / "promptparams" / "x.yml").exists()
 
 
-def test_cli_test_writes_example(promptparams_proj: Path) -> None:
-    """pbt test should write promptparams.csv.example."""
-    run_pbt("run", cwd=promptparams_proj)
+def test_cli_bad_yaml_is_reported(promptparams_proj: Path) -> None:
+    write(promptparams_proj / "promptparams" / "bad.yml", "cases:\n  - extends: nope\n")
+    result = run_pbt("test", cwd=promptparams_proj, check=False)
+    assert result.returncode != 0
+    assert "'nope'" in output(result) and "unknown baseline" in output(result)
+
+
+def test_cli_writes_yaml_example(promptparams_proj: Path) -> None:
     run_pbt("test", cwd=promptparams_proj, check=False)
+    example = promptparams_proj / "promptparams.yml.example"
+    doc = yaml.safe_load(example.read_text())
+    assert set(doc["baselines"]["default"]["promptdata"]) == {"tone", "audience"}
 
-    example = promptparams_proj / "promptparams.csv.example"
-    assert example.exists(), "promptparams.csv.example was not created"
 
-    with example.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.reader(f))
-
-    # Should have a header row
-    assert len(rows) >= 1
-    headers = rows[0]
-    # At least one promptdata column (tone is used in the test prompt)
-    assert any(h.startswith("promptdata.") for h in headers)
+def test_cli_legacy_csv_points_to_yaml(promptparams_proj: Path) -> None:
+    shutil.rmtree(promptparams_proj / "promptparams")
+    write(promptparams_proj / "promptparams.csv", "promptdata.tone\nformal\n")
+    result = run_pbt("test", cwd=promptparams_proj, check=False)
+    assert result.returncode != 0
+    assert "promptparams are now YAML" in output(result)

@@ -9,9 +9,10 @@ passes when the LLM returns JSON containing ``{"results": "pass"}``.
 
 Two modes:
 
-* **Per-row** — when a ``promptparams.csv`` file is present (or inline
-  ``--promptdata`` / ``--promptfile`` params are supplied), ``pbt run`` is
-  executed once per row and tests are reported for each row individually.
+* **Per-case** — when promptparams YAML cases are found (``promptparams.yml``,
+  ``promptparams/*.yml``, or ``--promptparams``), or inline ``--promptdata`` /
+  ``--promptfile`` params are supplied, ``pbt run`` is executed once per case
+  and tests are reported for each named case individually.
 * **Single-run** — otherwise tests run against the latest (or ``--run-id``)
   stored run's outputs.
 """
@@ -40,10 +41,13 @@ from pbt.llm import resolve_llm_call, try_load_client_module
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
 from pbt.promptparams import (
-    load_promptparams,
+    EXAMPLE_PATH,
+    PromptParamsError,
+    build_case,
+    load_baselines,
+    load_cases,
+    save_case,
     write_example,
-    append_promptparams_row,
-    parse_promptparams_row,
 )
 from pbt.cli import pretty_print
 from pbt.cli.pretty_print import err_console
@@ -68,25 +72,33 @@ def register_command(main) -> None:
     @click.option(
         "--run-id",
         default=None,
-        help="Use outputs from this specific run (default: latest run). Ignored when --promptparams-file rows are found.",
+        help="Use outputs from this specific run (default: latest run). Ignored when promptparams cases are found.",
     )
     @click.option("--no-color", is_flag=True, default=False)
     @click.option(
-        "--promptparams-file",
-        default="promptparams.csv",
-        show_default=True,
+        "--promptparams",
+        "promptparams_paths",
+        multiple=True,
+        metavar="PATH",
         help=(
-            "CSV file with columns for promptdata / promptfile parameters. "
-            "When rows are present, pbt run is executed for each row and tests "
-            "are reported per row. Column names: promptdata.<key> or promptfile.<name>. "
-            "Ignored when the file does not exist."
+            "YAML file or directory of test cases (repeatable; files are combined). "
+            "Default: promptparams.yml and promptparams/*.yml when they exist. "
+            "When cases are found, pbt run is executed for each case and tests "
+            "are reported per case."
         ),
+    )
+    @click.option(
+        "--case",
+        "case_filters",
+        multiple=True,
+        metavar="NAME",
+        help="Only run cases whose name matches (exact or glob, case-insensitive). Repeatable.",
     )
     @click.option(
         "--check-latest",
         is_flag=True,
         default=False,
-        help="Skip promptparams.csv and test against the latest stored run instead.",
+        help="Skip promptparams cases and test against the latest stored run instead.",
     )
     @click.option(
         "--promptdata",
@@ -96,7 +108,8 @@ def register_command(main) -> None:
         help=(
             "Inline promptdata for this test run. When provided, pbt run is executed "
             "with these params and tests are reported against that run (an inline "
-            "one-row promptparams). Repeatable: --promptdata tone=formal."
+            "one-case promptparams, which inherits the 'default' baseline like any "
+            "case). Repeatable: --promptdata tone=formal."
         ),
     )
     @click.option(
@@ -110,12 +123,23 @@ def register_command(main) -> None:
         ),
     )
     @click.option(
-        "--add-to-csv",
-        is_flag=True,
-        default=False,
+        "--extends",
+        "extends",
+        multiple=True,
+        metavar="BASELINE",
         help=(
-            "After running, append the inline --promptdata/--promptfile params as a "
-            "new row in the promptparams file so the case is re-tested in future "
+            "Baseline(s) the inline --promptdata/--promptfile case builds on, "
+            "instead of 'default'. Repeatable."
+        ),
+    )
+    @click.option(
+        "--save-case",
+        "save_case_name",
+        default=None,
+        metavar="NAME",
+        help=(
+            "After running, save the inline --promptdata/--promptfile params as a "
+            "named case in promptparams/<name>.yml so it is re-tested in future "
             "parameterised runs. Requires at least one --promptdata or --promptfile."
         ),
     )
@@ -124,11 +148,13 @@ def register_command(main) -> None:
         tests_dir: str,
         run_id: str | None,
         no_color: bool,
-        promptparams_file: str,
+        promptparams_paths: tuple[str, ...],
+        case_filters: tuple[str, ...],
         check_latest: bool,
         promptdata: tuple[str, ...],
         promptfiles: tuple[str, ...],
-        add_to_csv: bool,
+        extends: tuple[str, ...],
+        save_case_name: str | None,
     ) -> None:
         """
         Run test prompts from the tests/ directory against model outputs.
@@ -136,8 +162,8 @@ def register_command(main) -> None:
         Each test prompt has full Jinja2 context (ref() works as in models).
         A test passes when the LLM returns JSON containing {"results": "pass"}.
 
-        When a promptparams.csv file is present, pbt run is executed once per row
-        and tests are reported for each row individually.
+        When promptparams YAML cases are found, pbt run is executed once per
+        case and tests are reported for each named case individually.
         Without promptparams, tests run against the latest (or specified) run.
         """
         from pbt.cli import _git_sha, init_db_or_exit
@@ -184,7 +210,7 @@ def register_command(main) -> None:
             sys.exit(1)
 
         # ------------------------------------------------------------------
-        # Write promptparams.csv.example — column template for this DAG
+        # Write promptparams.yml.example — a template for this DAG's inputs
         # ------------------------------------------------------------------
         from pbt.executor.parser_initial import detect_used_promptdata
 
@@ -195,62 +221,89 @@ def register_command(main) -> None:
                     dag_promptdata.append(key)
         dag_promptfiles = get_dag_promptfiles(all_models)
 
-        # Write the template next to the real promptparams file so users can
-        # copy it into place (cp promptparams.csv.example promptparams.csv).
-        example_path = Path(f"{promptparams_file}.example")
+        # Not a *.yml file, so it is never loaded as cases itself; users copy
+        # it into place (cp promptparams.yml.example promptparams.yml).
+        example_path = Path(EXAMPLE_PATH)
         try:
             write_example(example_path, dag_promptdata, dag_promptfiles)
             if dag_promptdata or dag_promptfiles:
-                c.print(f"  [dim]promptparams.csv.example written → {example_path}[/dim]")
+                c.print(f"  [dim]promptparams example written → {example_path}[/dim]")
                 c.print()
         except Exception:  # noqa: BLE001
             pass
 
         # ------------------------------------------------------------------
-        # Parse inline --promptdata / --promptfile into a single synthetic row.
-        # When present, this row drives a fresh run (an inline one-row
-        # promptparams) and takes precedence over the CSV / --check-latest.
+        # Parse inline --promptdata / --promptfile into a single case.  When
+        # present, it drives a fresh run and takes precedence over the YAML
+        # cases / --check-latest.  It still inherits baselines like any case.
         # ------------------------------------------------------------------
-        inline_row: dict[str, str] = {}
+        inline_data: dict[str, str] = {}
+        inline_files: dict[str, str] = {}
         for v in promptdata:
             if "=" not in v:
                 err_console.print(f"[red]Error:[/red] --promptdata must be KEY=VALUE, got: {v!r}")
                 sys.exit(1)
             k, _, val = v.partition("=")
-            inline_row[f"promptdata.{k}"] = val
+            inline_data[k] = val
         for f in promptfiles:
             if "=" not in f:
                 err_console.print(f"[red]Error:[/red] --promptfile must be NAME=PATH, got: {f!r}")
                 sys.exit(1)
             k, _, val = f.partition("=")
-            inline_row[f"promptfile.{k}"] = val
+            inline_files[k] = val
+        inline = bool(inline_data or inline_files)
 
-        if add_to_csv and not inline_row:
+        if save_case_name is not None and not inline:
             err_console.print(
-                "[red]Error:[/red] --add-to-csv requires at least one --promptdata or "
-                "--promptfile to record as a new row."
+                "[red]Error:[/red] --save-case requires at least one --promptdata or "
+                "--promptfile to record as a new case."
+            )
+            sys.exit(1)
+        if extends and not inline:
+            err_console.print(
+                "[red]Error:[/red] --extends applies to inline --promptdata/--promptfile params."
             )
             sys.exit(1)
 
-        # ------------------------------------------------------------------
-        # Load promptparams rows (optional; skipped when --check-latest).
-        # Inline params override everything else.
-        # ------------------------------------------------------------------
-        if inline_row:
-            promptparams_rows = [inline_row]
-        else:
-            promptparams_rows = [] if check_latest else load_promptparams(promptparams_file)
+        _reject_csv(promptparams_paths)
 
-        if promptparams_rows:
+        # ------------------------------------------------------------------
+        # Load promptparams cases (optional; skipped when --check-latest).
+        # ------------------------------------------------------------------
+        inline_spec: dict = {"promptdata": inline_data, "promptfiles": inline_files}
+        if extends:
+            inline_spec["extends"] = list(extends)
+        try:
+            if inline:
+                cases = [build_case(
+                    save_case_name or "inline",
+                    inline_spec,
+                    load_baselines(promptparams_paths),
+                    where="inline params",
+                )]
+            elif check_latest:
+                cases = []
+            else:
+                cases = _filter_cases(load_cases(promptparams_paths), case_filters)
+        except PromptParamsError as exc:
+            err_console.print(f"[red]promptparams error:[/red] {exc}")
+            sys.exit(1)
+
+        if case_filters and not cases and not inline and not check_latest:
+            err_console.print(
+                f"[red]Error:[/red] no promptparams case matches {', '.join(case_filters)}."
+            )
+            sys.exit(1)
+
+        if cases:
             # --------------------------------------------------------------
-            # Per-row mode: run models then test for each CSV row
+            # Per-case mode: run models then test for each case
             # --------------------------------------------------------------
-            if inline_row:
-                c.print("  promptparams : [dim]inline --promptdata/--promptfile[/dim] (1 row)")
+            if inline:
+                c.print("  promptparams : [dim]inline --promptdata/--promptfile[/dim] (1 case)")
             else:
                 c.print(
-                    f"  promptparams : [dim]{promptparams_file}[/dim] "
-                    f"({len(promptparams_rows)} row{'s' if len(promptparams_rows) != 1 else ''})"
+                    f"  promptparams : {len(cases)} case{'s' if len(cases) != 1 else ''}"
                 )
             c.print()
 
@@ -264,10 +317,13 @@ def register_command(main) -> None:
             git_sha = _git_sha()
             all_test_results: list = []
 
-            for idx, row in enumerate(promptparams_rows, start=1):
-                row_promptdata, row_promptfiles = parse_promptparams_row(row)
-                row_label = ", ".join(f"{k}={v}" for k, v in row.items() if v)
-                c.rule(f"[bold]Row {idx}[/bold]" + (f" — {row_label}" if row_label else ""))
+            for idx, case in enumerate(cases, start=1):
+                row_promptdata, row_promptfiles = case.promptdata, case.promptfiles
+                c.rule(f"[bold]Case {idx}/{len(cases)}[/bold] — {case.name}")
+                inputs = [f"{k}={v}" for k, v in row_promptdata.items()]
+                inputs += [f"{k}={v}" for k, v in row_promptfiles.items()]
+                if inputs:
+                    c.print(f"  [dim]{_truncate(', '.join(inputs))}[/dim]")
 
                 # Run models for this row
                 row_run_id = db.create_run(model_count=len(ordered_models), git_sha=git_sha)
@@ -307,7 +363,7 @@ def register_command(main) -> None:
                     llm_call=llm_call,
                     promptdata=row_promptdata or None,
                     promptfiles=row_promptfiles or None,
-                    param_label=f"row_{idx}",
+                    param_label=case.name,
                 )
                 all_test_results.extend(row_test_results)
 
@@ -322,14 +378,25 @@ def register_command(main) -> None:
             total_failed = sum(1 for r in all_test_results if r.status in ("fail", "error"))
             c.rule("[bold]Overall[/bold]")
             overall_color = "green" if not total_failed else "red"
-            c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {len(promptparams_rows)} rows[/{overall_color}]")
+            n_cases = f"{len(cases)} case{'s' if len(cases) != 1 else ''}"
+            c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {n_cases}[/{overall_color}]")
 
-            # Snapshot the inline run's params into the promptparams file so the
-            # case is re-tested in future parameterised runs.
-            if add_to_csv and inline_row:
-                row_promptdata, row_promptfiles = parse_promptparams_row(inline_row)
-                append_promptparams_row(promptparams_file, row_promptdata, row_promptfiles)
-                c.print(f"  [dim]added row → {promptparams_file}[/dim]")
+            # Save the inline params as a named case so it is re-tested in
+            # future parameterised runs.  Only what was passed inline is
+            # written, so the saved case keeps inheriting its baselines.
+            if save_case_name is not None:
+                try:
+                    saved = save_case(
+                        "promptparams",
+                        save_case_name,
+                        inline_data,
+                        inline_files,
+                        extends=list(extends) or None,
+                    )
+                except PromptParamsError as exc:
+                    err_console.print(f"[red]Error:[/red] {exc}")
+                    sys.exit(1)
+                c.print(f"  [dim]saved case '{save_case_name}' → {saved}[/dim]")
 
             if total_failed:
                 sys.exit(1)
@@ -378,3 +445,43 @@ def register_command(main) -> None:
             errored = sum(1 for r in test_results if r.status == "error")
             if failed or errored:
                 sys.exit(1)
+
+
+def _reject_csv(paths: tuple[str, ...]) -> None:
+    """Stop with a pointer to the YAML format when only a legacy CSV is around."""
+    from pbt.promptparams import find_promptparams_files
+
+    legacy = [p for p in paths if p.endswith(".csv")]
+    if not paths and Path("promptparams.csv").exists():
+        try:
+            if not find_promptparams_files():
+                legacy = ["promptparams.csv"]
+        except PromptParamsError:
+            pass
+    if legacy:
+        err_console.print(
+            f"[red]Error:[/red] {legacy[0]}: promptparams are now YAML. Move each row to a "
+            "named case in promptparams.yml, e.g.\n\n"
+            "  cases:\n"
+            "    - name: Formal tone\n"
+            "      promptdata:\n"
+            "        tone: formal\n"
+            "      promptfiles:\n"
+            "        document: report.pdf\n\n"
+            "See the README section on promptparams."
+        )
+        sys.exit(1)
+
+
+def _filter_cases(cases: list, patterns: tuple[str, ...]) -> list:
+    """Keep the cases whose name matches any pattern (exact or glob, any case)."""
+    from fnmatch import fnmatchcase
+
+    if not patterns:
+        return cases
+    lowered = [p.lower() for p in patterns]
+    return [c for c in cases if any(fnmatchcase(c.name.lower(), p) for p in lowered)]
+
+
+def _truncate(text: str, limit: int = 160) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
