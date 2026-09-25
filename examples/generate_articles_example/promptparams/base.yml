@@ -1,0 +1,11 @@
+# Shared inputs. Every case in promptparams/*.yml starts from `default`
+# unless it says `extends:` something else.
+baselines:
+  default:
+    promptdata:
+      topic: The history of the printing press
+      audience: curious adults
+  for_kids:
+    extends: default
+    promptdata:
+      audience: ten-year-olds

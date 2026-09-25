@@ -132,71 +132,19 @@ Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
 
 Names that aren't models are run-level `--promptfile`s. A test that declares no `promptfiles` gets every run-level promptfile, as before. The attached bytes are part of the test's cache key.
 
-**Test cases (`promptparams`)** — to test many sets of inputs, describe them as named cases in YAML. `pbt test` runs the models once per case and reports every test against each one, as `test_name[case name]`.
-
-Every `*.yml`/`*.yaml` file in `promptparams/`, plus `promptparams.yml`, is loaded and combined, so you can split cases by topic and keep shared inputs in one place:
+**Bulk testing with YAML cases** — list named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
 
 ```yaml
-# promptparams/base.yml — shared inputs
 baselines:
-  default:                          # every case starts from this...
-    promptdata:
-      tone: formal
-      audience: engineers
-    promptfiles:
-      document: reports/annual.pdf  # relative to this file
-  casual:
-    extends: default                # baselines can build on each other
-    promptdata:
-      tone: casual
-```
-
-```yaml
-# promptparams/tone.yml — only what each case changes
+  default:
+    promptdata: {topic: The history of the printing press, audience: curious adults}
 cases:
-  - name: Formal report for engineers         # ...unless it says otherwise
-  - name: Casual tone for developers
-    extends: casual
-    promptdata:
-      audience: developers
-  - name: Summary without the source document
-    promptfiles:
-      document: null                          # null removes an inherited input
-  - name: Stands on its own
-    extends: []                               # skip the default baseline
-    promptdata:
-      tone: terse
-      audience: children
+  - name: Default topic and audience
+  - name: Rocket topic, default audience
+    promptdata: {topic: How rockets reach orbit}
 ```
 
-- `name` is how the case is reported and must be unique. A case without one is named `<file>_<n>`.
-- `extends` takes a baseline name or a list of them, applied left to right with the case's own values on top. With no `extends`, a case inherits `default` if there is one.
-- `promptdata` values can be any YAML value, multi-line strings included. `promptfiles` are a path or a list of paths, relative to the file that declares them.
-- Unknown keys, unknown baselines, loops and duplicate names are errors, so typos fail loudly.
-
-```bash
-pbt test                                   # every case
-pbt test --case "Casual*"                  # cases whose name matches (glob, case-insensitive)
-pbt test --promptparams regressions/       # other files or directories (repeatable)
-pbt test --check-latest                    # ignore cases; test the latest stored run
-```
-
-`pbt test` also writes `promptparams.yml.example`, a starter file listing every input the models and tests use.
-
-**Inline params (`--promptdata` / `--promptfile`)** — pass params straight to `pbt test` to run the models with them and test against that run. They form a single case that inherits the `default` baseline like any other, or the baselines you name with `--extends`:
-
-```bash
-pbt test --promptdata tone=playful
-pbt test --promptdata audience=kids --extends casual
-```
-
-**Save a run as a case (`--save-case`)** — when an inline param set is worth keeping as a regression case, name it. pbt writes it to its own file in `promptparams/` (`promptparams/playful_tone.yml`), so it is re-tested in future runs. Only the inline values are saved, so the case keeps inheriting its baselines:
-
-```bash
-pbt test --promptdata tone=playful --save-case "Playful tone"
-```
-
-> **Moving from `promptparams.csv`:** CSV is no longer read. Each row becomes a case: `promptdata.tone` → `promptdata: {tone: …}` and `promptfile.doc` → `promptfiles: {doc: …}`. Inputs shared by most rows can go in a `default` baseline. `--add-to-csv` is now `--save-case NAME`.
+See [`examples/generate_articles_example/promptparams/`](examples/generate_articles_example/promptparams/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
 
 
 ### `pbt serve`
