@@ -122,6 +122,16 @@ Run `tests/*.prompt` files against the latest run's outputs. Each test passes wh
 pbt test
 ```
 
+**Attaching model files (`promptfiles`)** — a test attaches files the models produced with the same `config()` syntax models use, so the judge sees the actual bytes rather than a `[file: …]` handle. Name a model for all its files, or `model.key` for one:
+
+```jinja
+{# tests/logo_is_a_fox.prompt #}
+{{ config(promptfiles=["logo"]) }}
+Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
+```
+
+Names that aren't models are run-level `--promptfile`s. A test that declares no `promptfiles` gets every run-level promptfile, as before. The attached bytes are part of the test's cache key.
+
 **Inline params (`--promptdata` / `--promptfile`)** — pass params straight to `pbt test` to run the models with them and test against that run (an inline one-row `promptparams.csv`):
 
 ```bash

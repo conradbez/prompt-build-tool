@@ -28,6 +28,15 @@ with 3 parameter rows becomes ``smoke[row_1]``, ``smoke[row_2]``,
 
 See ``pbt.promptparams`` for the CSV column-naming convention.
 
+Attaching model files
+---------------------
+Tests use the same ``config(promptfiles=[...])`` syntax as models.  Naming a
+model attaches the files it produced (decoded from their stored ``$pbt``
+references), so a judge can look at the actual bytes rather than a handle::
+
+    {{ config(promptfiles=["logo"]) }}
+    Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
+
 Global instructions
 -------------------
 Test prompts deliberately do **not** receive the run's global instruction (see
@@ -99,35 +108,70 @@ def _parse_pass(llm_output: str) -> bool:
     return isinstance(data, dict) and data.get("results") == "pass"
 
 
-def _invoke_llm(
-    rendered: str,
-    llm_call: Callable,
-    promptfiles: dict[str, str | list[str]] | None = None,
-) -> str:
+def _open_test_files(
+    source: str,
+    model_outputs: dict,
+    promptfiles: dict[str, str | list[str]] | None,
+) -> list | None:
     """
-    Call *llm_call* with *rendered*, optionally passing opened file objects
-    for each entry in *promptfiles* when the callable accepts a ``files``
-    parameter.
+    Open the files a test attaches to its LLM call, or return None.
 
-    Files are opened in binary mode and it is the caller's responsibility
-    that paths exist.  We open them here so that the ``llm_call`` consumer
-    receives ready-to-read file objects, mirroring the behaviour in
-    ``execute_run``.
+    A test that declares ``{{ config(promptfiles=[...]) }}`` gets exactly those,
+    resolved the way a model's are: a name that names a model attaches the
+    files that model produced (``"logo"`` for all of them, ``"logo.image"`` for
+    one), any other name is a run-level promptfile.  A test that declares none
+    keeps the old behaviour and receives every run-level promptfile.
+
+    Run-level files are opened in binary mode; it is the caller's
+    responsibility that paths exist.
     """
-    _sig = inspect.signature(llm_call).parameters
-    _kwargs: dict = {}
+    from pbt.executor.graph import _parse_promptfiles
+    from pbt.executor.parser_initial import parse_model_config
+    from pbt.files import iter_files, select_path, split_model_path
 
-    if promptfiles and "files" in _sig:
-        open_files = []
-        for path_or_list in promptfiles.values():
-            if isinstance(path_or_list, list):
-                for p in path_or_list:
-                    open_files.append(open(p, "rb"))  # noqa: WPS515
-            else:
-                open_files.append(open(path_or_list, "rb"))  # noqa: WPS515
-        _kwargs["files"] = open_files
+    def _open_run_level(path_or_list) -> list:
+        paths = path_or_list if isinstance(path_or_list, list) else [path_or_list]
+        return [open(p, "rb") for p in paths]  # noqa: WPS515
 
-    return llm_call(rendered, **_kwargs)
+    declared = _parse_promptfiles(parse_model_config(source))
+    if not declared:
+        if not promptfiles:
+            return None
+        return [f for value in promptfiles.values() for f in _open_run_level(value)]
+
+    opened: list = []
+    for name in declared:
+        upstream = split_model_path(name, model_outputs)
+        if upstream is not None:
+            model, path = upstream
+            value = select_path(model_outputs[model], path, name)
+            found = [file for _, file in iter_files(value)]
+            if not found:
+                raise ValueError(
+                    f"Test attaches promptfile '{name}', but model '{model}' "
+                    "produced no files there."
+                )
+            opened.extend(file.open() for file in found)
+            continue
+
+        if not promptfiles or name not in promptfiles:
+            raise ValueError(
+                f"Test declares promptfile '{name}' in config but it is neither "
+                f"a model nor a provided promptfile. Pass it via --promptfile {name}=path."
+            )
+        opened.extend(_open_run_level(promptfiles[name]))
+
+    return opened or None
+
+
+def _invoke_llm(rendered: str, llm_call: Callable, files: list | None = None) -> str:
+    """
+    Call *llm_call* with *rendered*, passing *files* when the callable
+    accepts a ``files`` parameter — the same contract as model calls.
+    """
+    if files and "files" in inspect.signature(llm_call).parameters:
+        return llm_call(rendered, files=files)
+    return llm_call(rendered)
 
 
 def execute_tests(
@@ -179,6 +223,7 @@ def execute_tests(
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
         )
 
+    from pbt.executor.run_context import _files_hash
     from pbt.files import FileOutputError, blob_store_for, decode_output
     from pbt.promptparams import parse_promptparams_row
 
@@ -232,15 +277,19 @@ def execute_tests(
                 promptdata=promptdata,
                 model_name=display_name,
             )
-            cached = storage_backend.get_cached_llm_output(rendered)
+            files = _open_test_files(source, model_outputs, promptfiles)
+            # Attached bytes are part of the cache key, so a changed file
+            # means a fresh verdict rather than a stale one.
+            cache_key = rendered + ("\x00" + _files_hash(files) if files else "")
+            cached = storage_backend.get_cached_llm_output(cache_key)
             if cached is not None:
                 llm_output = cached
                 elapsed_ms = 0
             else:
                 t0 = time.monotonic()
-                llm_output = _invoke_llm(rendered, llm_call, promptfiles)
+                llm_output = _invoke_llm(rendered, llm_call, files)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
-                storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=rendered)
+                storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=cache_key)
 
             passed = _parse_pass(llm_output)
             # Extract param_label from display_name if present
