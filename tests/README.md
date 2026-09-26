@@ -8,13 +8,39 @@ Asking an LLM to do a task misses this step because we don't come back to it wit
 
 When you're walking you have a sense for where you're going but a friend might question "have we not passed this before" or "I think this train station should be on the left if we're going the right way". These are tests we place on our maps of meaning, and similarly our LLM maps need `tests`. I believe the test here is a Jev style classifier of "does this output match expected structure" spread into the direction SET BY THE PERSON DRIVING MAP DIRECTION.
 
+**The map (conceptual).** We want to start a vending machine business. That needs sheet metal parts, which need (1) a CAD design and (2) sheet metal fabrication:
+
+```
+Vending machine business
+├── (1) CAD design:  programmatic CAD for a 60cm cubed box from sheet metal
+│     └── TEST: does the box look like the client description
+│               and fit the overall project goal?
+└── (2) Sheet metal fabrication   ← only worth doing if (1) passes
+```
+
+**The same map in pbt.** Step (1) is a model, the check under it is a classifier test:
+
 ```jinja
-{# tests/outline_uses_the_facts.prompt #}
+{# models/cad_box.prompt #}
+Write a programmatic CAD script (CadQuery) for a 60cm cubed box
+made from sheet metal.
+Client description: {{ promptdata("client_description") }}
+```
+
+```jinja
+{# tests/cad_box_fits_project.prompt #}
 {{ config(judge="classifier", threshold=0.8) }}
-Does this outline only use claims from the facts below?
+Does this box design match the client description and fit the project goal?
+CLIENT DESCRIPTION: {{ promptdata("client_description") }}
+PROJECT GOAL: {{ promptdata("project_goal") }}
 ---
-FACTS: {{ ref('extract_facts') }}
-OUTLINE: {{ ref('outline') }}
+{{ ref('cad_box') }}
+```
+
+```bash
+# runs the models for this one case, then the tests (both see the promptdata)
+pbt test --promptdata project_goal="Launch a vending machine business" \
+         --promptdata client_description="Brushed steel, front hatch, 60cm cube"
 ```
 
 Expressing a map in pbt is only as useful as knowing that the path followed matches intuitive clues along the way - if you want to get home and understand to go left but miss a turn you have yes/no tests along your walk - that is `pbt test`.
