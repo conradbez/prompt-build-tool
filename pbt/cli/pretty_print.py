@@ -144,8 +144,11 @@ def make_test_callbacks(
 
     def on_done(result: TestResult) -> None:
         test_results.append(result)
+        score = f"P(yes)={result.score:.2f}, " if result.score is not None else ""
         if result.status == "pass":
-            c.print(f"[green]PASS[/green] [dim]({result.execution_ms} ms)[/dim]")
+            c.print(f"[green]PASS[/green] [dim]({score}{result.execution_ms} ms)[/dim]")
+        elif result.status == "fail" and result.score is not None:
+            c.print(f"[red]FAIL[/red] [dim]({score}{result.execution_ms} ms)[/dim]")
         elif result.status == "fail":
             c.print("[red]FAIL[/red]")
             c.print(f"    LLM returned: [dim]{result.llm_output!r}[/dim]")

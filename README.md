@@ -132,6 +132,26 @@ Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
 
 Names that aren't models are run-level `--promptfile`s. A test that declares no `promptfiles` gets every run-level promptfile, as before. The attached bytes are part of the test's cache key.
 
+**Classifier judge** — instead of an LLM, a test can be judged by a classifier such as [Jev](https://typesafe.ai) or a local [Ollaya](https://ollaya.dev) model, which answers a yes/no question with a probability. Put the question above a `---` line and the text to judge below it; the test passes when P(yes) ≥ 0.5 (or `{{ config(threshold=0.8) }}`):
+
+```jinja
+{# tests/haiku_has_three_lines.prompt #}
+Does this haiku have exactly three lines?
+---
+{{ ref('haiku') }}
+```
+
+Add a `classify_call(state, question) -> float` to `client.py`. `pbt.systemone_classifier()` builds one for any `/v1/systemone` API with no extra dependencies:
+
+```python
+import pbt
+classify_call = pbt.systemone_classifier()  # hosted Jev; reads TYPESAFE_API_KEY
+# classify_call = pbt.systemone_classifier(model="laya:en", base_url="http://localhost:11435")  # Ollaya
+test_judge = "classifier"                    # optional: make it the default judge
+```
+
+The judge is chosen per test with `{{ config(judge="llm") }}` / `{{ config(judge="classifier") }}`, otherwise by `pbt test --judge llm|classifier`, otherwise by `test_judge` in `client.py`, otherwise `llm`. There is no fallback: a classifier test without a `---` line, or one that attaches `promptfiles`, is an error. LLM-judged tests are unchanged — the whole file, `---` included, goes to the LLM.
+
 **Bulk testing with YAML cases** — list named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
 
 ```yaml

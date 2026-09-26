@@ -37,7 +37,12 @@ from pbt.executor.graph import (
 )
 from pbt.executor.executor import execute_run
 from pbt.global_instruction import resolve_global_instruction
-from pbt.llm import resolve_llm_call, try_load_client_module
+from pbt.llm import (
+    resolve_classify_call,
+    resolve_llm_call,
+    resolve_test_judge,
+    try_load_client_module,
+)
 from pbt.rag import resolve_rag_call
 from pbt.tester import load_tests, execute_tests
 from pbt.promptparams import (
@@ -143,6 +148,15 @@ def register_command(main) -> None:
             "parameterised runs. Requires at least one --promptdata or --promptfile."
         ),
     )
+    @click.option(
+        "--judge",
+        type=click.Choice(["llm", "classifier"]),
+        default=None,
+        help=(
+            "Judge for tests that don't set config(judge=...). Default: test_judge "
+            "in client.py, else llm. classifier uses client.py's classify_call."
+        ),
+    )
     def test(
         models_dir: str,
         tests_dir: str,
@@ -155,6 +169,7 @@ def register_command(main) -> None:
         promptfiles: tuple[str, ...],
         extends: tuple[str, ...],
         save_case_name: str | None,
+        judge: str | None,
     ) -> None:
         """
         Run test prompts from the tests/ directory against model outputs.
@@ -201,6 +216,8 @@ def register_command(main) -> None:
         try:
             llm_call = resolve_llm_call(models_dir)
             rag_call = resolve_rag_call(models_dir)
+            judge = judge or resolve_test_judge(models_dir)
+            classify_call = resolve_classify_call(models_dir)
             # Models under test render exactly as they do in a real run.  The
             # test prompts themselves never get it — a judge given style
             # instructions is a biased judge.
@@ -364,6 +381,8 @@ def register_command(main) -> None:
                     promptdata=row_promptdata or None,
                     promptfiles=row_promptfiles or None,
                     param_label=case.name,
+                    judge=judge,
+                    classify_call=classify_call,
                 )
                 all_test_results.extend(row_test_results)
 
@@ -437,6 +456,8 @@ def register_command(main) -> None:
                 on_test_start=on_start,
                 on_test_done=on_done,
                 llm_call=llm_call,
+                judge=judge,
+                classify_call=classify_call,
             )
 
             pretty_print.print_test_summary(c, test_results, target_run)

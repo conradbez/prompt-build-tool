@@ -36,6 +36,20 @@ references), so a judge can look at the actual bytes rather than a handle::
     {{ config(promptfiles=["logo"]) }}
     Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
 
+Classifier tests
+----------------
+A test can instead be judged by a classifier — ``classify_call`` in client.py,
+returning P(yes).  The question goes above a ``---`` line, the text to judge
+below it, and the test passes when P(yes) >= threshold (default 0.5)::
+
+    {{ config(judge="classifier", threshold=0.8) }}
+    Does this haiku have exactly three lines?
+    ---
+    {{ ref('haiku') }}
+
+A test's ``config(judge=...)`` wins; otherwise the run's *judge* applies.
+LLM-judged tests are unaffected by ``---``.  See ``pbt.classifier``.
+
 Global instructions
 -------------------
 Test prompts deliberately do **not** receive the run's global instruction (see
@@ -52,6 +66,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from pbt.executor.parser_initial import parse_model_config
 from pbt.executor.parser_model import render_prompt
 from pbt.promptparams import TestCase
 from pbt.storage.base import StorageBackend
@@ -66,6 +81,8 @@ class TestResult:
     error: str = ""
     execution_ms: int = 0
     param_label: str = ""   # the promptparams case name, when there is one
+    judge: str = "llm"      # 'llm' | 'classifier'
+    score: float | None = None  # classifier P(yes); None for LLM-judged tests
 
 
 def load_tests(tests_dir: str | Path = "tests") -> dict[str, str]:
@@ -174,6 +191,56 @@ def _invoke_llm(rendered: str, llm_call: Callable, files: list | None = None) ->
     return llm_call(rendered)
 
 
+def _run_classifier_test(
+    run_id: str,
+    display_name: str,
+    label: str,
+    rendered: str,
+    config: dict,
+    storage_backend: StorageBackend,
+    classify_call: Callable[[str, str], float] | None,
+) -> TestResult:
+    """Judge one rendered test with *classify_call*; see :mod:`pbt.classifier`."""
+    from pbt.classifier import parse_threshold, split_question
+    from pbt.executor.graph import _parse_promptfiles
+
+    if classify_call is None:
+        raise ValueError(
+            "Test is classifier-judged but client.py defines no "
+            "'classify_call(state, question) -> float'. See pbt.systemone_classifier()."
+        )
+    if _parse_promptfiles(config):
+        raise ValueError("Classifier tests cannot attach promptfiles; judge this test with judge=\"llm\".")
+    threshold = parse_threshold(config.get("threshold"))
+    question, state = split_question(rendered)
+
+    # The probability is cached, not the verdict, so changing the threshold
+    # re-judges without a new classifier call.
+    cache_key = "\x00".join(("classifier", question, state))
+    cached = storage_backend.get_cached_llm_output(cache_key)
+    if cached is not None:
+        output = cached
+        elapsed_ms = 0
+    else:
+        t0 = time.monotonic()
+        score = float(classify_call(state, question))
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        output = json.dumps({"p_yes": score})
+        storage_backend.mark_model_success(run_id, display_name, rendered, output, cache_key=cache_key)
+    score = json.loads(output)["p_yes"]
+
+    return TestResult(
+        test_name=display_name,
+        status="pass" if score >= threshold else "fail",
+        prompt_rendered=rendered,
+        llm_output=output,
+        execution_ms=elapsed_ms,
+        param_label=label,
+        judge="classifier",
+        score=score,
+    )
+
+
 def execute_tests(
     run_id: str,
     tests: dict[str, str],
@@ -186,6 +253,8 @@ def execute_tests(
     promptdata: dict | None = None,
     promptfiles: dict[str, str | list[str]] | None = None,
     param_label: str = "",
+    judge: str = "llm",
+    classify_call: Callable[[str, str], float] | None = None,
 ) -> list[TestResult]:
     """
     Execute each test prompt against the given model outputs.
@@ -216,8 +285,17 @@ def execute_tests(
         Optional label (the case name) that suffixes every test name as
         ``name[label]``, so per-case CLI results stay identifiable.  Ignored
         when *cases* is supplied.
+    judge:
+        ``"llm"`` (default) or ``"classifier"`` — the judge for tests that do
+        not pick one with ``config(judge=...)``.
+    classify_call:
+        Classifier backend ``(state, question) -> P(yes)``.  Required only
+        when a test is classifier-judged.
     """
-    if llm_call is None:
+    from pbt.classifier import parse_judge
+
+    parse_judge(judge, "execute_tests")
+    if llm_call is None and judge == "llm":
         raise ValueError(
             "llm_call must be provided to execute_tests(). "
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
@@ -272,29 +350,39 @@ def execute_tests(
                 promptdata=promptdata,
                 model_name=display_name,
             )
-            files = _open_test_files(source, model_outputs, promptfiles)
-            # Attached bytes are part of the cache key, so a changed file
-            # means a fresh verdict rather than a stale one.
-            cache_key = rendered + ("\x00" + _files_hash(files) if files else "")
-            cached = storage_backend.get_cached_llm_output(cache_key)
-            if cached is not None:
-                llm_output = cached
-                elapsed_ms = 0
+            config = parse_model_config(source)
+            test_judge = parse_judge(config["judge"], f"Test '{display_name}'") if "judge" in config else judge
+            if test_judge == "classifier":
+                result = _run_classifier_test(
+                    run_id, display_name, label, rendered, config,
+                    storage_backend, classify_call,
+                )
             else:
-                t0 = time.monotonic()
-                llm_output = _invoke_llm(rendered, llm_call, files)
-                elapsed_ms = int((time.monotonic() - t0) * 1000)
-                storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=cache_key)
+                if llm_call is None:
+                    raise ValueError("Test is LLM-judged but no llm_call was provided.")
+                files = _open_test_files(source, model_outputs, promptfiles)
+                # Attached bytes are part of the cache key, so a changed file
+                # means a fresh verdict rather than a stale one.
+                cache_key = rendered + ("\x00" + _files_hash(files) if files else "")
+                cached = storage_backend.get_cached_llm_output(cache_key)
+                if cached is not None:
+                    llm_output = cached
+                    elapsed_ms = 0
+                else:
+                    t0 = time.monotonic()
+                    llm_output = _invoke_llm(rendered, llm_call, files)
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=cache_key)
 
-            passed = _parse_pass(llm_output)
-            result = TestResult(
-                test_name=display_name,
-                status="pass" if passed else "fail",
-                prompt_rendered=rendered,
-                llm_output=llm_output,
-                execution_ms=elapsed_ms,
-                param_label=label,
-            )
+                passed = _parse_pass(llm_output)
+                result = TestResult(
+                    test_name=display_name,
+                    status="pass" if passed else "fail",
+                    prompt_rendered=rendered,
+                    llm_output=llm_output,
+                    execution_ms=elapsed_ms,
+                    param_label=label,
+                )
 
         except Exception as exc:  # noqa: BLE001
             result = TestResult(

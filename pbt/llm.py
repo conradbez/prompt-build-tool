@@ -108,3 +108,23 @@ def resolve_blob_store(models_dir: str):
             f"exists(); got {type(store).__name__}."
         )
     return store
+
+
+def resolve_classify_call(models_dir: str) -> Callable[[str, str], float] | None:
+    """Return client.py's ``classify_call(state, question) -> float``, or None.
+
+    Only classifier-judged tests need it; see :mod:`pbt.classifier`.
+    """
+    module = load_client_module(models_dir)
+    return getattr(module, "classify_call", None) if module is not None else None
+
+
+def resolve_test_judge(models_dir: str) -> str:
+    """Return client.py's ``test_judge`` ("llm" or "classifier"), default "llm"."""
+    from pbt.classifier import parse_judge
+
+    module = load_client_module(models_dir)
+    judge = getattr(module, "test_judge", None) if module is not None else None
+    if judge is None:
+        return "llm"
+    return parse_judge(judge, f"{client_path(models_dir)} test_judge")
