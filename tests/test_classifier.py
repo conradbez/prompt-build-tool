@@ -6,6 +6,7 @@ pass when classify_call's P(yes) reaches the threshold.
 from __future__ import annotations
 
 import json
+import math
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -216,6 +217,7 @@ def test_systemone_classifier_request_shape(systemone_server) -> None:
 
 CLIENT_PY = """\
 import json
+import math
 
 def llm_call(prompt: str, config: dict | None = None) -> str:
     if "---" in prompt:
@@ -254,3 +256,54 @@ def test_cli_test_judge_from_client(classifier_proj: Path) -> None:
     client.write_text(CLIENT_PY + 'test_judge = "classifier"\n', encoding="utf-8")
     result = run_pbt("test", cwd=classifier_proj, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Scaffolded client.py — jev-like classifier_for_test_feedback
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def logprobs_server():
+    seen: list = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append((self.path, body))
+            top = [
+                {"token": "Yes", "logprob": math.log(0.6)},
+                {"token": " no", "logprob": math.log(0.2)},
+                {"token": "Maybe", "logprob": math.log(0.1)},
+            ]
+            payload = json.dumps({"choices": [{"logprobs": {"content": [{"top_logprobs": top}]}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", seen
+    server.shutdown()
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openai", "anthropic"])
+def test_scaffolded_classifier_for_test_feedback(provider, logprobs_server, tmp_path, monkeypatch) -> None:
+    from pbt.cli.init_files import CLIENT_PY, TEST_CLASSIFIER_PY
+
+    url, seen = logprobs_server
+    monkeypatch.setenv("CLASSIFIER_BASE_URL", url)
+    namespace: dict = {"os": __import__("os")}  # provider SDK imports are skipped
+    exec(TEST_CLASSIFIER_PY, namespace)
+    assert "import os" in CLIENT_PY[provider]
+    assert namespace["classify_call"] is namespace["classifier_for_test_feedback"]
+
+    assert namespace["classify_call"]("the text", "Is it good?") == pytest.approx(0.75)
+    path, body = seen[0]
+    assert path == "/chat/completions"
+    assert body["max_completion_tokens"] == 1 and body["logprobs"] is True

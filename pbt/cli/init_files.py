@@ -102,6 +102,10 @@ Example with post-processing — parse and return a cleaned dict:
 
 The `client.py` at the project root configures which LLM to call. It must expose a
 `llm_call(prompt: str) -> str` function. See the scaffolded example for details.
+
+`classifier_for_test_feedback` at the bottom judges `{{ config(judge="classifier") }}`
+tests with a one-token yes/no logprob call. Point it elsewhere with
+`CLASSIFIER_BASE_URL` / `CLASSIFIER_MODEL` / `CLASSIFIER_API_KEY`.
 """,
     "models/articles.prompt": """\
 {{ config(output_format="json") }}
@@ -218,6 +222,51 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
 """,
 }
 
+# Appended to every provider's client.py.  Jev-like: ask for ONE token and read
+# P(yes) from its logprobs instead of parsing a reply.  Stdlib only, so it works
+# with any OpenAI-compatible endpoint whatever provider llm_call uses.
+TEST_CLASSIFIER_PY = """\
+
+
+# --- Test feedback classifier (jev-like) -------------------------------------
+# Judges tests marked {{ config(judge="classifier") }}: question above a `---`
+# line, text to judge below it.  Needs an OpenAI-compatible endpoint that returns
+# logprobs (OpenAI, llama.cpp, vLLM, ...).  Returns P(yes) in [0, 1].
+import json
+import math
+import urllib.request
+
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    base = os.environ.get("CLASSIFIER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+    body = json.dumps({
+        "model": os.environ.get("CLASSIFIER_MODEL", "gpt-4o-mini"),
+        "messages": [{"role": "user", "content": f"{state}\\n\\n{question}\\nAnswer yes or no."}],
+        "max_completion_tokens": 1,
+        "logprobs": True,
+        "top_logprobs": 20,
+    }).encode()
+    request = urllib.request.Request(
+        f"{base}/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        top = json.load(response)["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
+    p = {"yes": 0.0, "no": 0.0}
+    for t in top:
+        word = t["token"].strip().lower()
+        if word in p:
+            p[word] += math.exp(t["logprob"])
+    if p["yes"] + p["no"] == 0:
+        raise RuntimeError(f"Classifier gave neither yes nor no: {[t['token'] for t in top]}")
+    return p["yes"] / (p["yes"] + p["no"])
+
+
+classify_call = classifier_for_test_feedback
+"""
+
 PROVIDERS = ("gemini", "openai", "anthropic")
 
 
@@ -246,7 +295,7 @@ def register_command(main) -> None:
     def init(project_name: str, force: bool, provider: str) -> None:
         """Scaffold a starter pbt project inside PROJECT_NAME/."""
         files = dict(INIT_FILES)
-        files["client.py"] = CLIENT_PY[provider.lower()]
+        files["client.py"] = CLIENT_PY[provider.lower()] + TEST_CLASSIFIER_PY
         files["validation/articles.py"] = """\
 # Validation files let you post-process and gate LLM outputs before they flow downstream.
 # - Name this file after the prompt it validates (e.g. articles.py validates articles.prompt).
