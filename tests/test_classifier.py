@@ -15,6 +15,7 @@ import pytest
 
 import pbt
 from pbt.classifier import split_question
+from pbt.cli import init_files
 from pbt.storage.memory import MemoryStorageBackend
 from pbt.tester import execute_tests
 from tests.conftest import run_pbt
@@ -258,52 +259,61 @@ def test_cli_test_judge_from_client(classifier_proj: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+
 # ---------------------------------------------------------------------------
-# Scaffolded client.py — jev-like classifier_for_test_feedback
+# Scaffolded client.py — `pbt init --classifier`
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
-def logprobs_server():
+def _fake_sdk_modules(completion):
+    """Stub the provider SDKs so a scaffolded client.py runs without network."""
+    import types
+
+    create = lambda **kwargs: (seen.append(kwargs), completion)[1]  # noqa: E731
     seen: list = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            seen.append((self.path, body))
-            top = [
-                {"token": "Yes", "logprob": math.log(0.6)},
-                {"token": " no", "logprob": math.log(0.2)},
-                {"token": "Maybe", "logprob": math.log(0.1)},
-            ]
-            payload = json.dumps({"choices": [{"logprobs": {"content": [{"top_logprobs": top}]}}]}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, *args):
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield f"http://127.0.0.1:{server.server_port}", seen
-    server.shutdown()
+    chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    openai = types.ModuleType("openai")
+    openai.OpenAI = lambda **kwargs: types.SimpleNamespace(chat=chat)
+    return {"openai": openai}, seen
 
 
-@pytest.mark.parametrize("provider", ["gemini", "openai", "anthropic"])
-def test_scaffolded_classifier_for_test_feedback(provider, logprobs_server, tmp_path, monkeypatch) -> None:
-    from pbt.cli.init_files import CLIENT_PY, TEST_CLASSIFIER_PY
+@pytest.mark.parametrize("provider", init_files.PROVIDERS)
+def test_scaffolded_clients_compile(provider) -> None:
 
-    url, seen = logprobs_server
-    monkeypatch.setenv("CLASSIFIER_BASE_URL", url)
-    namespace: dict = {"os": __import__("os")}  # provider SDK imports are skipped
-    exec(TEST_CLASSIFIER_PY, namespace)
-    assert "import os" in CLIENT_PY[provider]
-    assert namespace["classify_call"] is namespace["classifier_for_test_feedback"]
+    compile(init_files.CLIENT_PY[provider], "client.py", "exec")
+    source = init_files.CLIENT_PY[provider] + init_files.CLASSIFIER_PY[provider]
+    compile(source, "client.py", "exec")
+    assert "classify_call = classifier_for_test_feedback" in source
 
-    assert namespace["classify_call"]("the text", "Is it good?") == pytest.approx(0.75)
-    path, body = seen[0]
-    assert path == "/chat/completions"
-    assert body["max_completion_tokens"] == 1 and body["logprobs"] is True
+
+def test_init_classifier_is_opt_in(tmp_path: Path) -> None:
+    run_pbt("init", "plain", cwd=tmp_path)
+    run_pbt("init", "judged", "--provider", "deepseek", "--classifier", cwd=tmp_path)
+    assert "classify_call" not in (tmp_path / "plain" / "client.py").read_text()
+    assert "classify_call" in (tmp_path / "judged" / "client.py").read_text()
+
+
+@pytest.mark.parametrize(("provider", "completion", "expected"), [
+    ("deepseek", {"logprobs": [("Yes", 0.6), (" no", 0.2), ("Maybe", 0.1)]}, 0.75),
+    ("kimi", {"content": "No."}, 0.0),
+    ("xiaomi", {"content": "yes, it does"}, 1.0),
+])
+def test_openai_compatible_classifier(provider, completion, expected, monkeypatch) -> None:
+    import sys
+    import types
+
+
+    top = [types.SimpleNamespace(token=t, logprob=math.log(p)) for t, p in completion.get("logprobs", [])]
+    choice = types.SimpleNamespace(
+        message=types.SimpleNamespace(content=completion.get("content")),
+        logprobs=types.SimpleNamespace(content=[types.SimpleNamespace(top_logprobs=top)]),
+    )
+    modules, seen = _fake_sdk_modules(types.SimpleNamespace(choices=[choice]))
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setenv(init_files.OPENAI_COMPATIBLE[provider]["key_env"], "k")
+
+    namespace: dict = {}
+    exec(init_files.CLIENT_PY[provider] + init_files.CLASSIFIER_PY[provider], namespace)
+    assert namespace["classify_call"]("the text", "Is it good?") == pytest.approx(expected)
+    assert seen[0]["model"] == init_files.OPENAI_COMPATIBLE[provider]["model"]
+    assert ("logprobs" in seen[0]) == ("logprobs" in completion)

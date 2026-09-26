@@ -103,9 +103,8 @@ Example with post-processing — parse and return a cleaned dict:
 The `client.py` at the project root configures which LLM to call. It must expose a
 `llm_call(prompt: str) -> str` function. See the scaffolded example for details.
 
-`classifier_for_test_feedback` at the bottom judges `{{ config(judge="classifier") }}`
-tests with a one-token yes/no logprob call. Point it elsewhere with
-`CLASSIFIER_BASE_URL` / `CLASSIFIER_MODEL` / `CLASSIFIER_API_KEY`.
+Scaffolded with `pbt init --classifier`, it also has `classifier_for_test_feedback`,
+which judges `{{ config(judge="classifier") }}` tests with a one-token yes/no call.
 """,
     "models/articles.prompt": """\
 {{ config(output_format="json") }}
@@ -222,52 +221,186 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
 """,
 }
 
-# Appended to every provider's client.py.  Jev-like: ask for ONE token and read
-# P(yes) from its logprobs instead of parsing a reply.  Stdlib only, so it works
-# with any OpenAI-compatible endpoint whatever provider llm_call uses.
-TEST_CLASSIFIER_PY = """\
+# ---------------------------------------------------------------------------
+# OpenAI-compatible providers: same client code, different endpoint and model.
+# `no_thinking` goes in extra_body so a yes/no answer is not eaten by reasoning;
+# `top_logprobs` is 0 where the API returns no logprobs.
+# ---------------------------------------------------------------------------
+
+OPENAI_COMPATIBLE: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "name": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com",
+        "model_env": "DEEPSEEK_MODEL", "model": "deepseek-v4-flash",
+        "no_thinking": '{"thinking": {"type": "disabled"}}', "top_logprobs": "20",
+    },
+    "qwen": {
+        "name": "Qwen (Alibaba DashScope)", "key_env": "DASHSCOPE_API_KEY",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "model_env": "QWEN_MODEL", "model": "qwen-plus",
+        "no_thinking": '{"enable_thinking": False}', "top_logprobs": "5",
+    },
+    "kimi": {
+        "name": "Kimi (Moonshot)", "key_env": "MOONSHOT_API_KEY", "base_url": "https://api.moonshot.ai/v1",
+        "model_env": "KIMI_MODEL", "model": "kimi-k2.6",
+        "no_thinking": '{"thinking": {"type": "disabled"}}', "top_logprobs": "0",
+    },
+    "xiaomi": {
+        "name": "Xiaomi MiMo", "key_env": "MIMO_API_KEY", "base_url": "https://api.xiaomimimo.com/v1",
+        "model_env": "MIMO_MODEL", "model": "mimo-v2.6-flash",
+        "no_thinking": '{"thinking": {"type": "disabled"}}', "top_logprobs": "0",
+    },
+}
+
+
+def _fill(template: str, values: dict[str, str]) -> str:
+    """Replace <<key>> placeholders (templates hold literal {} and {{ }})."""
+    for key, value in values.items():
+        template = template.replace(f"<<{key}>>", value)
+    return template
+
+
+_OPENAI_COMPATIBLE_CLIENT = """\
+import os
+from openai import OpenAI
+
+# Automatically picked up by `pbt` to run .prompt files.
+# <<name>> speaks the OpenAI Chat Completions API.
+# Optional kwarg passed by pbt when declared in the signature:
+#   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
+MODEL = os.environ.get("<<model_env>>", "<<model>>")
+
+
+def _client() -> OpenAI:
+    return OpenAI(api_key=os.environ["<<key_env>>"], base_url="<<base_url>>")
+
+
+def llm_call(prompt: str, config: dict | None = None) -> str:
+    response = _client().chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
+"""
+
+for _provider, _values in OPENAI_COMPATIBLE.items():
+    CLIENT_PY[_provider] = _fill(_OPENAI_COMPATIBLE_CLIENT, _values)
+
+
+# ---------------------------------------------------------------------------
+# Test feedback classifier — appended to client.py by `pbt init --classifier`.
+# Jev-like: ask for ONE token and read P(yes) from its logprobs.  Where the
+# provider returns no logprobs the answer is a hard 1.0 / 0.0.
+# ---------------------------------------------------------------------------
+
+_CLASSIFIER_HEADER = """\
 
 
 # --- Test feedback classifier (jev-like) -------------------------------------
-# Judges tests marked {{ config(judge="classifier") }}: question above a `---`
-# line, text to judge below it.  Needs an OpenAI-compatible endpoint that returns
-# logprobs (OpenAI, llama.cpp, vLLM, ...).  Returns P(yes) in [0, 1].
-import json
+# Judges {{ config(judge="classifier") }} tests: question above a `---` line,
+# text to judge below it.  Returns P(yes) in [0, 1].
 import math
-import urllib.request
 
 
-def classifier_for_test_feedback(state: str, question: str) -> float:
-    base = os.environ.get("CLASSIFIER_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    key = os.environ.get("CLASSIFIER_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-    body = json.dumps({
-        "model": os.environ.get("CLASSIFIER_MODEL", "gpt-4o-mini"),
-        "messages": [{"role": "user", "content": f"{state}\\n\\n{question}\\nAnswer yes or no."}],
-        "max_completion_tokens": 1,
-        "logprobs": True,
-        "top_logprobs": 20,
-    }).encode()
-    request = urllib.request.Request(
-        f"{base}/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        top = json.load(response)["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
+def _p_yes(candidates: list[tuple[str, float]]) -> float:
+    \"\"\"P(yes) from (token, logprob) pairs; a plain text answer is (text, 0.0).\"\"\"
     p = {"yes": 0.0, "no": 0.0}
-    for t in top:
-        word = t["token"].strip().lower()
+    for token, logprob in candidates:
+        word = (token.split() or [""])[0].strip(".,!").lower()
         if word in p:
-            p[word] += math.exp(t["logprob"])
+            p[word] += math.exp(logprob)
     if p["yes"] + p["no"] == 0:
-        raise RuntimeError(f"Classifier gave neither yes nor no: {[t['token'] for t in top]}")
+        raise RuntimeError(f"Classifier answered neither yes nor no: {[t for t, _ in candidates]}")
     return p["yes"] / (p["yes"] + p["no"])
 
+
+def _yes_no_prompt(state: str, question: str) -> str:
+    return f"{state}\\n\\n{question}\\nAnswer with only yes or no."
+
+"""
+
+_CLASSIFIER_FOOTER = """
 
 classify_call = classifier_for_test_feedback
 """
 
-PROVIDERS = ("gemini", "openai", "anthropic")
+_CLASSIFIER_BODY: dict[str, str] = {
+    "gemini": """\
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    \"\"\"Gemini 3 returns no logprobs, so this is a hard 1.0 / 0.0 answer.\"\"\"
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    text = client.models.generate_content(
+        model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
+        contents=_yes_no_prompt(state, question),
+    ).text
+    return _p_yes([(text or "", 0.0)])
+""",
+    "openai": """\
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    \"\"\"One token; P(yes) from its top logprobs (needs a non-reasoning model).\"\"\"
+    response = OpenAI(api_key=os.environ["OPENAI_API_KEY"]).chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        messages=[{"role": "user", "content": _yes_no_prompt(state, question)}],
+        max_completion_tokens=1,
+        logprobs=True,
+        top_logprobs=20,
+    )
+    top = response.choices[0].logprobs.content[0].top_logprobs
+    return _p_yes([(t.token, t.logprob) for t in top])
+""",
+    "anthropic": """\
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    \"\"\"Claude returns no logprobs, so this is a hard 1.0 / 0.0 answer.\"\"\"
+    message = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"]).messages.create(
+        model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        max_tokens=5,
+        messages=[{"role": "user", "content": _yes_no_prompt(state, question)}],
+    )
+    return _p_yes([(message.content[0].text, 0.0)])
+""",
+}
+
+_OPENAI_COMPATIBLE_LOGPROBS = """\
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    \"\"\"One token; P(yes) from its top logprobs.\"\"\"
+    response = _client().chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": _yes_no_prompt(state, question)}],
+        max_tokens=1,
+        logprobs=True,
+        top_logprobs=<<top_logprobs>>,
+        extra_body=<<no_thinking>>,
+    )
+    top = response.choices[0].logprobs.content[0].top_logprobs
+    return _p_yes([(t.token, t.logprob) for t in top])
+"""
+
+_OPENAI_COMPATIBLE_TEXT = """\
+
+def classifier_for_test_feedback(state: str, question: str) -> float:
+    \"\"\"<<name>> returns no logprobs, so this is a hard 1.0 / 0.0 answer.\"\"\"
+    response = _client().chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": _yes_no_prompt(state, question)}],
+        max_tokens=5,
+        extra_body=<<no_thinking>>,
+    )
+    return _p_yes([(response.choices[0].message.content or "", 0.0)])
+"""
+
+for _provider, _values in OPENAI_COMPATIBLE.items():
+    _body = _OPENAI_COMPATIBLE_LOGPROBS if _values["top_logprobs"] != "0" else _OPENAI_COMPATIBLE_TEXT
+    _CLASSIFIER_BODY[_provider] = _fill(_body, _values)
+
+CLASSIFIER_PY: dict[str, str] = {
+    provider: _CLASSIFIER_HEADER + body + _CLASSIFIER_FOOTER
+    for provider, body in _CLASSIFIER_BODY.items()
+}
+
+PROVIDERS = tuple(CLIENT_PY)
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +425,15 @@ def register_command(main) -> None:
         show_default=True,
         help="LLM provider to use in the generated client.py.",
     )
-    def init(project_name: str, force: bool, provider: str) -> None:
+    @click.option(
+        "--classifier", is_flag=True, default=False,
+        help="Add a jev-like yes/no classifier to client.py for classifier-judged tests.",
+    )
+    def init(project_name: str, force: bool, provider: str, classifier: bool) -> None:
         """Scaffold a starter pbt project inside PROJECT_NAME/."""
+        provider = provider.lower()
         files = dict(INIT_FILES)
-        files["client.py"] = CLIENT_PY[provider.lower()] + TEST_CLASSIFIER_PY
+        files["client.py"] = CLIENT_PY[provider] + (CLASSIFIER_PY[provider] if classifier else "")
         files["validation/articles.py"] = """\
 # Validation files let you post-process and gate LLM outputs before they flow downstream.
 # - Name this file after the prompt it validates (e.g. articles.py validates articles.prompt).
