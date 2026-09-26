@@ -150,6 +150,8 @@ classify_call = pbt.systemone_classifier()  # hosted Jev; reads TYPESAFE_API_KEY
 test_judge = "classifier"                    # optional: make it the default judge
 ```
 
+Runnable example with a local Ollaya (install, start, `pbt test`): [`examples/classifier_test`](examples/classifier_test).
+
 The judge is chosen per test with `{{ config(judge="llm") }}` / `{{ config(judge="classifier") }}`, otherwise by `pbt test --judge llm|classifier`, otherwise by `test_judge` in `client.py`, otherwise `llm`. There is no fallback: a classifier test without a `---` line, or one that attaches `promptfiles`, is an error. LLM-judged tests are unchanged — the whole file, `---` included, goes to the LLM.
 
 **Bulk testing with YAML cases** — list named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:

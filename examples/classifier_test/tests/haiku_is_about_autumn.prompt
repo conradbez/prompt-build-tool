@@ -1,0 +1,4 @@
+{{ config(threshold=0.8) }}
+Is this poem about autumn?
+---
+{{ ref('haiku') }}

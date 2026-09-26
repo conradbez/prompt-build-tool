@@ -1,0 +1,3 @@
+Does this poem have exactly three lines?
+---
+{{ ref('haiku') }}

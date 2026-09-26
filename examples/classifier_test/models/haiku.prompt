@@ -1,0 +1,6 @@
+{# A fixed haiku, so this example needs no LLM: the template kind returns the
+   rendered text as the model's output. #}
+{{ config(model_type="template") }}
+Red leaves drift and fall
+the old pond holds the cold sky
+autumn wind goes home
