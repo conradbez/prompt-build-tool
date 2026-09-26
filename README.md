@@ -122,19 +122,29 @@ Run `tests/*.prompt` files against the latest run's outputs. Each test passes wh
 pbt test
 ```
 
-**Inline params (`--promptdata` / `--promptfile`)** — pass params straight to `pbt test` to run the models with them and test against that run (an inline one-row `promptparams.csv`):
+**Attaching model files (`promptfiles`)** — a test attaches files the models produced with the same `config()` syntax models use, so the judge sees the actual bytes rather than a `[file: …]` handle. Name a model for all its files, or `model.key` for one:
 
-```bash
-pbt test --promptdata tone=formal --promptfile doc=report.pdf
+```jinja
+{# tests/logo_is_a_fox.prompt #}
+{{ config(promptfiles=["logo"]) }}
+Is the attached image a fox? Respond {"results": "pass"} or {"results": "fail"}.
 ```
 
-**Capture a run into `promptparams.csv` (`--add-to-csv`)** — when you find a param set worth keeping as a regression case, add `--add-to-csv` to append it as a new row in `promptparams.csv`, so it's re-tested in future parameterised runs:
+Names that aren't models are run-level `--promptfile`s. A test that declares no `promptfiles` gets every run-level promptfile, as before. The attached bytes are part of the test's cache key.
 
-```bash
-pbt test --promptdata tone=formal --add-to-csv
+**Bulk testing with YAML cases** — list named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
+
+```yaml
+baselines:
+  default:
+    promptdata: {topic: The history of the printing press, audience: curious adults}
+cases:
+  - name: Default topic and audience
+  - name: Rocket topic, default audience
+    promptdata: {topic: How rockets reach orbit}
 ```
 
-`--add-to-csv` requires at least one `--promptdata`/`--promptfile`. Existing columns and rows are preserved; new columns are added to the header and older rows padded with empty cells.
+See [`examples/generate_articles_example/promptparams/`](examples/generate_articles_example/promptparams/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
 
 
 ### `pbt serve`

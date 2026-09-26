@@ -239,6 +239,98 @@ def test_cache_serves_files_and_child_key_tracks_the_bytes():
     assert len(calls) == 4  # the child re-ran because the attached bytes changed
 
 
+def _judge_files(models: dict[str, str], tests: dict[str, str], judge, **kwargs):
+    """Run *models*, then run *tests* against the stored outputs with *judge*."""
+    from pbt.tester import execute_tests
+
+    storage, run_id, _ = run_models(models, llm_call=image_llm)
+    outputs = storage.get_model_outputs_from_run(run_id, list(models))
+    return storage, run_id, outputs, execute_tests(
+        run_id=run_id,
+        tests=tests,
+        model_outputs=outputs,
+        storage_backend=storage,
+        llm_call=judge,
+        **kwargs,
+    )
+
+
+def test_test_prompts_attach_model_files_with_promptfiles():
+    seen: list[list[tuple[str, bytes]]] = []
+
+    def judge(prompt, files=None):
+        seen.append([(f.name, f.read()) for f in files or []])
+        return '{"results": "pass"}'
+
+    _, _, _, results = _judge_files(
+        {"logo": "draw a fox"},
+        {"logo_is_a_fox": '{{ config(promptfiles=["logo"]) }}\nIs this a fox?'},
+        judge,
+    )
+    assert [r.status for r in results] == ["pass"], results
+    assert seen == [[("logo.png", PNG)]]
+
+
+def test_test_prompts_attach_one_file_from_a_structured_output():
+    seen: list[list[str]] = []
+
+    def judge(prompt, files=None):
+        seen.append([f.name for f in files or []])
+        return '{"results": "pass"}'
+
+    def llm(prompt, files=None, config=None):
+        return {"caption": "two", "a": File(b"A", name="a.txt"), "b": File(b"B", name="b.txt")}
+
+    from pbt.tester import execute_tests
+
+    storage, run_id, _ = run_models({"pair": "make two"}, llm_call=llm)
+    outputs = storage.get_model_outputs_from_run(run_id, ["pair"])
+    results = execute_tests(
+        run_id=run_id,
+        tests={"t": '{{ config(promptfiles=["pair.b"]) }}\ncheck'},
+        model_outputs=outputs,
+        storage_backend=storage,
+        llm_call=judge,
+    )
+    assert [r.status for r in results] == ["pass"], results
+    assert seen == [["b.txt"]]
+
+
+def test_test_prompt_errors_when_promptfile_is_unknown():
+    _, _, _, results = _judge_files(
+        {"logo": "draw"},
+        {"t": '{{ config(promptfiles=["nope"]) }}\ncheck'},
+        lambda prompt, files=None: '{"results": "pass"}',
+    )
+    assert results[0].status == "error"
+    assert "nope" in results[0].error
+
+
+def test_test_prompt_cache_key_tracks_attached_bytes():
+    calls: list[str] = []
+
+    def judge(prompt, files=None):
+        calls.append(prompt)
+        return '{"results": "pass"}'
+
+    test = {"t": '{{ config(promptfiles=["logo"]) }}\ncheck'}
+    storage, run_id, outputs, _ = _judge_files({"logo": "draw"}, test, judge)
+
+    from pbt.tester import execute_tests
+
+    def again(raw_outputs):
+        execute_tests(run_id=run_id, tests=test, model_outputs=raw_outputs,
+                      storage_backend=storage, llm_call=judge)
+
+    again(outputs)
+    assert len(calls) == 1  # same bytes, same verdict: served from cache
+
+    v2 = File(PNG + b"v2", name="logo.png")
+    persist_files(v2, storage.blob_store())
+    again({"logo": encode_output(v2)})
+    assert len(calls) == 2  # new bytes under the same prompt: judged afresh
+
+
 def test_cache_hit_with_missing_blob_recomputes():
     calls: list[str] = []
 
