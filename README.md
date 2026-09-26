@@ -152,6 +152,30 @@ test_judge = "classifier"                    # optional: make it the default jud
 
 Runnable example with a local Ollaya (install, start, `pbt test`): [`examples/classifier_test`](examples/classifier_test).
 
+*Use case: guarding a chained pipeline.* When prompts build on each other (`extract_facts → outline → article`), one bad step poisons everything after it. Put a cheap classifier test on each hop so a failure points at the step that broke, not the final output:
+
+```jinja
+{# tests/facts_are_only_about_topic.prompt #}
+Are all of these facts about the printing press?
+---
+{{ ref('extract_facts') }}
+
+{# tests/outline_uses_the_facts.prompt #}
+{{ config(threshold=0.8) }}
+Does this outline only use claims from the facts below?
+---
+FACTS: {{ ref('extract_facts') }}
+OUTLINE: {{ ref('outline') }}
+
+{# tests/article_follows_outline.prompt #}
+Does this article follow the outline's section order?
+---
+OUTLINE: {{ ref('outline') }}
+ARTICLE: {{ ref('article') }}
+```
+
+If `outline_uses_the_facts` fails but `facts_are_only_about_topic` passes, the bug is in `outline.prompt`. Classifier calls are fast and cheap, so run them on every YAML case.
+
 The judge is chosen per test with `{{ config(judge="llm") }}` / `{{ config(judge="classifier") }}`, otherwise by `pbt test --judge llm|classifier`, otherwise by `test_judge` in `client.py`, otherwise `llm`. There is no fallback: a classifier test without a `---` line, or one that attaches `promptfiles`, is an error. LLM-judged tests are unchanged — the whole file, `---` included, goes to the LLM.
 
 **Bulk testing with YAML cases** — list named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
