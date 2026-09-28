@@ -11,6 +11,10 @@ including the ones you register yourself.
 ``template``         the rendered text *is* the output (``exec_fn=None``)
 ``execute_python``   run the rendered text as Python
 ``agent``            hand the rendered text to mini-swe-agent as its task
+``quality``          the plain LLM call, checked and retried until it passes
+
+Looping over a list is not a kind: ``config(loop_over="x")`` runs any kind
+once per item, in the executor.
 
 Importing this module registers them; :mod:`pbt` does that on import.
 """
@@ -196,6 +200,66 @@ def _agent_model(name: str | None, model_cfg: dict):
     return get_model(name, model_cfg)
 
 
+async def check_quality(rendered: str, call: ModelCall) -> str:
+    """The plain LLM call, then an LLM check of the answer, retried until it passes.
+
+    Config keys:
+
+    ``quality_check``        what a good answer must satisfy (required)
+    ``quality_retries``      regenerations allowed after a failed check (default 2)
+    ``quality_pass_marker``  text in the check's reply that means pass (default PASS)
+
+    A failed check's critique is appended to the model's own prompt for the
+    next attempt, so the template needs nothing quality-specific.  The last
+    attempt is the output whether or not it passed.  Every attempt and check
+    is an ordinary cached LLM call, so an unchanged run replays for free.
+    """
+    config = call.spec.config
+    criteria = config.get("quality_check")
+    if not criteria:
+        raise ValueError(
+            f"Model '{call.spec.name}': model_type=\"quality\" needs "
+            "config(quality_check=\"...\") — what a good answer must satisfy."
+        )
+    retries = call.spec.config_int("quality_retries", 2)
+    marker = str(config.get("quality_pass_marker", "PASS"))
+
+    output = await call.llm(rendered)
+    for _ in range(retries):
+        verdict = await call.llm(_QUALITY_CHECK.format(
+            criteria=criteria, output=output, marker=marker,
+        ))
+        if marker.upper() in str(verdict).upper():
+            break
+        output = await call.llm(rendered + _QUALITY_RETRY.format(
+            output=output, feedback=verdict,
+        ))
+    return output
+
+
+_QUALITY_CHECK = """Check this answer against the criteria below.
+
+Criteria:
+{criteria}
+
+Answer:
+{output}
+
+If the answer meets the criteria, reply {marker}. Otherwise explain what is wrong."""
+
+_QUALITY_RETRY = """
+
+A previous answer was rejected.
+
+Previous answer:
+{output}
+
+Reviewer feedback:
+{feedback}
+
+Write a new answer that addresses the feedback."""
+
+
 # ---------------------------------------------------------------------------
 # The kinds
 # ---------------------------------------------------------------------------
@@ -222,5 +286,12 @@ AGENT = ModelKind(
     config_keys=frozenset({"agent_dir", "agent_model", "agent_step_limit", "agent_cost_limit"}),
 )
 
-for _kind in (LLM, TEMPLATE, PYTHON, AGENT):
+#: The plain LLM call, checked against ``quality_check`` and retried on failure.
+QUALITY = ModelKind(
+    name="quality",
+    exec_fn=check_quality,
+    config_keys=frozenset({"quality_check", "quality_retries", "quality_pass_marker"}),
+)
+
+for _kind in (LLM, TEMPLATE, PYTHON, AGENT, QUALITY):
     register_model_kind(_kind)

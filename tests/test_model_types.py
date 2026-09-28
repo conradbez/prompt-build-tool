@@ -43,7 +43,7 @@ def run_models(models: dict[str, str], *, storage=None, llm_call=stub_llm, **kwa
 # ---------------------------------------------------------------------------
 
 def test_builtin_kinds_are_registered():
-    assert known_model_kinds() == {"template", "execute_python", "agent"}
+    assert known_model_kinds() == {"template", "execute_python", "agent", "quality"}
     # The unnamed default is the plain LLM call.
     assert get_model_kind("") is not None
 
@@ -191,3 +191,129 @@ def test_post_processing_kind_is_idempotent_across_cached_runs():
     assert list(storage._cache.values()) == ["resp"]  # cache holds the raw response
     # Readers of the run see the model's real output, not the raw response.
     assert second_storage.get_model_outputs_from_run(run_id, ["s"]) == {"s": "resp!"}
+
+
+# ---------------------------------------------------------------------------
+# loop_over — any kind, once per item
+# ---------------------------------------------------------------------------
+
+def test_loop_over_runs_the_llm_once_per_item():
+    seen = []
+
+    def llm(prompt: str, config: dict | None = None) -> str:
+        if (config or {}).get("output_format") == "json":
+            return json.dumps(["apple", "pear"])
+        seen.append(prompt.strip())
+        return f"about {prompt.split()[-1]}"
+
+    _, _, results = run_models({
+        "fruits": '{{ config(output_format="json") }}\nList fruit.',
+        "notes": '{{ config(loop_over="fruits") }}\nDescribe {{ ref("fruits") }}',
+        "digest": 'Notes: {{ ref("notes") }}',
+    }, llm_call=llm)
+
+    assert sorted(seen[:2]) == ["Describe apple", "Describe pear"]
+    assert results["notes"].value == ["about apple", "about pear"]
+    assert "Describe apple" in results["notes"].prompt_rendered
+    assert "Describe pear" in results["notes"].prompt_rendered
+    assert results["digest"].status == "success"
+
+
+def test_loop_over_works_for_any_kind_and_item_fields():
+    _, _, results = run_models({
+        "people": (
+            '{{ config(model_type="execute_python", output_format="json") }}\n'
+            'import json\nprint(json.dumps([{"name": "ada"}, {"name": "alan"}]))'
+        ),
+        "greetings": (
+            '{{ config(model_type="template", loop_over="people") }}'
+            'Hi {{ ref("people").name }}'
+        ),
+    })
+    assert results["greetings"].value == ["Hi ada", "Hi alan"]
+
+
+def test_loop_over_parses_each_item_as_json():
+    _, _, results = run_models({
+        "xs": '{{ config(output_format="json") }}\nlist',
+        "ys": '{{ config(loop_over="xs", output_format="json") }}\n{{ ref("xs") }}',
+    })
+    assert results["ys"].value == [["a", "b"], ["a", "b"]]
+
+
+def test_loop_over_skip_replaces_only_that_item():
+    _, _, results = run_models({
+        "xs": '{{ config(output_format="json") }}\nlist',
+        "ys": (
+            '{{ config(loop_over="xs") }}\n'
+            '{% if ref("xs") == "a" %}{{ skip_and_set_to_value("skipped") }}{% endif %}'
+            '{{ ref("xs") }}'
+        ),
+    })
+    assert results["ys"].value == ["skipped", "resp"]
+    assert results["ys"].prompt_skipped is False
+
+
+def test_loop_over_needs_a_list():
+    _, _, results = run_models({
+        "x": "text",
+        "y": '{{ config(loop_over="x") }}\n{{ ref("x") }}',
+    })
+    assert results["y"].status == "error"
+    assert "needs a list" in results["y"].error
+
+
+def test_loop_over_must_be_a_dependency():
+    _, _, results = run_models({
+        "xs": '{{ config(output_format="json") }}\nlist',
+        "y": '{{ config(loop_over="xs") }}\nno ref here',
+    })
+    assert results["y"].status == "error"
+    assert "not a dependency" in results["y"].error
+
+
+# ---------------------------------------------------------------------------
+# quality — the LLM call, checked and retried
+# ---------------------------------------------------------------------------
+
+def _quality_llm(verdicts: list[str]):
+    """An LLM that answers checks from *verdicts* in turn, and numbers attempts."""
+    prompts: list[str] = []
+
+    def llm(prompt: str, config: dict | None = None) -> str:
+        prompts.append(prompt.strip())
+        if prompt.startswith("Check this answer"):
+            return verdicts.pop(0)
+        return f"attempt {sum(not p.startswith('Check') for p in prompts)}"
+
+    return llm, prompts
+
+
+def test_quality_returns_first_answer_that_passes():
+    llm, prompts = _quality_llm(["FAIL: too short", "PASS"])
+    _, _, results = run_models({
+        "essay": '{{ config(model_type="quality", quality_check="Long enough") }}\nWrite.',
+    }, llm_call=llm)
+
+    assert results["essay"].value == "attempt 2"
+    assert len(prompts) == 4  # attempt, check, retry, check
+    assert "Long enough" in prompts[1]
+    assert "FAIL: too short" in prompts[2] and prompts[2].startswith("Write.")
+
+
+def test_quality_stops_after_retries_and_keeps_the_last_attempt():
+    llm, prompts = _quality_llm(["no", "no", "no"])
+    _, _, results = run_models({
+        "essay": (
+            '{{ config(model_type="quality", quality_check="c", quality_retries="1") }}\n'
+            'Write.'
+        ),
+    }, llm_call=llm)
+    assert results["essay"].value == "attempt 2"
+    assert len(prompts) == 3  # attempt, check, retry
+
+
+def test_quality_needs_a_check():
+    _, _, results = run_models({"essay": '{{ config(model_type="quality") }}\nWrite.'})
+    assert results["essay"].status == "error"
+    assert "quality_check" in results["essay"].error

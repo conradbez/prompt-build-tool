@@ -160,14 +160,21 @@ class RunContext:
 
     # -- rendering ----------------------------------------------------------
 
-    def render(self, spec: ModelSpec) -> tuple[str, _RenderState]:
+    def render(
+        self, spec: ModelSpec, outputs: dict[str, Any] | None = None
+    ) -> tuple[str, _RenderState]:
         """Render *spec*'s template and record it for the run report.
 
         Skip propagation is applied by the executor, from the recorded state.
+
+        *outputs* replaces the outputs ``ref()`` resolves against — a
+        ``loop_over`` model passes one per item.  Such a render is one of
+        several, so it is appended to the report and its skip state governs
+        only its own item, not the model.
         """
         rendered, state = render_prompt(
             spec.source,
-            self.outputs,
+            self.outputs if outputs is None else outputs,
             promptdata=self.promptdata,
             rag_call=self.rag_call,
             prompt_skipped_models=self.skipped,
@@ -175,8 +182,11 @@ class RunContext:
             global_instruction=self.global_instruction_for(spec),
         )
         acct = self._acct(spec.name)
-        acct.rendered = rendered
-        acct.render_state = state
+        if outputs is None:
+            acct.rendered = rendered
+            acct.render_state = state
+        else:
+            acct.rendered += ("\n\n---\n\n" if acct.rendered else "") + rendered
         return rendered, state
 
     def global_instruction_for(self, spec: ModelSpec) -> str | None:

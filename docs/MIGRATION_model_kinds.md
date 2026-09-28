@@ -79,8 +79,19 @@ The `loop` and `quality_check` built-in kinds are gone, along with the
 them, the `loop_over` / `quality_retries` / `quality_pass_marker` config keys,
 and `model.meta` in templates. A `.prompt` file still using
 `model_type="loop"` or `"quality_check"` now warns about an unknown
-`model_type` and runs as a plain LLM call. A kind that needs one call per item
-can loop inside its own `exec_fn` over `call.outputs`.
+`model_type` and runs as a plain LLM call.
+
+Both came back in a form that needs no special hooks:
+
+- **Loop** is the `loop_over` config key and works with every kind. Replace
+  `config(model_type="loop")` with `config(loop_over="<the list model>")`.
+  Naming the model is now required.
+- **Quality** is `model_type="quality"`, an ordinary `exec_fn`. The check moves
+  off its own node and onto the model being checked, as
+  `config(model_type="quality", quality_check="<criteria>")`. The retry
+  feedback is appended to the prompt automatically, so drop any
+  `model.meta.feedback_from_previous_run` block. Downstream models `ref()` the
+  checked model rather than the old check node.
 
 ## What did not change in 0.4
 

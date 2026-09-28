@@ -505,7 +505,8 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `output_format` | `"json"` parses and validates the output as JSON; defaults to `"text"` |
 | `output_extension` | File extension for `outputs/<model>.<ext>`; defaults to `"md"` |
 | `promptfiles` | Names of files this model receives at runtime — see [Passing files to models](#passing-files-to-models-promptfiles) |
-| `model_type` | `"template"`, `"execute_python"`, or a type you register; defaults to a plain LLM call |
+| `model_type` | `"template"`, `"execute_python"`, `"agent"`, `"quality"`, or a type you register; defaults to a plain LLM call |
+| `loop_over` | Run this model once per item of that upstream list — see [Looping over a list](#looping-over-a-list-loop_over) |
 | `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
 
 Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
@@ -695,6 +696,74 @@ re-run. The agent runs commands on your machine with no sandbox.
 
 ---
 
+## Looping over a list (`loop_over`)
+
+`loop_over` runs a model once per item of an upstream list and collects the
+results into a list. Inside the template, `ref()` on that model yields the
+current item.
+
+```jinja
+{# models/articles.prompt #}
+{{ config(output_format="json") }}
+Return a JSON array of 3 article titles about {{ promptdata("topic") }}.
+```
+
+```jinja
+{# models/summaries.prompt #}
+{{ config(loop_over="articles") }}
+Write a one-paragraph summary for this article title:
+{{ ref('articles') }}
+```
+
+`summaries` outputs `["...", "...", "..."]`; downstream models get the whole
+list from `ref('summaries')`. Items run concurrently, each with its own cache
+entry, so adding an item to `articles` costs one new call.
+
+`loop_over` is not a model kind, so it combines with any of them: a `template`,
+`execute_python` or `agent` model loops the same way. It also accepts a `Dir`,
+looping over its files. With `output_format="json"` each item's result is
+parsed on its own. A skip function that fires for one item replaces only that
+item's result.
+
+---
+
+## Quality checks with retries (`model_type="quality"`)
+
+A `quality` model is a plain LLM call that checks its own answer, and tries
+again with the reviewer's critique when the check fails.
+
+```jinja
+{# models/article.prompt #}
+{{ config(
+    model_type="quality",
+    quality_check="A clear introduction, body and conclusion, under 400 words.",
+) }}
+Write an article about {{ ref('topic') }}.
+```
+
+The run for `article`:
+
+1. Send the prompt → an answer.
+2. Ask the LLM whether the answer meets `quality_check`. If the reply contains
+   `PASS`, stop.
+3. Otherwise send the prompt again with the rejected answer and the critique
+   appended, and go back to 2. After `quality_retries` retries the latest answer is
+   kept, whether it passed or not.
+
+Downstream models `ref('article')` as usual, and the template needs nothing
+quality-specific. Each attempt and check is cached like any LLM call.
+
+| config key            | meaning                                           |
+|-----------------------|---------------------------------------------------|
+| `quality_check`       | what a good answer must satisfy (required)        |
+| `quality_retries`     | retries after a failed check (default `2`)        |
+| `quality_pass_marker` | text in the check's reply that means pass (default `PASS`) |
+
+It is an ordinary `exec_fn` in `pbt/executor/builtin_kinds.py`. Copy it if you
+want a different check prompt or retry rule.
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.
@@ -771,9 +840,9 @@ The model is recorded as a successful run, downstream templates can detect it wi
 ## Writing your own model kind (`model_type=`)
 
 Every `.prompt` file is run by a *model kind*. Leave `model_type` unset and pbt
-sends the rendered prompt to your LLM; set it to `template` or
-`execute_python` and pbt runs it differently. If neither does what you need,
-you can add your own.
+sends the rendered prompt to your LLM; set it to `template`,
+`execute_python`, `agent` or `quality` and pbt runs it differently. If none of
+those does what you need, you can add your own.
 
 A kind is a function and a registration, both in `client.py`:
 

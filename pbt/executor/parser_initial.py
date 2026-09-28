@@ -28,6 +28,7 @@ _BUILTIN_CONFIG_KEYS = frozenset({
     "promptfiles",
     "model_type",
     "global_instruction",
+    "loop_over",
 })
 
 _extra_config_keys: set[str] = set()

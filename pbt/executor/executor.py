@@ -5,7 +5,7 @@ The executor owns everything that is the same for every model, so that a model
 kind never has to reimplement it:
 
   1. Look up the kind for the model's ``model_type``.
-  2. Render the template.
+  2. Render the template — once, or once per item with ``loop_over``.
   3. Hand the rendered text to the kind's ``exec_fn``, with the cached LLM call
      and cached compute preloaded onto a :class:`~pbt.model_types.ModelCall`.
   4. Apply skip propagation from the model's own template.
@@ -23,14 +23,16 @@ Use ``pbt.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
+from pbt.executor.parser_model import _RenderState
 from pbt.executor.run_context import RunContext, parse_json_output
-from pbt.files import BlobStore, contains_files, decode_output, encode_output, persist_files
+from pbt.files import BlobStore, Dir, contains_files, decode_output, encode_output, persist_files
 from pbt.model_spec import ModelSpec
 from pbt.model_types import ModelCall, ModelKind, get_model_kind
 from pbt.storage.base import StorageBackend
@@ -61,7 +63,7 @@ _SOLE_REF = re.compile(
 )
 
 
-def _passthrough_files(spec: ModelSpec, ctx: RunContext) -> Any:
+def _passthrough_files(spec: ModelSpec, outputs: dict[str, Any]) -> Any:
     """The upstream value a pure ``{{ ref('x') }}`` template forwards, if it has files.
 
     Rendering would turn files into their text handle.  A template that is
@@ -70,30 +72,92 @@ def _passthrough_files(spec: ModelSpec, ctx: RunContext) -> Any:
     match = _SOLE_REF.match(spec.source)
     if match is None:
         return None
-    value = ctx.outputs.get(match.group("name"))
+    value = outputs.get(match.group("name"))
     return value if contains_files(value) else None
 
 
 async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
     """Render *spec* and run *kind*'s exec_fn over the rendered prompt.
 
+    With ``config(loop_over="x")`` that happens once per item of upstream
+    model ``x`` instead — see :func:`_produce_each`.
+    """
+    loop_over = spec.config.get("loop_over")
+    if loop_over:
+        return await _produce_each(kind, spec, ctx, str(loop_over))
+    rendered, state = ctx.render(spec)
+    return await _run_kind(kind, spec, ctx, rendered, state, ctx.outputs)
+
+
+async def _run_kind(
+    kind: ModelKind,
+    spec: ModelSpec,
+    ctx: RunContext,
+    rendered: str,
+    state: _RenderState,
+    outputs: dict[str, Any],
+) -> Any:
+    """Run *kind*'s exec_fn over one rendered prompt.
+
     ``exec_fn=None`` means the rendered text is itself the output, so nothing
     runs.  Otherwise the cached LLM call and cached compute are bound to this
     model and this render — a kind receives them ready to call, and so never
     touches the cache, the clock or the skip state itself.
     """
-    rendered, state = ctx.render(spec)
     if kind.exec_fn is None:
-        passthrough = _passthrough_files(spec, ctx)
+        passthrough = _passthrough_files(spec, outputs)
         return rendered if passthrough is None else passthrough
 
     call = ModelCall(
         spec=spec,
-        outputs=ctx.outputs,
+        outputs=outputs,
         llm=partial(ctx.call_llm, spec=spec, state=state),
         compute=partial(ctx.cached, spec=spec, state=state),
     )
     return await kind.exec_fn(rendered, call)
+
+
+def _loop_items(spec: ModelSpec, ctx: RunContext, loop_over: str) -> list:
+    """The items ``loop_over`` names: a JSON list, or the files of a Dir."""
+    if loop_over not in spec.depends_on:
+        raise ValueError(
+            f"Model '{spec.name}': loop_over='{loop_over}' is not a dependency "
+            f"of this model — ref('{loop_over}') it in the template."
+        )
+    value = ctx.outputs.get(loop_over)
+    if isinstance(value, Dir):
+        return value.files()
+    if not isinstance(value, list):
+        raise ValueError(
+            f"Model '{spec.name}': loop_over='{loop_over}' needs a list, but "
+            f"'{loop_over}' produced {type(value).__name__}. Give it "
+            'output_format="json" and have it return a JSON array.'
+        )
+    return value
+
+
+async def _produce_each(
+    kind: ModelKind, spec: ModelSpec, ctx: RunContext, loop_over: str
+) -> list:
+    """Run the model once per item of *loop_over*, collecting a list.
+
+    Each item is an ordinary render and exec_fn call in which ``ref(loop_over)``
+    yields that item — so looping works for every kind, and a kind never knows
+    it is inside a loop.  Items run concurrently; results keep input order.  A
+    skip function fired for one item replaces that item's output only.
+    """
+    async def one(item: Any) -> Any:
+        outputs = {**ctx.outputs, loop_over: item}
+        rendered, state = ctx.render(spec, outputs=outputs)
+        if state.skip_value is not None:
+            return state.skip_value
+        value = await _run_kind(kind, spec, ctx, rendered, state, outputs)
+        if isinstance(value, str) and spec.output_format == "json":
+            return parse_json_output(value)
+        return value
+
+    items = _loop_items(spec, ctx, loop_over)
+    return list(await asyncio.gather(*(one(item) for item in items)))
 
 
 async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
