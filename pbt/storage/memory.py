@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from pbt.tokens import add_tokens
+
 
 class MemoryStorageBackend:
     def __init__(self) -> None:
@@ -83,14 +85,11 @@ class MemoryStorageBackend:
     def get_cached_llm_output(self, cache_key: str) -> str | None:
         return self._cache.get(_prompt_hash(cache_key))
 
-    def get_cached_token_usage(self, cache_key: str) -> tuple[int | None, int | None] | None:
+    def get_cached_token_usage(self, cache_key: str) -> int | None:
         row = self._cache_rows.get(_prompt_hash(cache_key))
         if row is None:
             return None
-        return (
-            _sum(row.get("input_tokens"), row.get("cache_input_tokens")),
-            _sum(row.get("output_tokens"), row.get("cache_output_tokens")),
-        )
+        return add_tokens(row.get("spent_tokens"), row.get("cache_spent_tokens"))
 
     def upsert_model_pending(
         self,
@@ -118,10 +117,8 @@ class MemoryStorageBackend:
             "depends_on": json.dumps(depends_on),
             "model_type": model_type,
             "config": json.dumps(config or {}, sort_keys=True),
-            "input_tokens": None,
-            "output_tokens": None,
-            "cache_input_tokens": None,
-            "cache_output_tokens": None,
+            "spent_tokens": None,
+            "cache_spent_tokens": None,
         }
 
     def mark_model_running(self, run_id: str, model_name: str) -> None:
@@ -170,18 +167,14 @@ class MemoryStorageBackend:
         self,
         run_id: str,
         model_name: str,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_input_tokens: int | None = None,
-        cache_output_tokens: int | None = None,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
     ) -> None:
         """Store the tokens a model spent, and those its cache hits saved."""
         self._results.setdefault(run_id, {}).setdefault(model_name, {}).update(
             {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cache_input_tokens": cache_input_tokens,
-                "cache_output_tokens": cache_output_tokens,
+                "spent_tokens": spent_tokens,
+                "cache_spent_tokens": cache_spent_tokens,
             }
         )
 
@@ -216,10 +209,6 @@ class MemoryStorageBackend:
             key=lambda row: row["created_at"],
             reverse=True,
         )[:limit]
-
-
-def _sum(a: int | None, b: int | None) -> int | None:
-    return None if a is None and b is None else (a or 0) + (b or 0)
 
 
 def _now() -> str:

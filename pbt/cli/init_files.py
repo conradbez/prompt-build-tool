@@ -164,7 +164,7 @@ import pbt
 # Optional kwargs passed by pbt when declared in the signature:
 #   files  - list of open file objects attached to the prompt (via --promptdata key=@path)
 #   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
-def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> str:
+def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> pbt.LLMResult:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     uploaded = []
     for f in (files or []):
@@ -178,13 +178,10 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
         model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
         contents=contents,
     )
-    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    # pbt.LLMResult reports tokens spent to `pbt docs`; returning the bare text also works.
+    # total_token_count covers input, output and thinking.
     usage = response.usage_metadata
-    return pbt.LLMResult(
-        response.text,
-        input_tokens=usage.prompt_token_count if usage else None,
-        output_tokens=usage.candidates_token_count if usage else None,
-    )
+    return pbt.LLMResult(response.text, spent_tokens=usage.total_token_count if usage else None)
 """,
     "openai": """\
 import os
@@ -196,7 +193,7 @@ import pbt
 # Optional kwargs passed by pbt when declared in the signature:
 #   files  - list of open file objects attached to the prompt (via --promptdata key=@path)
 #   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
-def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> str:
+def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> pbt.LLMResult:
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     content: list = [{"type": "input_text", "text": prompt}]
     for f in (files or []):
@@ -206,12 +203,10 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         input=[{"role": "user", "content": content}],
     )
-    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
-    return pbt.LLMResult(
-        response.output_text,
-        input_tokens=response.usage.input_tokens if response.usage else None,
-        output_tokens=response.usage.output_tokens if response.usage else None,
-    )
+    # pbt.LLMResult reports tokens spent to `pbt docs`; returning the bare text also works.
+    # total_tokens covers input, output and reasoning.
+    usage = response.usage
+    return pbt.LLMResult(response.output_text, spent_tokens=usage.total_tokens if usage else None)
 """,
     "anthropic": """\
 import os
@@ -223,7 +218,7 @@ import pbt
 # Optional kwargs passed by pbt when declared in the signature:
 #   files  - list of open file objects attached to the prompt (via --promptdata key=@path)
 #   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
-def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> str:
+def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> pbt.LLMResult:
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     content: list = []
     for f in (files or []):
@@ -235,12 +230,10 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
         max_tokens=8096,
         messages=[{"role": "user", "content": content}],
     )
-    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
-    return pbt.LLMResult(
-        message.content[0].text,
-        input_tokens=message.usage.input_tokens,
-        output_tokens=message.usage.output_tokens,
-    )
+    # pbt.LLMResult reports tokens spent to `pbt docs`; returning the bare text also works.
+    # Anthropic reports no total; output_tokens already includes thinking.
+    usage = message.usage
+    return pbt.LLMResult(message.content[0].text, spent_tokens=usage.input_tokens + usage.output_tokens)
 """,
 }
 
@@ -299,16 +292,17 @@ def _client() -> OpenAI:
     return OpenAI(api_key=os.environ["<<key_env>>"], base_url="<<base_url>>")
 
 
-def llm_call(prompt: str, config: dict | None = None) -> str:
+def llm_call(prompt: str, config: dict | None = None) -> pbt.LLMResult:
     response = _client().chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
-    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    # pbt.LLMResult reports tokens spent to `pbt docs`; returning the bare text also works.
+    # total_tokens covers input, output and reasoning.
+    usage = response.usage
     return pbt.LLMResult(
         response.choices[0].message.content,
-        input_tokens=response.usage.prompt_tokens if response.usage else None,
-        output_tokens=response.usage.completion_tokens if response.usage else None,
+        spent_tokens=usage.total_tokens if usage else None,
     )
 """
 

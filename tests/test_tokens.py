@@ -21,7 +21,7 @@ MODELS = {
 
 
 def token_llm(prompt: str) -> pbt.LLMResult:
-    return pbt.LLMResult(f"re: {prompt}", input_tokens=10, output_tokens=5)
+    return pbt.LLMResult(f"re: {prompt}", spent_tokens=15)
 
 
 def run_once(storage, llm_call=token_llm, models=MODELS):
@@ -45,15 +45,15 @@ def test_llm_result_is_unwrapped_and_tokens_recorded(storage):
     run_id, results = run_once(storage)
     assert results["topic"].value == "re: Name a topic."
     assert results["article"].value == "re: Write about re: Name a topic.."
-    assert (results["topic"].input_tokens, results["topic"].output_tokens) == (10, 5)
-    assert results["topic"].cache_input_tokens is None
+    assert results["topic"].spent_tokens == 15
+    assert results["topic"].cache_spent_tokens is None
     # A template makes no call, so its tokens stay unknown.
-    assert results["header"].input_tokens is None
+    assert results["header"].spent_tokens is None
 
     rows = {r["model_name"]: r for r in storage.get_run_results(run_id)}
     assert rows["topic"]["llm_output"] == "re: Name a topic."
-    assert (rows["article"]["input_tokens"], rows["article"]["output_tokens"]) == (10, 5)
-    assert rows["header"]["input_tokens"] is None
+    assert rows["article"]["spent_tokens"] == 15
+    assert rows["header"]["spent_tokens"] is None
 
 
 def test_cache_hit_reports_the_tokens_it_saved(storage):
@@ -61,43 +61,43 @@ def test_cache_hit_reports_the_tokens_it_saved(storage):
     run_id, results = run_once(storage)
     topic = results["topic"]
     assert topic.cached
-    assert (topic.input_tokens, topic.output_tokens) == (None, None)
-    assert (topic.cache_input_tokens, topic.cache_output_tokens) == (10, 5)
+    assert topic.spent_tokens is None
+    assert topic.cache_spent_tokens == 15
 
     # A third run's hit is served from the second run's (cached) row — the
     # original call's tokens carry forward.
     _, results = run_once(storage)
-    assert (results["article"].cache_input_tokens, results["article"].cache_output_tokens) == (10, 5)
+    assert results["article"].cache_spent_tokens == 15
 
 
 def test_plain_string_llm_call_leaves_tokens_unknown(storage):
     run_id, results = run_once(storage, llm_call=lambda p: "plain")
     assert results["topic"].value == "plain"
-    assert results["topic"].input_tokens is None
-    assert all(r["input_tokens"] is None for r in storage.get_run_results(run_id))
+    assert results["topic"].spent_tokens is None
+    assert all(r["spent_tokens"] is None for r in storage.get_run_results(run_id))
 
 
 def test_json_output_parses_inside_llm_result(storage):
     models = {"items": '{{ config(output_format="json") }}List.'}
     _, results = run_once(
-        storage, llm_call=lambda p: pbt.LLMResult('["a"]', input_tokens=3), models=models,
+        storage, llm_call=lambda p: pbt.LLMResult('["a"]', spent_tokens=3), models=models,
     )
     assert results["items"].value == ["a"]
-    assert (results["items"].input_tokens, results["items"].output_tokens) == (3, None)
+    assert results["items"].spent_tokens == 3
 
 
 def test_older_database_gains_token_columns(tmp_path):
     path = tmp_path / "pbt.db"
     SQLiteStorageBackend(path).init_db()
     with sqlite3.connect(path) as conn:
-        for col in ("input_tokens", "output_tokens", "cache_input_tokens", "cache_output_tokens"):
+        for col in ("spent_tokens", "cache_spent_tokens"):
             conn.execute(f"ALTER TABLE model_results DROP COLUMN {col}")
 
     backend = SQLiteStorageBackend(path)
     backend.init_db()
     run_id, _ = run_once(backend)
     rows = {r["model_name"]: r for r in backend.get_run_results(run_id)}
-    assert rows["topic"]["input_tokens"] == 10
+    assert rows["topic"]["spent_tokens"] == 15
 
 
 def _docs(storage, tmp_path) -> str:
@@ -138,5 +138,5 @@ def test_docs_explain_how_to_report_tokens_when_none_are(tmp_path):
 def test_llm_judged_test_unwraps_llm_result(tmp_path):
     from pbt.tester import _invoke_llm
 
-    verdict = _invoke_llm("judge", lambda p: pbt.LLMResult('{"results": "pass"}', input_tokens=1))
+    verdict = _invoke_llm("judge", lambda p: pbt.LLMResult('{"results": "pass"}', spent_tokens=1))
     assert verdict == '{"results": "pass"}'

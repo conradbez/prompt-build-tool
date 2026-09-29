@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from pbt.tokens import add_tokens
+
 if TYPE_CHECKING:
     from pbt.files import BlobStore
 
@@ -25,10 +27,8 @@ _LATE_COLUMNS = {
 # Nullable columns added later still, which init_db() adds in place: a missing
 # value only means "not reported", so there is nothing to explain or migrate.
 _ADDED_COLUMNS = {
-    "input_tokens": "INTEGER",
-    "output_tokens": "INTEGER",
-    "cache_input_tokens": "INTEGER",
-    "cache_output_tokens": "INTEGER",
+    "spent_tokens": "INTEGER",
+    "cache_spent_tokens": "INTEGER",
 }
 
 
@@ -103,10 +103,8 @@ class SQLiteStorageBackend:
                     depends_on       TEXT      NOT NULL DEFAULT '[]',
                     model_type       TEXT      NOT NULL DEFAULT '',
                     config           TEXT      NOT NULL DEFAULT '{}',
-                    input_tokens     INTEGER,
-                    output_tokens    INTEGER,
-                    cache_input_tokens  INTEGER,
-                    cache_output_tokens INTEGER
+                    spent_tokens     INTEGER,
+                    cache_spent_tokens INTEGER
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_model_results_run
@@ -244,15 +242,13 @@ class SQLiteStorageBackend:
             ).fetchone()
         return row["llm_output"] if row else None
 
-    def get_cached_token_usage(self, cache_key: str) -> tuple[int | None, int | None] | None:
-        """Tokens the call behind :meth:`get_cached_llm_output` cost, as
-        ``(input, output)``.  A row that was itself a cache hit carries the
-        original call's tokens forward."""
+    def get_cached_token_usage(self, cache_key: str) -> int | None:
+        """Tokens the call behind :meth:`get_cached_llm_output` spent.  A row
+        that was itself a cache hit carries the original call's tokens forward."""
         prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
         with self.get_conn() as conn:
             row = conn.execute(
-                """SELECT input_tokens, output_tokens,
-                          cache_input_tokens, cache_output_tokens
+                """SELECT spent_tokens, cache_spent_tokens
                    FROM model_results
                    WHERE prompt_hash = ? AND status = 'success'
                    ORDER BY completed_at DESC
@@ -261,10 +257,7 @@ class SQLiteStorageBackend:
             ).fetchone()
         if row is None:
             return None
-        return (
-            _sum(row["input_tokens"], row["cache_input_tokens"]),
-            _sum(row["output_tokens"], row["cache_output_tokens"]),
-        )
+        return add_tokens(row["spent_tokens"], row["cache_spent_tokens"])
 
     def upsert_model_pending(
         self,
@@ -353,20 +346,16 @@ class SQLiteStorageBackend:
         self,
         run_id: str,
         model_name: str,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_input_tokens: int | None = None,
-        cache_output_tokens: int | None = None,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
     ) -> None:
         """Store the tokens a model spent, and those its cache hits saved."""
         with self.get_conn() as conn:
             conn.execute(
                 """UPDATE model_results
-                   SET input_tokens=?, output_tokens=?,
-                       cache_input_tokens=?, cache_output_tokens=?
+                   SET spent_tokens=?, cache_spent_tokens=?
                    WHERE run_id=? AND model_name=?""",
-                (input_tokens, output_tokens, cache_input_tokens,
-                 cache_output_tokens, run_id, model_name),
+                (spent_tokens, cache_spent_tokens, run_id, model_name),
             )
 
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:
@@ -411,10 +400,6 @@ class SQLiteStorageBackend:
                 "UPDATE model_results SET prompt_hash = NULL WHERE prompt_hash IS NOT NULL"
             )
             return cursor.rowcount
-
-
-def _sum(a: int | None, b: int | None) -> int | None:
-    return None if a is None and b is None else (a or 0) + (b or 0)
 
 
 def _now() -> str:

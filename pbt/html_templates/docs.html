@@ -158,9 +158,10 @@
       <p class="token-note"><small>
         <strong>Token usage is not being reported.</strong>
         To track it, have <code>llm_call</code> in <code>client.py</code> return
-        <code>pbt.LLMResult(text, input_tokens=…, output_tokens=…)</code>
-        instead of the bare text — e.g. from <code>message.usage</code> (Anthropic),
-        <code>response.usage</code> (OpenAI) or <code>usage_metadata</code> (Gemini).
+        <code>pbt.LLMResult(text, spent_tokens=…)</code> instead of the bare text.
+        How to count is up to you: input + output + thinking, or the provider's
+        total when it reports one (e.g. Gemini <code>usage_metadata.total_token_count</code>,
+        OpenAI <code>usage.total_tokens</code>).
         <code>pbt init</code> scaffolds a client that does this.
       </small></p>
       {% endif %}

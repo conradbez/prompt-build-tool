@@ -208,12 +208,6 @@ def generate_docs(
         """
         return _column(row, "llm_output_validated") or row["llm_output"]
 
-    def _tokens(r, *columns: str) -> int | None:
-        """The sum of token *columns*, or None when none was reported."""
-        values = [_column(r, c) for c in columns]
-        known = [v for v in values if v is not None]
-        return sum(known) if known else None
-
     def _result(r) -> dict:
         value = exporter.decode(_model_output(r))
         files = exporter.describe(value) if contains_files(value) else []
@@ -233,8 +227,8 @@ def generate_docs(
             "output_preview": (text or "")[:200],
             "files": files,
             "cached": bool(_column(r, "cached")),
-            "tokens_used": _tokens(r, "input_tokens", "output_tokens"),
-            "tokens_cached": _tokens(r, "cache_input_tokens", "cache_output_tokens"),
+            "tokens_used": _column(r, "spent_tokens"),
+            "tokens_cached": _column(r, "cache_spent_tokens"),
         }
 
     runs_data = []
