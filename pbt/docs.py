@@ -2,7 +2,7 @@
 pbt docs — generate a self-contained HTML report of all previous runs.
 
 The generated HTML includes:
-  - A summary table of every pbt run (status, model count, timing)
+  - A summary table of every pbt run (status, model count, timing, tokens)
   - Expandable per-run model results
   - A Mermaid.js DAG diagram of the current model dependency graph
   - The files models produced: a gallery for the latest run, and previews and
@@ -143,6 +143,12 @@ def _human_size(size: int) -> str:
     return f"{size} B"  # pragma: no cover
 
 
+def _total(values) -> int | None:
+    """Sum the known values, or None when none is known."""
+    known = [v for v in values if v is not None]
+    return sum(known) if known else None
+
+
 def _duration(created_at: str | None, completed_at: str | None) -> str:
     if not created_at or not completed_at:
         return "—"
@@ -202,6 +208,12 @@ def generate_docs(
         """
         return _column(row, "llm_output_validated") or row["llm_output"]
 
+    def _tokens(r, *columns: str) -> int | None:
+        """The sum of token *columns*, or None when none was reported."""
+        values = [_column(r, c) for c in columns]
+        known = [v for v in values if v is not None]
+        return sum(known) if known else None
+
     def _result(r) -> dict:
         value = exporter.decode(_model_output(r))
         files = exporter.describe(value) if contains_files(value) else []
@@ -221,12 +233,16 @@ def generate_docs(
             "output_preview": (text or "")[:200],
             "files": files,
             "cached": bool(_column(r, "cached")),
+            "tokens_used": _tokens(r, "input_tokens", "output_tokens"),
+            "tokens_cached": _tokens(r, "cache_input_tokens", "cache_output_tokens"),
         }
 
     runs_data = []
     for run in runs:
         rid = run["run_id"]
         results = [_result(r) for r in run_results.get(rid, [])]
+        used = _total(r["tokens_used"] for r in results)
+        from_cache = _total(r["tokens_cached"] for r in results)
         runs_data.append({
             "run_id": rid,
             "short_id": rid[:8] + "…",
@@ -235,6 +251,11 @@ def generate_docs(
             "created": (run["created_at"] or "")[:19].replace("T", " "),
             "duration": _duration(run["created_at"], run["completed_at"]),
             "results": results,
+            "tokens_used": used,
+            "tokens_cached": from_cache,
+            # What the run would have cost with an empty prompt cache: every
+            # cache hit re-spends what its original call did.
+            "tokens_cold": _total([used, from_cache]),
         })
 
     # The newest run's files, gallery-first: what the pipeline makes, at a glance.
@@ -251,6 +272,10 @@ def generate_docs(
         latest_run=latest,
         latest_files=latest_files,
         status_colours=STATUS_COLOURS,
+        tokens_reported=any(
+            run["tokens_used"] is not None or run["tokens_cached"] is not None
+            for run in runs_data
+        ),
         dag_section=_mermaid_dag(models, file_models) if models else "",
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )

@@ -53,6 +53,7 @@ from pbt.files import (
 )
 from pbt.model_spec import ModelSpec
 from pbt.storage.base import StorageBackend
+from pbt.tokens import TokenUsage, split_usage
 from pbt.types import PromptFile
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
@@ -117,6 +118,13 @@ class _ModelAccounting:
     #: key. None when the model made no calls, or more than one, where there is
     #: no single artifact to attribute.
     cache_artifact: str | None = None
+
+    #: Tokens this model's calls spent, when ``llm_call`` reported them.
+    tokens: TokenUsage = field(default_factory=TokenUsage)
+
+    #: Tokens the original calls behind this model's cache hits spent — what
+    #: the cache saved this run.
+    cached_tokens: TokenUsage = field(default_factory=TokenUsage)
 
 
 @dataclass
@@ -229,6 +237,10 @@ class RunContext:
         value is returned, so a kind never has to branch on skipping.
         *compute* may be sync or async.
 
+        *compute* may return a :class:`~pbt.tokens.LLMResult`; its token
+        counts are tallied for the model and only its ``output`` is cached and
+        returned.
+
         *compute* may return files (:mod:`pbt.files`).  Their bytes go to the
         blob store and the cache keeps the encoded manifest; a hit decodes it
         back to the same objects.  A hit whose blobs have since gone missing
@@ -250,12 +262,17 @@ class RunContext:
                 acct.calls += 1
                 acct.cache_hits += 1
                 self._record_artifact(acct, hit)
+                lookup = getattr(self.storage, "get_cached_token_usage", None)
+                if lookup is not None:
+                    acct.cached_tokens.add(TokenUsage(*(lookup(key) or (None, None))))
                 return value
 
         started = time.monotonic()
         result = compute()
         if inspect.isawaitable(result):
             result = await result
+        result, usage = split_usage(result)
+        acct.tokens.add(usage)
         acct.calls += 1
         acct.elapsed_ms += int((time.monotonic() - started) * 1000)
         if contains_files(result):
@@ -377,6 +394,14 @@ class RunContext:
         entry, or the next run would apply it a second time.
         """
         return self._acct(name).cache_artifact
+
+    def tokens(self, name: str) -> TokenUsage:
+        """Tokens *name*'s calls spent this run (unknown unless reported)."""
+        return self._acct(name).tokens
+
+    def cached_tokens(self, name: str) -> TokenUsage:
+        """Tokens *name*'s cache hits would have cost as fresh calls."""
+        return self._acct(name).cached_tokens
 
     def served_from_cache(self, name: str) -> bool:
         """True when every LLM call this model made was a cache hit."""

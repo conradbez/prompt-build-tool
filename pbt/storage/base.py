@@ -7,6 +7,11 @@ what the pipeline actually passed downstream rather than the raw text.  That
 method is optional: a backend that does not define it simply keeps the raw
 output, and the executor skips the call.
 
+``record_token_usage`` and ``get_cached_token_usage`` are optional as well.
+The first stores the tokens a model spent (and those its cache hits saved);
+the second returns ``(input, output)`` tokens behind a cache entry, so a hit
+can report what it saved.  Without them token usage is simply not recorded.
+
 ``blob_store`` is optional too.  A backend that defines it returns the
 :class:`~pbt.files.BlobStore` holding the bytes of file outputs; one that does
 not gets an in-memory store per run, so files work within a run but a cached
@@ -39,6 +44,16 @@ class StorageBackend(Protocol):
         cached: bool = False,
     ) -> None: ...
     def record_validated_output(self, run_id: str, model_name: str, output: str) -> None: ...
+    def record_token_usage(
+        self,
+        run_id: str,
+        model_name: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cache_input_tokens: int | None = None,
+        cache_output_tokens: int | None = None,
+    ) -> None: ...
+    def get_cached_token_usage(self, cache_key: str) -> tuple[int | None, int | None] | None: ...
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None: ...
     def mark_model_skipped(self, run_id: str, model_name: str) -> None: ...
     def get_run_results(self, run_id: str) -> list[Any]: ...
