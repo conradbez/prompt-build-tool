@@ -47,6 +47,12 @@ class ModelRunResult:
     execution_ms: int = 0
     cached: bool = False
     prompt_skipped: bool = False  # True when a skip function fired during rendering
+    #: Tokens spent by this model's calls, and those its cache hits saved.
+    #: Unknown (None) unless ``llm_call`` returned a :class:`pbt.LLMResult`.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_input_tokens: int | None = None
+    cache_output_tokens: int | None = None
     #: The output as downstream models see it — a parsed JSON value, or
     #: File/Dir/Output objects for a model that produced files.  ``llm_output``
     #: is its stored string form.
@@ -143,6 +149,17 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         cache_key=ctx.cache_key(spec, rendered, ctx.files_for(spec)),
         cached=ctx.served_from_cache(spec.name),
     )
+    tokens, cached_tokens = ctx.tokens(spec.name), ctx.cached_tokens(spec.name)
+    record_tokens = getattr(ctx.storage, "record_token_usage", None)
+    if record_tokens is not None and (tokens.known or cached_tokens.known):
+        record_tokens(
+            ctx.run_id,
+            spec.name,
+            input_tokens=tokens.input_tokens,
+            output_tokens=tokens.output_tokens,
+            cache_input_tokens=cached_tokens.input_tokens,
+            cache_output_tokens=cached_tokens.output_tokens,
+        )
 
     # --- validate -----------------------------------------------------------
     if not skipped and ctx.validators:
@@ -182,6 +199,10 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         cached=ctx.served_from_cache(spec.name),
         prompt_skipped=skipped,
         value=ctx.outputs[spec.name],
+        input_tokens=tokens.input_tokens,
+        output_tokens=tokens.output_tokens,
+        cache_input_tokens=cached_tokens.input_tokens,
+        cache_output_tokens=cached_tokens.output_tokens,
     )
 
 

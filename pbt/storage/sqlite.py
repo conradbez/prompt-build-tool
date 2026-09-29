@@ -22,6 +22,16 @@ _LATE_COLUMNS = {
 }
 
 
+# Nullable columns added later still, which init_db() adds in place: a missing
+# value only means "not reported", so there is nothing to explain or migrate.
+_ADDED_COLUMNS = {
+    "input_tokens": "INTEGER",
+    "output_tokens": "INTEGER",
+    "cache_input_tokens": "INTEGER",
+    "cache_output_tokens": "INTEGER",
+}
+
+
 class StaleDatabaseError(RuntimeError):
     """Raised when .pbt/pbt.db predates the current schema."""
 
@@ -92,7 +102,11 @@ class SQLiteStorageBackend:
                     error            TEXT,
                     depends_on       TEXT      NOT NULL DEFAULT '[]',
                     model_type       TEXT      NOT NULL DEFAULT '',
-                    config           TEXT      NOT NULL DEFAULT '{}'
+                    config           TEXT      NOT NULL DEFAULT '{}',
+                    input_tokens     INTEGER,
+                    output_tokens    INTEGER,
+                    cache_input_tokens  INTEGER,
+                    cache_output_tokens INTEGER
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_model_results_run
@@ -127,6 +141,9 @@ class SQLiteStorageBackend:
         "no such column".
         """
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_results)")}
+        for name, type_ in _ADDED_COLUMNS.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE model_results ADD COLUMN {name} {type_}")
         missing = {name: t for name, t in _LATE_COLUMNS.items() if name not in columns}
         if not missing:
             return
@@ -227,6 +244,28 @@ class SQLiteStorageBackend:
             ).fetchone()
         return row["llm_output"] if row else None
 
+    def get_cached_token_usage(self, cache_key: str) -> tuple[int | None, int | None] | None:
+        """Tokens the call behind :meth:`get_cached_llm_output` cost, as
+        ``(input, output)``.  A row that was itself a cache hit carries the
+        original call's tokens forward."""
+        prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        with self.get_conn() as conn:
+            row = conn.execute(
+                """SELECT input_tokens, output_tokens,
+                          cache_input_tokens, cache_output_tokens
+                   FROM model_results
+                   WHERE prompt_hash = ? AND status = 'success'
+                   ORDER BY completed_at DESC
+                   LIMIT 1""",
+                (prompt_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (
+            _sum(row["input_tokens"], row["cache_input_tokens"]),
+            _sum(row["output_tokens"], row["cache_output_tokens"]),
+        )
+
     def upsert_model_pending(
         self,
         run_id: str,
@@ -310,6 +349,26 @@ class SQLiteStorageBackend:
                 (output, run_id, model_name),
             )
 
+    def record_token_usage(
+        self,
+        run_id: str,
+        model_name: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cache_input_tokens: int | None = None,
+        cache_output_tokens: int | None = None,
+    ) -> None:
+        """Store the tokens a model spent, and those its cache hits saved."""
+        with self.get_conn() as conn:
+            conn.execute(
+                """UPDATE model_results
+                   SET input_tokens=?, output_tokens=?,
+                       cache_input_tokens=?, cache_output_tokens=?
+                   WHERE run_id=? AND model_name=?""",
+                (input_tokens, output_tokens, cache_input_tokens,
+                 cache_output_tokens, run_id, model_name),
+            )
+
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:
         with self.get_conn() as conn:
             conn.execute(
@@ -352,6 +411,10 @@ class SQLiteStorageBackend:
                 "UPDATE model_results SET prompt_hash = NULL WHERE prompt_hash IS NOT NULL"
             )
             return cursor.rowcount
+
+
+def _sum(a: int | None, b: int | None) -> int | None:
+    return None if a is None and b is None else (a or 0) + (b or 0)
 
 
 def _now() -> str:

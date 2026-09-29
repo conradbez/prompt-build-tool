@@ -158,6 +158,8 @@ import mimetypes
 import os
 from google import genai
 
+import pbt
+
 # Automatically picked up by `pbt` to run .prompt files.
 # Optional kwargs passed by pbt when declared in the signature:
 #   files  - list of open file objects attached to the prompt (via --promptdata key=@path)
@@ -172,14 +174,23 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
             config={"mime_type": mime or "text/plain"},
         ))
     contents = [prompt] + uploaded if uploaded else prompt
-    return client.models.generate_content(
+    response = client.models.generate_content(
         model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
         contents=contents,
-    ).text
+    )
+    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    usage = response.usage_metadata
+    return pbt.LLMResult(
+        response.text,
+        input_tokens=usage.prompt_token_count if usage else None,
+        output_tokens=usage.candidates_token_count if usage else None,
+    )
 """,
     "openai": """\
 import os
 from openai import OpenAI
+
+import pbt
 
 # Automatically picked up by `pbt` to run .prompt files.
 # Optional kwargs passed by pbt when declared in the signature:
@@ -195,11 +206,18 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
         input=[{"role": "user", "content": content}],
     )
-    return response.output_text
+    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    return pbt.LLMResult(
+        response.output_text,
+        input_tokens=response.usage.input_tokens if response.usage else None,
+        output_tokens=response.usage.output_tokens if response.usage else None,
+    )
 """,
     "anthropic": """\
 import os
 import anthropic
+
+import pbt
 
 # Automatically picked up by `pbt` to run .prompt files.
 # Optional kwargs passed by pbt when declared in the signature:
@@ -217,7 +235,12 @@ def llm_call(prompt: str, files: list | None = None, config: dict | None = None)
         max_tokens=8096,
         messages=[{"role": "user", "content": content}],
     )
-    return message.content[0].text
+    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    return pbt.LLMResult(
+        message.content[0].text,
+        input_tokens=message.usage.input_tokens,
+        output_tokens=message.usage.output_tokens,
+    )
 """,
 }
 
@@ -263,6 +286,8 @@ _OPENAI_COMPATIBLE_CLIENT = """\
 import os
 from openai import OpenAI
 
+import pbt
+
 # Automatically picked up by `pbt` to run .prompt files.
 # <<name>> speaks the OpenAI Chat Completions API.
 # Optional kwarg passed by pbt when declared in the signature:
@@ -279,7 +304,12 @@ def llm_call(prompt: str, config: dict | None = None) -> str:
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.choices[0].message.content
+    # pbt.LLMResult reports token usage to `pbt docs`; returning the bare text also works.
+    return pbt.LLMResult(
+        response.choices[0].message.content,
+        input_tokens=response.usage.prompt_tokens if response.usage else None,
+        output_tokens=response.usage.completion_tokens if response.usage else None,
+    )
 """
 
 for _provider, _values in OPENAI_COMPATIBLE.items():
