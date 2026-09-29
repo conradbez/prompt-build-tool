@@ -32,6 +32,7 @@ from pbt.files import (
     SQLiteBlobStore,
 )
 from pbt.storage.base import StorageBackend
+from pbt.tokens import LLMResult
 from pbt.types import PromptFile, PromptModelsDict
 
 # Registers the built-in kinds ("", template, execute_python).  Imported here,
@@ -61,6 +62,7 @@ __all__ = [
     "File",
     "Dir",
     "Output",
+    "LLMResult",
     "BlobStore",
     "MemoryBlobStore",
     "SQLiteBlobStore",

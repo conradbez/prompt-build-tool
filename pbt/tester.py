@@ -186,9 +186,11 @@ def _invoke_llm(rendered: str, llm_call: Callable, files: list | None = None) ->
     Call *llm_call* with *rendered*, passing *files* when the callable
     accepts a ``files`` parameter — the same contract as model calls.
     """
+    from pbt.tokens import split_usage
+
     if files and "files" in inspect.signature(llm_call).parameters:
-        return llm_call(rendered, files=files)
-    return llm_call(rendered)
+        return split_usage(llm_call(rendered, files=files))[0]
+    return split_usage(llm_call(rendered))[0]
 
 
 def _run_classifier_test(

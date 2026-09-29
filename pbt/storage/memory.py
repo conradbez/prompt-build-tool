@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from pbt.tokens import add_tokens
+
 
 class MemoryStorageBackend:
     def __init__(self) -> None:
@@ -15,6 +17,7 @@ class MemoryStorageBackend:
         self._results: dict[str, dict[str, dict[str, Any]]] = {}
         self._tests: dict[str, list[dict[str, Any]]] = {}
         self._cache: dict[str, str] = {}
+        self._cache_rows: dict[str, dict[str, Any]] = {}
         from pbt.files import MemoryBlobStore
         self._blob_store = MemoryBlobStore()
 
@@ -82,6 +85,12 @@ class MemoryStorageBackend:
     def get_cached_llm_output(self, cache_key: str) -> str | None:
         return self._cache.get(_prompt_hash(cache_key))
 
+    def get_cached_token_usage(self, cache_key: str) -> int | None:
+        row = self._cache_rows.get(_prompt_hash(cache_key))
+        if row is None:
+            return None
+        return add_tokens(row.get("spent_tokens"), row.get("cache_spent_tokens"))
+
     def upsert_model_pending(
         self,
         run_id: str,
@@ -108,6 +117,8 @@ class MemoryStorageBackend:
             "depends_on": json.dumps(depends_on),
             "model_type": model_type,
             "config": json.dumps(config or {}, sort_keys=True),
+            "spent_tokens": None,
+            "cache_spent_tokens": None,
         }
 
     def mark_model_running(self, run_id: str, model_name: str) -> None:
@@ -150,6 +161,22 @@ class MemoryStorageBackend:
             }
         )
         self._cache[_prompt_hash(cache_key or prompt_rendered)] = llm_output
+        self._cache_rows[_prompt_hash(cache_key or prompt_rendered)] = row
+
+    def record_token_usage(
+        self,
+        run_id: str,
+        model_name: str,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
+    ) -> None:
+        """Store the tokens a model spent, and those its cache hits saved."""
+        self._results.setdefault(run_id, {}).setdefault(model_name, {}).update(
+            {
+                "spent_tokens": spent_tokens,
+                "cache_spent_tokens": cache_spent_tokens,
+            }
+        )
 
     def record_validated_output(self, run_id: str, model_name: str, output: str) -> None:
         """Store the post-validation output alongside the raw one.

@@ -105,6 +105,13 @@ def print_run_summary(
         summary.add_row("        :", f"[red]{errors}[/red] errored")
     if skipped:
         summary.add_row("        :", f"[yellow]{skipped}[/yellow] skipped")
+    used = [r.spent_tokens for r in all_results if r.spent_tokens is not None]
+    saved = [r.cache_spent_tokens for r in all_results if r.cache_spent_tokens is not None]
+    if used or saved:
+        summary.add_row(
+            "Tokens  :",
+            f"{sum(used):,} used [dim]· {sum(saved):,} from cache[/dim]",
+        )
     if written:
         summary.add_row("Outputs :", f"[dim]{outputs_dir}/[/dim]  {', '.join(written)}")
     summary.add_row("Run ID  :", f"[dim]{run_id}[/dim]")

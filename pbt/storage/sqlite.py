@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from pbt.tokens import add_tokens
+
 if TYPE_CHECKING:
     from pbt.files import BlobStore
 
@@ -19,6 +21,14 @@ if TYPE_CHECKING:
 # explanation instead of "no such column".  Keep it in step with init_db().
 _LATE_COLUMNS = {
     "llm_output_validated": "TEXT",
+}
+
+
+# Nullable columns added later still, which init_db() adds in place: a missing
+# value only means "not reported", so there is nothing to explain or migrate.
+_ADDED_COLUMNS = {
+    "spent_tokens": "INTEGER",
+    "cache_spent_tokens": "INTEGER",
 }
 
 
@@ -92,7 +102,9 @@ class SQLiteStorageBackend:
                     error            TEXT,
                     depends_on       TEXT      NOT NULL DEFAULT '[]',
                     model_type       TEXT      NOT NULL DEFAULT '',
-                    config           TEXT      NOT NULL DEFAULT '{}'
+                    config           TEXT      NOT NULL DEFAULT '{}',
+                    spent_tokens     INTEGER,
+                    cache_spent_tokens INTEGER
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_model_results_run
@@ -127,6 +139,9 @@ class SQLiteStorageBackend:
         "no such column".
         """
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_results)")}
+        for name, type_ in _ADDED_COLUMNS.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE model_results ADD COLUMN {name} {type_}")
         missing = {name: t for name, t in _LATE_COLUMNS.items() if name not in columns}
         if not missing:
             return
@@ -227,6 +242,23 @@ class SQLiteStorageBackend:
             ).fetchone()
         return row["llm_output"] if row else None
 
+    def get_cached_token_usage(self, cache_key: str) -> int | None:
+        """Tokens the call behind :meth:`get_cached_llm_output` spent.  A row
+        that was itself a cache hit carries the original call's tokens forward."""
+        prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        with self.get_conn() as conn:
+            row = conn.execute(
+                """SELECT spent_tokens, cache_spent_tokens
+                   FROM model_results
+                   WHERE prompt_hash = ? AND status = 'success'
+                   ORDER BY completed_at DESC
+                   LIMIT 1""",
+                (prompt_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return add_tokens(row["spent_tokens"], row["cache_spent_tokens"])
+
     def upsert_model_pending(
         self,
         run_id: str,
@@ -308,6 +340,22 @@ class SQLiteStorageBackend:
                 "UPDATE model_results SET llm_output_validated=? "
                 "WHERE run_id=? AND model_name=?",
                 (output, run_id, model_name),
+            )
+
+    def record_token_usage(
+        self,
+        run_id: str,
+        model_name: str,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
+    ) -> None:
+        """Store the tokens a model spent, and those its cache hits saved."""
+        with self.get_conn() as conn:
+            conn.execute(
+                """UPDATE model_results
+                   SET spent_tokens=?, cache_spent_tokens=?
+                   WHERE run_id=? AND model_name=?""",
+                (spent_tokens, cache_spent_tokens, run_id, model_name),
             )
 
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:

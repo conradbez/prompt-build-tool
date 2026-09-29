@@ -47,6 +47,10 @@ class ModelRunResult:
     execution_ms: int = 0
     cached: bool = False
     prompt_skipped: bool = False  # True when a skip function fired during rendering
+    #: Tokens spent by this model's calls, and those its cache hits saved.
+    #: Unknown (None) unless ``llm_call`` returned a :class:`pbt.LLMResult`.
+    spent_tokens: int | None = None
+    cache_spent_tokens: int | None = None
     #: The output as downstream models see it — a parsed JSON value, or
     #: File/Dir/Output objects for a model that produced files.  ``llm_output``
     #: is its stored string form.
@@ -143,6 +147,10 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         cache_key=ctx.cache_key(spec, rendered, ctx.files_for(spec)),
         cached=ctx.served_from_cache(spec.name),
     )
+    spent, cache_spent = ctx.spent_tokens(spec.name), ctx.cache_spent_tokens(spec.name)
+    record_tokens = getattr(ctx.storage, "record_token_usage", None)
+    if record_tokens is not None and (spent is not None or cache_spent is not None):
+        record_tokens(ctx.run_id, spec.name, spent_tokens=spent, cache_spent_tokens=cache_spent)
 
     # --- validate -----------------------------------------------------------
     if not skipped and ctx.validators:
@@ -182,6 +190,8 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         cached=ctx.served_from_cache(spec.name),
         prompt_skipped=skipped,
         value=ctx.outputs[spec.name],
+        spent_tokens=spent,
+        cache_spent_tokens=cache_spent,
     )
 
 
