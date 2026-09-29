@@ -1958,7 +1958,7 @@ wheels = [
 
 [[package]]
 name = "prompt-build-tool"
-version = "0.5.3"
+version = "0.5.5"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
