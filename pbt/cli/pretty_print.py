@@ -105,10 +105,8 @@ def print_run_summary(
         summary.add_row("        :", f"[red]{errors}[/red] errored")
     if skipped:
         summary.add_row("        :", f"[yellow]{skipped}[/yellow] skipped")
-    used = [(r.input_tokens or 0) + (r.output_tokens or 0) for r in all_results
-            if r.input_tokens is not None or r.output_tokens is not None]
-    saved = [(r.cache_input_tokens or 0) + (r.cache_output_tokens or 0) for r in all_results
-             if r.cache_input_tokens is not None or r.cache_output_tokens is not None]
+    used = [r.spent_tokens for r in all_results if r.spent_tokens is not None]
+    saved = [r.cache_spent_tokens for r in all_results if r.cache_spent_tokens is not None]
     if used or saved:
         summary.add_row(
             "Tokens  :",

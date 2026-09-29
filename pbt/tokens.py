@@ -2,7 +2,7 @@
 Token usage reported by ``llm_call``.
 
 ``llm_call`` may return a :class:`LLMResult` instead of its bare output to tell
-pbt how many tokens the call used::
+pbt how many tokens the call spent::
 
     # client.py
     import pbt
@@ -11,14 +11,18 @@ pbt how many tokens the call used::
         message = client.messages.create(...)
         return pbt.LLMResult(
             message.content[0].text,
-            input_tokens=message.usage.input_tokens,
-            output_tokens=message.usage.output_tokens,
+            spent_tokens=message.usage.input_tokens + message.usage.output_tokens,
         )
 
-pbt unwraps it straight away: the prompt cache, ``ref()`` and validators only
-ever see ``output``.  The counts are stored with the model's result, and a
-cache hit records the tokens the original call spent, so ``pbt docs`` can show
-per run what was spent, what the cache saved, and what a cold run would cost.
+How ``spent_tokens`` is counted is up to client.py.  A sane default is
+input + output + thinking, or the provider's own total when its API reports
+one (Gemini's ``total_token_count``, OpenAI's ``total_tokens``).
+
+pbt unwraps the result straight away: the prompt cache, ``ref()`` and
+validators only ever see ``output``.  The count is stored with the model's
+result, and a cache hit records the tokens the original call spent, so
+``pbt docs`` can show per run what was spent, what the cache saved, and what a
+cold run would cost.
 
 Returning a plain value is still fine — the model's tokens are just unknown.
 """
@@ -31,44 +35,24 @@ from typing import Any
 
 @dataclass
 class LLMResult:
-    """An ``llm_call`` return value carrying its token usage."""
+    """An ``llm_call`` return value carrying the tokens the call spent."""
 
     #: What the call produced — anything ``llm_call`` may otherwise return
     #: (a string, ``pbt.File``/``Dir``/``Output``, a dict holding them, …).
     output: Any
-    input_tokens: int | None = None
-    output_tokens: int | None = None
+    spent_tokens: int | None = None
 
 
-@dataclass
-class TokenUsage:
-    """Input/output token counts, either of which may be unknown."""
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-
-    @property
-    def known(self) -> bool:
-        return self.input_tokens is not None or self.output_tokens is not None
-
-    @property
-    def total(self) -> int:
-        return (self.input_tokens or 0) + (self.output_tokens or 0)
-
-    def add(self, other: "TokenUsage") -> None:
-        if other.input_tokens is not None:
-            self.input_tokens = (self.input_tokens or 0) + other.input_tokens
-        if other.output_tokens is not None:
-            self.output_tokens = (self.output_tokens or 0) + other.output_tokens
-
-
-def split_usage(result: Any) -> tuple[Any, TokenUsage]:
-    """Return ``(output, usage)`` for an ``llm_call`` return value."""
+def split_usage(result: Any) -> tuple[Any, int | None]:
+    """Return ``(output, spent_tokens)`` for an ``llm_call`` return value."""
     if isinstance(result, LLMResult):
-        return result.output, TokenUsage(
-            _count(result.input_tokens), _count(result.output_tokens)
-        )
-    return result, TokenUsage()
+        return result.output, _count(result.spent_tokens)
+    return result, None
+
+
+def add_tokens(a: int | None, b: int | None) -> int | None:
+    """Sum two token counts, either of which may be unknown (None)."""
+    return None if a is None and b is None else (a or 0) + (b or 0)
 
 
 def _count(value: Any) -> int | None:

@@ -9,8 +9,8 @@ output, and the executor skips the call.
 
 ``record_token_usage`` and ``get_cached_token_usage`` are optional as well.
 The first stores the tokens a model spent (and those its cache hits saved);
-the second returns ``(input, output)`` tokens behind a cache entry, so a hit
-can report what it saved.  Without them token usage is simply not recorded.
+the second returns the tokens spent behind a cache entry, so a hit can report
+what it saved.  Without them token usage is simply not recorded.
 
 ``blob_store`` is optional too.  A backend that defines it returns the
 :class:`~pbt.files.BlobStore` holding the bytes of file outputs; one that does
@@ -48,12 +48,10 @@ class StorageBackend(Protocol):
         self,
         run_id: str,
         model_name: str,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_input_tokens: int | None = None,
-        cache_output_tokens: int | None = None,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
     ) -> None: ...
-    def get_cached_token_usage(self, cache_key: str) -> tuple[int | None, int | None] | None: ...
+    def get_cached_token_usage(self, cache_key: str) -> int | None: ...
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None: ...
     def mark_model_skipped(self, run_id: str, model_name: str) -> None: ...
     def get_run_results(self, run_id: str) -> list[Any]: ...

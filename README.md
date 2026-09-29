@@ -304,18 +304,14 @@ def llm_call(prompt: str) -> str:
     return message.content[0].text
 ```
 
-**Token usage (optional).** Return `pbt.LLMResult` instead of the bare text and pbt records the tokens each model used — `pbt docs` then shows, per run, tokens used, tokens served from cache, and an estimated cold-start total (used + cached). The scaffolded clients already do this; a plain string still works, tokens just show as `—`.
+**Token usage (optional).** Return `pbt.LLMResult(text, spent_tokens=...)` instead of the bare text and pbt records the tokens each model spent — `pbt docs` then shows, per run, tokens used, tokens served from cache, and an estimated cold-start total (used + cached). How you count `spent_tokens` is up to you; a sane default is input + output + thinking, or the provider's own total when it reports one. The scaffolded clients already do this; a plain string still works, tokens just show as `—`.
 
 ```python
 import pbt
 
 def llm_call(prompt: str) -> pbt.LLMResult:
-    message = anthropic.Anthropic().messages.create(...)
-    return pbt.LLMResult(
-        message.content[0].text,
-        input_tokens=message.usage.input_tokens,
-        output_tokens=message.usage.output_tokens,
-    )
+    response = genai.Client().models.generate_content(...)
+    return pbt.LLMResult(response.text, spent_tokens=response.usage_metadata.total_token_count)
 ```
 
 pbt will automatically discover and use this file. Run `pbt init --provider <gemini|openai|anthropic|deepseek|qwen|kimi|xiaomi>` to scaffold a starter `client.py` for your chosen provider; add `--classifier` to also scaffold a jev-like `classify_call` for classifier-judged tests (P(yes) from one-token logprobs where the provider returns them — OpenAI, DeepSeek, Qwen — otherwise a hard yes/no). If the file exists but does not define `llm_call`, pbt raises an error at startup.
