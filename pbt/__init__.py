@@ -33,6 +33,7 @@ from pbt.files import (
 )
 from pbt.storage.base import StorageBackend
 from pbt.tokens import LLMResult
+from pbt.executor.executor import ModelRunResult
 from pbt.types import PromptFile, PromptModelsDict
 
 # Registers the built-in kinds ("", template, execute_python).  Imported here,
@@ -63,6 +64,7 @@ __all__ = [
     "Dir",
     "Output",
     "LLMResult",
+    "ModelRunResult",
     "BlobStore",
     "MemoryBlobStore",
     "SQLiteBlobStore",
@@ -121,6 +123,8 @@ async def async_run(
     storage_backend: StorageBackend | None = None,
     global_instruction: str | Callable[[], str] | None = None,
     blob_store: BlobStore | None = None,
+    on_model_start: Callable[[str], None] | None = None,
+    on_model_done: Callable[[ModelRunResult], None] | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -171,7 +175,13 @@ async def async_run(
         Where the bytes of file outputs (:class:`File`, :class:`Dir`,
         :class:`Output`) are kept.  Falls back to ``blob_store`` in client.py,
         then to the storage backend's own store (the SQLite database).
-
+    on_model_start:
+        Optional callback ``(model_name: str) -> None`` fired just before a
+        model starts executing.  Use it for live progress in your own code.
+    on_model_done:
+        Optional callback ``(result: ModelRunResult) -> None`` fired when a
+        model finishes, whether it succeeded, errored or was skipped.
+        ``result.status`` is ``"success"``, ``"error"`` or ``"skipped"``.
 
     Returns
     -------
@@ -305,6 +315,8 @@ async def async_run(
         idx = len(completed) + 1
         model_start_times[name] = time.monotonic()
         _log_model_line(idx, "START", name, "[[yellow]RUN[/yellow]]")
+        if on_model_start:
+            on_model_start(name)
 
     def on_done(result: ModelRunResult) -> None:
         completed.append(result)
@@ -319,6 +331,8 @@ async def async_run(
             _log_model_line(idx, "ERR  ", result.model_name, "[[red]ERROR[/red]]")
             if verbose:
                 console.print(f"           [dim]{result.error}[/dim]")
+        if on_model_done:
+            on_model_done(result)
 
     run_start = time.monotonic()
 
@@ -384,6 +398,8 @@ def run(
     storage_backend: "StorageBackend | None" = None,
     global_instruction: "str | Callable[[], str] | None" = None,
     blob_store: "BlobStore | None" = None,
+    on_model_start: "Callable[[str], None] | None" = None,
+    on_model_done: "Callable[[ModelRunResult], None] | None" = None,
 ):
     """Run prompt models synchronously.
 
@@ -405,4 +421,6 @@ def run(
         storage_backend=storage_backend,
         global_instruction=global_instruction,
         blob_store=blob_store,
+        on_model_start=on_model_start,
+        on_model_done=on_model_done,
     ))

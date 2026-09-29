@@ -237,6 +237,8 @@ results = pbt.run(
 | `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` in their config block |
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
 | `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to models/) |
+| `on_model_start` | `(name: str) -> None \| None` | Called just before each model starts |
+| `on_model_done` | `(result: ModelRunResult) -> None \| None` | Called when each model finishes; `result.status` is `"success"`, `"error"` or `"skipped"` |
 
 Returns a `dict` keyed by model name. Each value is the model's output string —
 or `ModelStatus.SKIPPED` when an upstream model failed, or a `ModelError`
@@ -255,6 +257,20 @@ else:
 
 `pbt.async_run(...)` takes the same arguments and returns the same dict, for
 calling from inside an existing event loop.
+
+### Live progress
+
+Pass `on_model_start` / `on_model_done` to track every model's status while
+the run is in progress, e.g. to drive a UI:
+
+```python
+statuses = {}
+pbt.run(
+    "models",
+    on_model_start=lambda name: statuses.update({name: "running"}),
+    on_model_done=lambda r: statuses.update({r.model_name: r.status}),
+)
+```
 
 ---
 
