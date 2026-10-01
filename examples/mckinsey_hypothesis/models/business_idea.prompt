@@ -1,0 +1,24 @@
+{# Pick a random business idea. Override with --promptdata idea="..." or reroll with --promptdata seed=$RANDOM #}
+{# Python models are cached on their rendered code, so without a new seed you get the same idea each run. #}
+{{ config(model_type="execute_python") }}
+import random
+
+ideas = [
+    "Subscription repair service for premium e-bikes in mid-size European cities",
+    "AI bookkeeping for independent restaurants",
+    "Refill-only grocery vans serving suburban neighbourhoods",
+    "Pet insurance bundled with vet telehealth for first-time owners",
+    "Modular backyard offices sold to remote-working households",
+    "B2B marketplace for surplus construction materials",
+    "On-demand sign-language interpretation via video for clinics",
+    "Heat-pump installation financing for landlords",
+    "Second-hand school uniform exchange run through schools",
+    "Cold-storage-as-a-service for small farms",
+]
+
+{% if promptdata("idea") %}
+output = {{ promptdata("idea") | tojson }}
+{% else %}
+random.seed({{ promptdata("seed") | tojson if promptdata("seed") else "None" }})
+output = random.choice(ideas)
+{% endif %}

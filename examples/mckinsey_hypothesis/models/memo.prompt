@@ -1,0 +1,36 @@
+{# Assemble the client-ready memo. No LLM call: just reshapes upstream outputs. #}
+{{ config(model_type="template") }}
+{%- set branches = {'market': ref('branch_market'), 'competition': ref('branch_competition'), 'economics': ref('branch_economics')} %}
+{%- set s = ref('situation') %}{% set tree = ref('issue_tree') %}{% set syn = ref('synthesis') -%}
+# {{ ref('business_idea') }}
+
+**Answer:** {{ syn.answer }}
+**Recommendation:** {{ syn.recommendation }}
+
+## Situation, complication, question
+- **Situation:** {{ s.situation }}
+- **Complication:** {{ s.complication }}
+- **Key question:** {{ s.key_question }}
+
+## Governing hypothesis
+- **Going in:** {{ tree.governing_hypothesis }}
+- **Coming out ({{ syn.governing_hypothesis_status }}):** {{ syn.revised_governing_hypothesis }}
+
+## Supporting arguments
+{% for a in syn.supporting_arguments %}
+{{ loop.index }}. {{ a }}
+{% endfor %}
+
+## Branch results
+| Branch | Hypothesis | Verdict | Confidence |
+|---|---|---|---|
+{% for name, t in branches.items() %}| {{ name }} | {{ t.revised_hypothesis }} | {{ t.verdict }} | {{ t.confidence }} |
+{% endfor %}
+
+## Biggest risk
+{{ syn.biggest_risk }}
+
+## Next steps
+{% for n in syn.next_steps %}
+- {{ n }}
+{% endfor %}

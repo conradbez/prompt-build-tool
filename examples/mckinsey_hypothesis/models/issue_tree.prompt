@@ -1,0 +1,27 @@
+{# Break the key question into a MECE hypothesis tree. Each branch is a lower-order hypothesis. #}
+{{ config(output_format="json") }}
+{% set s = ref('situation') %}
+You are structuring a hypothesis-driven problem solving engagement.
+
+Business idea: {{ ref('business_idea') }}
+Key question: {{ s.key_question }}
+Success criteria: {{ s.success_criteria }}
+
+State a governing hypothesis (your best upfront answer to the key question),
+then break it into exactly three MECE supporting hypotheses, one per branch:
+
+1. "market"      - is the market attractive (size, growth, willingness to pay)?
+2. "competition" - can the client win (competitors, differentiation, defensibility)?
+3. "economics"   - do the unit economics work (CAC, margins, payback)?
+
+Each hypothesis must be a falsifiable statement, not a question.
+
+Return only JSON:
+{
+  "governing_hypothesis": "...",
+  "branches": {
+    "market":      {"hypothesis": "...", "sub_questions": ["...", "..."]},
+    "competition": {"hypothesis": "...", "sub_questions": ["...", "..."]},
+    "economics":   {"hypothesis": "...", "sub_questions": ["...", "..."]}
+  }
+}

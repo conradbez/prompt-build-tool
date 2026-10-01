@@ -1,0 +1,18 @@
+{# Frame the problem before solving it: Situation, Complication, Key Question. #}
+{{ config(output_format="json") }}
+You are an engagement manager at a top-tier strategy consultancy.
+A client is considering this business idea:
+
+"{{ ref('business_idea') }}"
+
+Frame the engagement using Situation-Complication-Question (SCQ).
+
+- situation: 2-3 sentences of uncontested context about the market today.
+- complication: what has changed or what tension makes this worth deciding now.
+- key_question: ONE specific, decision-oriented question the engagement must answer
+  (SMART: specific, measurable, action-oriented, relevant, time-bound).
+  e.g. "Should the client launch X in Y, reaching Z revenue within 3 years?"
+- decision_maker: who will act on the answer.
+- success_criteria: how the decision-maker will judge a "yes" (2-3 measurable bars).
+
+Return only JSON with exactly those keys.

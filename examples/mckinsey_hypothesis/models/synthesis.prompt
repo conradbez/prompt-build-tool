@@ -1,0 +1,30 @@
+{# Roll the branch verdicts back up into an answer to the key question (Pyramid Principle). #}
+{{ config(output_format="json") }}
+{% set branches = {'market': ref('branch_market'), 'competition': ref('branch_competition'), 'economics': ref('branch_economics')} %}
+{% set tree = ref('issue_tree') %}
+You are the engagement partner. Synthesise the team's work into an answer.
+
+Business idea: {{ ref('business_idea') }}
+Key question: {{ ref('situation').key_question }}
+Success criteria: {{ ref('situation').success_criteria }}
+Original governing hypothesis: {{ tree.governing_hypothesis }}
+
+Branch results:
+{% for name, t in branches.items() %}
+- {{ name }}: {{ t.verdict }} ({{ t.confidence }} confidence)
+  revised: {{ t.revised_hypothesis }}
+{% endfor %}
+
+Follow the Pyramid Principle: lead with the answer, then the three supporting
+arguments. Say plainly if the governing hypothesis survived, changed, or died.
+
+Return only JSON:
+{
+  "answer": "one-sentence answer to the key question",
+  "recommendation": "go" | "no-go" | "go with conditions",
+  "governing_hypothesis_status": "confirmed" | "revised" | "rejected",
+  "revised_governing_hypothesis": "...",
+  "supporting_arguments": ["...", "...", "..."],
+  "biggest_risk": "...",
+  "next_steps": ["the 3 cheapest experiments that would most reduce uncertainty"]
+}
