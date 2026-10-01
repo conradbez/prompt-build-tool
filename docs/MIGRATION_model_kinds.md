@@ -74,19 +74,20 @@ That is all the built-in `template` kind is.
 
 ## Removed after 0.4
 
-The `loop` and `quality_check` built-in kinds are gone, along with the
-`ModelKind.fan_out` and `ModelKind.expand_fn` hooks that existed only to support
-them, the `loop_over` / `quality_retries` / `quality_pass_marker` config keys,
-and `model.meta` in templates. A `.prompt` file still using
-`model_type="loop"` or `"quality_check"` now warns about an unknown
-`model_type` and runs as a plain LLM call. A kind that needs one call per item
-can loop inside its own `exec_fn` over `call.outputs`.
+The `quality_check` built-in kind is gone, along with the `ModelKind.expand_fn`
+hook that existed only to support it, the `quality_retries` /
+`quality_pass_marker` config keys, and `model.meta` in templates. A `.prompt`
+file still using `model_type="quality_check"` now warns about an unknown
+`model_type` and runs as a plain LLM call.
+
+`loop` was removed alongside it and has since been restored, together with
+`ModelKind.fan_out` and the `loop_over` config key, behaving as before.
 
 ## What did not change in 0.4
 
 - `.prompt` files, including the `model_type=` config key and the built-in
-  names of the time (`template`, `execute_python`, and the since-removed
-  `loop` and `quality_check`).
+  names of the time (`template`, `loop`, `execute_python`, and the
+  since-removed `quality_check`).
 - Stored runs. `.pbt/pbt.db` and the prompt cache carry over — a 0.3 cache still
   serves 0.4 runs, because the cache key formula is unchanged.
 - Where you register: `client.py`, or anywhere that runs before models are read.

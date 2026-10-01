@@ -36,7 +36,7 @@ from pbt.tokens import LLMResult
 from pbt.executor.executor import ModelRunResult
 from pbt.types import PromptFile, PromptModelsDict
 
-# Registers the built-in kinds ("", template, execute_python).  Imported here,
+# Registers the built-in kinds ("", template, loop, execute_python, agent).  Imported here,
 # after the registry exists, so that every entry point into pbt has them without
 # the registry needing a lazy-import hook.
 import pbt.executor.builtin_kinds  # noqa: E402,F401
