@@ -60,21 +60,26 @@ class ModelRunResult:
     value: Any = None
 
 
-def _resolve_each(spec: ModelSpec, ctx: RunContext) -> tuple[str, list] | None:
-    """``(path, items)`` for a model with ``config(each=...)``, else None."""
+def _resolve_each(spec: ModelSpec, ctx: RunContext) -> tuple[str, list[dict]] | None:
+    """``(model, rows)`` for a model with ``config(each=...)``, else None.
+
+    Each row is one item with its ``index``, ``indices``, ``path`` and
+    ``parent`` (see :func:`pbt.jsonpath.resolve_each`); templates see it as
+    ``{{ each }}``.
+    """
     if not spec.each:
         return None
     name, steps = jsonpath.parse(spec.each)
     label = f"Model '{spec.name}': each='{spec.each}'"
-    value = jsonpath.resolve(ctx.outputs[name], steps, label)
-    items = jsonpath.as_items(value)
-    if items is None:
-        raise ValueError(
-            f"{label} does not return a JSON list, it is {jsonpath.describe(value)}. "
-            "Point the path at a list (e.g. 'model.key[*]'), and make sure the "
-            "upstream model has output_format='json'."
-        )
-    return name, items
+    if jsonpath.WILDCARD not in steps:
+        value = jsonpath.resolve(ctx.outputs[name], steps, label)
+        if jsonpath.as_items(value) is None:
+            raise ValueError(
+                f"{label} does not return a JSON list, it is {jsonpath.describe(value)}. "
+                "Point the path at a list (e.g. 'model.key[*]'), and make sure the "
+                "upstream model has output_format='json'."
+            )
+    return name, jsonpath.resolve_each(ctx.outputs[name], name, steps, label)
 
 
 def _store_item(
@@ -90,6 +95,7 @@ def _store_item(
     ctx.storage.upsert_model_pending(
         ctx.run_id, name, spec.source, spec.depends_on, spec.model_type, spec.config
     )
+    persist_files(value, ctx.blobs)  # files a kind built itself, before encoding
     output = encode_output(value)
     cacheable = state.cache_artifact is not None and state.skip_value is None
     ctx.storage.mark_model_success(
@@ -174,11 +180,16 @@ async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
         rendered, state = ctx.render(spec)
         return await _produce_one(kind, spec, ctx, rendered, state)
 
-    dep_name, items = fan
-    ctx.note(spec, f"[each over {len(items)} items from '{spec.each}']")
+    dep_name, rows = fan
+    ctx.note(spec, f"[each over {len(rows)} items from '{spec.each}']")
     renders = [
-        ctx.render(spec, extra_outputs={dep_name: item}, primary=False)
-        for item in items
+        ctx.render(
+            spec,
+            extra_outputs={dep_name: row["value"]},
+            extra_context={"each": row},
+            primary=False,
+        )
+        for row in rows
     ]
 
     async def one(rendered: str, state: _RenderState) -> Any:
@@ -242,7 +253,9 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
         spec.name,
         rendered,
         cached_value,
-        cache_key=looked_up or ctx.cache_key(spec, rendered, ctx.files_for(spec)),
+        # An each= model's items are cached one by one (_store_item); the
+        # model's own row holds the joined prompts and needs no key.
+        cache_key=None if spec.each else (looked_up or ctx.cache_key(spec, rendered, ctx.files_for(spec))),
         cached=ctx.served_from_cache(spec.name),
     )
     spent, cache_spent = ctx.spent_tokens(spec.name), ctx.cache_spent_tokens(spec.name)

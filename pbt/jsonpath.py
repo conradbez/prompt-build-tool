@@ -50,6 +50,36 @@ def resolve(value: Any, steps: list[str | int], label: str) -> Any:
     return values if fanned else values[0]
 
 
+def resolve_each(value: Any, name: str, steps: list[str | int], label: str) -> list[dict]:
+    """The items an ``each=`` path yields, each with where it came from.
+
+    Like SQL's ``json_each``: one entry per item, with ``value``, ``index`` (its
+    position in the flat result), ``indices`` (one per ``[*]``), ``path`` (the
+    concrete path, e.g. ``sections[1][0]``) and ``parent`` (the value one step
+    above it).  A path with no ``[*]`` that ends on a list iterates that list.
+    """
+    if WILDCARD not in steps:
+        steps = [*steps, WILDCARD]
+    rows = [(value, [], [], None)]  # (value, concrete steps, indices, parent)
+    for step in steps:
+        nxt = []
+        for v, trail, indices, _ in rows:
+            if step == WILDCARD:
+                for i, item in enumerate(_elements(v, label)):
+                    nxt.append((item, [*trail, i], [*indices, i], v))
+            else:
+                nxt.append((_step(v, step, label), [*trail, step], indices, v))
+        rows = nxt
+    return [
+        {"value": v, "index": n, "indices": indices, "path": name + _spell(trail), "parent": parent}
+        for n, (v, trail, indices, parent) in enumerate(rows)
+    ]
+
+
+def _spell(steps: list[str | int]) -> str:
+    return "".join(f"[{s}]" if isinstance(s, int) else f".{s}" for s in steps)
+
+
 def as_items(value: Any) -> list | None:
     """The items a fan-out iterates over: a list, or the files of a Dir."""
     if isinstance(value, list):

@@ -154,3 +154,73 @@ def test_unchanged_items_are_served_from_cache():
     assert results["polish"].value == ["t:ch1.a", "t:ch1.b", "t:ch2.a"]
     rows = {r["model_name"]: r for r in storage.get_run_results(run_id)}
     assert rows["polish[0]"]["cached"]
+
+
+# ---------------------------------------------------------------------------
+# {{ each }}: index, indices, path, parent
+# ---------------------------------------------------------------------------
+
+def test_each_exposes_index_indices_path_and_parent():
+    _, _, results = run_models({
+        "sections": '{{ config(output_format="json") }}\nSECTIONS',
+        "show": (
+            '{{ config(model_type="template", each="sections[*][*]") }}'
+            "{{ each.index }}|{{ each.indices | join(',') }}|{{ each.path }}|"
+            "{{ each.parent | join(',') }}|{{ ref('sections') }}"
+        ),
+    }, llm_call=lambda p: json.dumps([["s1", "s2"], ["s3"]]))
+    assert results["show"].value == [
+        "0|0,0|sections[0][0]|s1,s2|s1",
+        "1|0,1|sections[0][1]|s1,s2|s2",
+        "2|1,0|sections[1][0]|s3|s3",
+    ]
+
+
+def test_each_index_lines_up_two_lists():
+    _, _, results = run_models({
+        "parts": PIPELINE["parts"],
+        "notes": '{{ config(each="parts.parts[*]", model_type="template") }}note for {{ ref("parts").id }}',
+        "pair": (
+            '{{ config(each="notes", model_type="template") }}'
+            "{{ ref('parts').parts[each.index].id }}: {{ ref('notes') }}"
+        ),
+    }, llm_call=CountingLLM())
+    assert results["pair"].value == ["r1: note for r1", "c1: note for c1"]
+
+
+def test_each_item_attaches_its_own_files():
+    from pbt.files import File
+
+    seen: list[list[str]] = []
+
+    def llm(prompt, files=None, config=None):
+        if "RESEARCH" in prompt:
+            return "x"
+        seen.append((prompt.split()[-1], [f.read() for f in files or []]))
+        return "checked"
+
+    def research(rendered, call):
+        ref = rendered.split()[-1]
+        return {"output": {"ref": ref}, "files": [File(f"{ref} crop".encode(), name=f"{ref}.png")]}
+
+    import pbt
+    pbt.register_model_kind(pbt.ModelKind("fake_research_test", exec_fn=_async(research)))
+    try:
+        _, _, results = run_models({
+            "parts": '{{ config(model_type="template") }}x',
+            "research": '{{ config(model_type="fake_research_test", each="parts") }}RESEARCH {{ ref("parts") }}',
+            "check": '{{ config(each="research", promptfiles=["research.files"]) }}Check {{ ref("research").output.ref }}',
+        } | {"parts": '{{ config(output_format="json") }}\nPARTS'},
+            llm_call=lambda p, files=None, config=None: json.dumps(["D1", "Q2"]) if "PARTS" in p else llm(p, files, config),
+        )
+    finally:
+        from pbt.model_types import _REGISTRY
+        _REGISTRY.pop("fake_research_test", None)
+    assert results["check"].value == ["checked", "checked"]
+    assert sorted(seen) == [("D1", [b"D1 crop"]), ("Q2", [b"Q2 crop"])]
+
+
+def _async(fn):
+    async def wrapper(rendered, call):
+        return fn(rendered, call)
+    return wrapper

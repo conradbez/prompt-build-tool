@@ -177,11 +177,14 @@ class RunContext:
         spec: ModelSpec,
         extra_outputs: dict | None = None,
         primary: bool = True,
+        extra_context: dict | None = None,
     ) -> tuple[str, _RenderState]:
         """Render *spec*'s template and record it for the run report.
 
         *extra_outputs* overlays the outputs used to resolve ``ref()`` — an each= model
         uses it to make ``ref('items')`` yield the current item.
+
+        *extra_context* adds template variables — ``each`` for an each= item.
 
         *primary* marks the render whose skip functions govern the model as a
         whole.  Per-item renders inside a fan-out pass ``primary=False``, so one
@@ -197,6 +200,7 @@ class RunContext:
             prompt_skipped_models=self.skipped,
             model_name=spec.name,
             global_instruction=self.global_instruction_for(spec),
+            extra_context=extra_context,
         )
         state.extra_outputs = extra_outputs
         acct = self._acct(spec.name)
@@ -381,7 +385,9 @@ class RunContext:
                 model, path = upstream
                 value = select_path(outputs[model], path, name)
                 found = [file for _, file in iter_files(value)]
-                if not found:
+                if not found and value not in ([], {}):
+                    # An empty list or dict is "no files this time"; anything
+                    # else without files is most likely the wrong name.
                     raise ValueError(
                         f"Model '{spec.name}' attaches promptfile '{name}', but "
                         f"model '{model}' produced no files there."

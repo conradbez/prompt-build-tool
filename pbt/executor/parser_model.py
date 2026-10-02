@@ -59,6 +59,7 @@ def render_prompt(
     prompt_skipped_models: "set[str] | None" = None,
     model_name: str = "",
     global_instruction: str | None = None,
+    extra_context: dict | None = None,
 ) -> "tuple[str, _RenderState]":
     """
     Render *template_source* as a Jinja2 template.
@@ -120,6 +121,7 @@ def render_prompt(
         "was_skipped": was_skipped,
         "config": lambda **_: "",   # no-op during real render; config already parsed
         "model": model_context,
+        **(extra_context or {}),
     }
 
     def skip_and_set_to_value(value) -> str:

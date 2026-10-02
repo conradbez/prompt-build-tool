@@ -61,7 +61,7 @@ models/
 | `electrical_check` | Python, no LLM: Ohm's law on every current path, gate drive vs Rds(on) rating, ESP32 strapping/flash/input-only pins |
 | `parts` | Pins an LCSC id on every part, records pinned value vs wanted value and pin nets |
 | `bom_line` | Map, once per part: pinned value vs wanted vs built, Basic vs Extended, stock, package, SMT or do-not-place (JLC step 2) |
-| `polarity` | Map, once per polarised part: datasheet marking, net on the marked pad as intended and as built, what JLC's 3D view should show (JLC step 3) |
+| `polarity` | Map over `research`, once per polarised part, with that part's notes, crops and datasheet attached: datasheet marking, net on the marked pad as intended and as built, what JLC's 3D view should show (JLC step 3) |
 | `research` | Agent, once per polarised or multi-pin part: datasheet facts for the PCB, page-cited crops, mismatches with the design. Notes, crops and PDF are its output files |
 | `layout_rules` | At most six rules, each tied to the failure it prevents and its bench symptom |
 | `board` | Agent: `.ato` + `ato build`, placement tested against `layout_rules` and DRC, retried until it passes, then reads back the built BOM and pad nets |

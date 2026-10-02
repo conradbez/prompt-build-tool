@@ -316,6 +316,8 @@ Polish this section:
 - **Map over map.** Each `[*]` unnests one level, like Postgres `jsonb_array_elements`. `sections[*][*]` turns a list of lists into one flat list.
 - **Reduce.** Any model that `ref()`s the mapped list. Use `model_type="template"` for a reduce with no LLM call.
 - **Paths.** `.key`, `[n]` and `[*]`, in the SQL/JSON spelling. `each="chapters"` is shorthand for `chapters[*]`. A path that does not lead to a list fails with the type it found.
+- **Where an item came from.** Inside an `each` model, `{{ each }}` describes the current item, like a row of SQL's `json_each`: `each.index` (its position in the flat list), `each.indices` (one per `[*]`), `each.path` (e.g. `sections[1][0]`) and `each.parent` (the value one step above it). `ref('parts').parts[each.index]` lines up two lists built from the same items.
+- **Per item files.** `promptfiles=["research.files"]` on a model with `each="research"` attaches the current item's files only.
 - **Per item rows and cache.** Each item is stored as its own row, `polish[0]`, `polish[1]`, … in `pbt docs` and the database. Its raw response sits under that item's own cache key, so on the next run only changed items reach the LLM.
 
 The model named in `each` is a dependency even when the template never `ref()`s it. A skip function inside an `each` model applies to that item only; the model as a whole still succeeds.
