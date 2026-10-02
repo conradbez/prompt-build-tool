@@ -1,10 +1,10 @@
-{% set branches = {'market': ref('branch_market'), 'competition': ref('branch_competition'), 'economics': ref('branch_economics')} %}
+{% set names = ref('issue_tree.branches[*].name') %}
 Does the recommendation follow from the branch verdicts? For example, a "go"
 with a refuted economics branch, or a "no-go" with every branch supported,
 should fail.
 
 Branch verdicts:
-{% for name, t in branches.items() %}
+{% for t in ref('branch') %}{% set name = names[loop.index0] %}
 - {{ name }}: {{ t.verdict }}
 {% endfor %}
 

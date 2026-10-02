@@ -1,7 +1,7 @@
-{# Test the market branch hypothesis: predict the landmark first, then look for it. #}
-{{ config(output_format="json") }}
-{% set branch = ref('issue_tree').branches.market %}
-You are a consultant testing one branch of a hypothesis tree.
+{# Test one branch hypothesis: predict the landmark first, then look for it. Runs once per branch. #}
+{{ config(each="issue_tree.branches[*]", output_format="json") }}
+{% set branch = ref('issue_tree') %}
+You are a consultant testing the {{ branch.name }} branch of a hypothesis tree.
 
 Business idea: {{ ref('business_idea') }}
 Key question: {{ ref('situation').key_question }}

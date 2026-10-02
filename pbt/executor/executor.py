@@ -5,8 +5,7 @@ The executor owns everything that is the same for every model, so that a model
 kind never has to reimplement it:
 
   1. Look up the kind for the model's ``model_type``.
-  2. Render the template — once, or once per item for a model with
-     ``config(each=...)`` (or a ``fan_out`` kind such as ``loop``).
+  2. Render the template — once, or once per item for ``config(each=...)``.
   3. Hand the rendered text to the kind's ``exec_fn``, with the cached LLM call
      and cached compute preloaded onto a :class:`~pbt.model_types.ModelCall`.
   4. Apply skip propagation from the model's own template.
@@ -61,28 +60,12 @@ class ModelRunResult:
     value: Any = None
 
 
-def _resolve_each(spec: ModelSpec, kind: ModelKind, ctx: RunContext) -> tuple[str, str, list] | None:
-    """``(model, path, items)`` a fan-out model iterates, or None if it does not fan out.
-
-    ``config(each='parts.items[*]')`` fans out any kind.  A ``fan_out`` kind
-    (``loop``) without one falls back to ``loop_over``, then to the single
-    upstream dependency that returns a list.
-    """
-    path = spec.each or (spec.config.get("loop_over", "") if kind.fan_out else "")
-    if not path:
-        if not kind.fan_out:
-            return None
-        dep, items = _only_list_dep(spec, ctx)
-        return dep, dep, items
-
-    name, steps = jsonpath.parse(path)
-    key = "each" if spec.each else "loop_over"
-    label = f"Model '{spec.name}': {key}='{path}'"
-    if name not in spec.depends_on:
-        raise ValueError(
-            f"{label} is not a dependency of this model. "
-            f"Dependencies: {spec.depends_on!r}."
-        )
+def _resolve_each(spec: ModelSpec, ctx: RunContext) -> tuple[str, list] | None:
+    """``(path, items)`` for a model with ``config(each=...)``, else None."""
+    if not spec.each:
+        return None
+    name, steps = jsonpath.parse(spec.each)
+    label = f"Model '{spec.name}': each='{spec.each}'"
     value = jsonpath.resolve(ctx.outputs[name], steps, label)
     items = jsonpath.as_items(value)
     if items is None:
@@ -91,28 +74,7 @@ def _resolve_each(spec: ModelSpec, kind: ModelKind, ctx: RunContext) -> tuple[st
             "Point the path at a list (e.g. 'model.key[*]'), and make sure the "
             "upstream model has output_format='json'."
         )
-    return name, path, items
-
-
-def _only_list_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
-    """The single upstream dependency whose output is a list."""
-    list_deps = {
-        dep: items
-        for dep in spec.depends_on
-        if (items := jsonpath.as_items(ctx.outputs.get(dep))) is not None
-    }
-    if not list_deps:
-        raise ValueError(
-            f"Loop model '{spec.name}': no upstream dependency returns a JSON list. "
-            "Ensure an upstream model has output_format='json' and returns a list."
-        )
-    if len(list_deps) > 1:
-        raise ValueError(
-            f"Loop model '{spec.name}': multiple dependencies return lists: "
-            f"{list(list_deps)}. Add each='model_name' (or loop_over=) to config() "
-            "to disambiguate."
-        )
-    return next(iter(list_deps.items()))
+    return name, items
 
 
 def _store_item(
@@ -197,18 +159,18 @@ async def _produce_one(
 async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
     """Render *spec* and produce its output value.
 
-    A model with ``each=`` (or a ``fan_out`` kind) renders once per item and runs
+    A model with ``each=`` renders once per item and runs
     its exec_fn on each concurrently, collecting the results in input order.
     Per-item renders are not *primary*: one skipped item must not mark the whole
     model skipped.
     """
-    fan = _resolve_each(spec, kind, ctx)
+    fan = _resolve_each(spec, ctx)
     if fan is None:
         rendered, state = ctx.render(spec)
         return await _produce_one(kind, spec, ctx, rendered, state)
 
-    dep_name, path, items = fan
-    ctx.note(spec, f"[loop over {len(items)} items from '{path}']")
+    dep_name, items = fan
+    ctx.note(spec, f"[each over {len(items)} items from '{spec.each}']")
     renders = [
         ctx.render(spec, extra_outputs={dep_name: item}, primary=False)
         for item in items

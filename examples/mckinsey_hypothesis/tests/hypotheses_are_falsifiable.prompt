@@ -1,9 +1,9 @@
-{% set branches = {'market': ref('branch_market'), 'competition': ref('branch_competition'), 'economics': ref('branch_economics')} %}
+{% set names = ref('issue_tree.branches[*].name') %}
 For each branch below, check that "disproven_if" names a concrete, observable
 result that would actually contradict the hypothesis (not a vague "if the
 market is bad").
 
-{% for name, t in branches.items() %}
+{% for t in ref('branch') %}{% set name = names[loop.index0] %}
 ## {{ name }}
 {{ t | tojson(indent=2) }}
 {% endfor %}

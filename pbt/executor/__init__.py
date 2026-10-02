@@ -1,6 +1,6 @@
 from pbt.executor.executor import execute_model, execute_run, ModelRunResult
 from pbt.executor.run_context import RunContext, parse_json_output
-from pbt.executor.builtin_kinds import LLM, LOOP, PYTHON, TEMPLATE
+from pbt.executor.builtin_kinds import LLM, PYTHON, TEMPLATE
 from pbt.executor.graph import (
     CyclicDependencyError,
     UnknownModelError,
@@ -31,7 +31,6 @@ __all__ = [
     "ModelCall",
     "LLM",
     "TEMPLATE",
-    "LOOP",
     "PYTHON",
     "CyclicDependencyError",
     "UnknownModelError",

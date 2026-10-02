@@ -19,9 +19,9 @@ Each hypothesis must be a falsifiable statement, not a question.
 Return only JSON:
 {
   "governing_hypothesis": "...",
-  "branches": {
-    "market":      {"hypothesis": "...", "sub_questions": ["...", "..."]},
-    "competition": {"hypothesis": "...", "sub_questions": ["...", "..."]},
-    "economics":   {"hypothesis": "...", "sub_questions": ["...", "..."]}
-  }
+  "branches": [
+    {"name": "market",      "hypothesis": "...", "sub_questions": ["...", "..."]},
+    {"name": "competition", "hypothesis": "...", "sub_questions": ["...", "..."]},
+    {"name": "economics",   "hypothesis": "...", "sub_questions": ["...", "..."]}
+  ]
 }

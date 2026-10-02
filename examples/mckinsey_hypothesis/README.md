@@ -10,18 +10,23 @@ so when the answer looks wrong you fix the branch that drifted instead of
 rewriting the whole prompt.
 
 ```
-business_idea ─► situation ─► issue_tree ─┬─► branch_market ──────┐
-  (python)        (SCQ)      (governing    ├─► branch_competition ─┼─► synthesis ─► memo
-                              hypothesis)  └─► branch_economics ───┘   (pyramid)   (template)
+business_idea ─► situation ─► issue_tree ─► branch ×3 ─► synthesis ─► memo
+  (python)        (SCQ)      (governing    (each=      (pyramid)   (template)
+                              hypothesis)   branches[*])
 ```
+
+`branch` is one prompt that runs once per branch of the issue tree, via
+`{{ config(each="issue_tree.branches[*]") }}`. Add a fourth branch to
+`issue_tree` and it gets tested too, with no new file. Each branch is cached
+separately, so when `issue_tree` changes one branch, only that branch re-runs.
 
 | Model | What it does |
 |---|---|
 | `business_idea` | Python model: picks a random idea from a list |
 | `situation` | Situation, Complication, Key Question; success criteria |
-| `issue_tree` | Governing hypothesis plus three MECE branch hypotheses |
-| `branch_*` | Predicts what it expects to see, names what would disprove it, then weighs evidence |
-| `synthesis` | Answer first, three supporting arguments, whether the hypothesis survived |
+| `issue_tree` | Governing hypothesis plus a list of three MECE branch hypotheses |
+| `branch` | Map: once per branch, predicts what it expects to see, names what would disprove it, then weighs evidence |
+| `synthesis` | Reduce: answer first, three supporting arguments, whether the hypothesis survived |
 | `memo` | Template model: assembles the client-ready memo, no LLM call |
 
 ## Run

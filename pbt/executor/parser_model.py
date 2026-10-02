@@ -33,7 +33,7 @@ class _RenderState:
     skip_value: Any = None
     skip_downstream: bool = False
 
-    #: The ref() overlay this render used — a loop item — so promptfiles
+    #: The ref() overlay this render used — an each= item — so promptfiles
     #: naming the looped model attach that item's files.
     extra_outputs: dict | None = None
 

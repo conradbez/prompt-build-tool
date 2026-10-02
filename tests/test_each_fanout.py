@@ -1,9 +1,9 @@
 """
-The ``loop`` model kind and the ``fan_out`` hook behind it.
+Fan-out with ``config(each=...)``.
 
-A loop model renders once per item of an upstream JSON list (or the files of a
-Dir), with ``ref('<list model>')`` yielding the current item, and collects the
-results into a list in input order.
+A model with ``each`` renders once per item of an upstream JSON list (or the
+files of a Dir), with ``ref('<list model>')`` yielding the current item, and
+collects the results into a list in input order — whatever its model kind.
 """
 
 from __future__ import annotations
@@ -47,13 +47,13 @@ def run_models(models: dict[str, str], *, storage=None, llm_call=stub_llm, **kwa
 # Fan-out
 # ---------------------------------------------------------------------------
 
-def test_loop_fans_out_over_a_json_list():
+def test_each_fans_out_over_a_json_list():
     _, _, results = run_models({
         "items": '{{ config(output_format="json") }}\nList things.',
-        "each": '{{ config(model_type="loop") }}\nDescribe {{ ref("items") }}',
+        "each": '{{ config(each="items") }}\nDescribe {{ ref("items") }}',
     })
     assert json.loads(results["each"].llm_output) == ["resp", "resp"]
-    assert "[loop over 2 items from 'items']" in results["each"].prompt_rendered
+    assert "[each over 2 items from 'items']" in results["each"].prompt_rendered
 
 
 def test_ref_yields_the_current_item_in_order():
@@ -68,7 +68,7 @@ def test_ref_yields_the_current_item_in_order():
     _, _, results = run_models(
         {
             "items": '{{ config(output_format="json") }}\nList fruit.',
-            "each": '{{ config(model_type="loop") }}\nShout {{ ref("items") }}',
+            "each": '{{ config(each="items") }}\nShout {{ ref("items") }}',
         },
         llm_call=llm,
     )
@@ -78,11 +78,11 @@ def test_ref_yields_the_current_item_in_order():
     ]
 
 
-def test_one_skipped_item_does_not_skip_the_loop():
+def test_one_skipped_item_does_not_skip_the_model():
     _, _, results = run_models({
         "items": '{{ config(output_format="json") }}\nList things.',
         "each": (
-            '{{ config(model_type="loop") }}\n'
+            '{{ config(each="items") }}\n'
             '{% if ref("items") == "a" %}{{ skip_and_set_to_value("skipped") }}{% endif %}'
             'Describe {{ ref("items") }}'
         ),
@@ -91,7 +91,7 @@ def test_one_skipped_item_does_not_skip_the_loop():
     assert results["each"].status != pbt.ModelStatus.SKIPPED
 
 
-def test_loop_json_output_parses_each_item():
+def test_json_output_parses_each_item():
     def llm(prompt: str, config: dict | None = None) -> str:
         if "List" in prompt:
             return json.dumps(["a", "b"])
@@ -101,7 +101,7 @@ def test_loop_json_output_parses_each_item():
         {
             "items": '{{ config(output_format="json") }}\nList things.',
             "each": (
-                '{{ config(model_type="loop", output_format="json") }}\n'
+                '{{ config(each="items", output_format="json") }}\n'
                 'Wrap {{ ref("items") }}'
             ),
         },
@@ -110,15 +110,15 @@ def test_loop_json_output_parses_each_item():
     assert results["each"].value == [{"item": "a"}, {"item": "b"}]
 
 
-def test_custom_kind_can_fan_out():
+def test_any_custom_kind_can_fan_out():
     async def shout(rendered, call):
         return (await call.llm(rendered)).upper()
 
-    pbt.register_model_kind(pbt.ModelKind("shout_each_test", exec_fn=shout, fan_out=True))
+    pbt.register_model_kind(pbt.ModelKind("shout_each_test", exec_fn=shout))
     try:
         _, _, results = run_models({
             "items": '{{ config(output_format="json") }}\nList things.',
-            "each": '{{ config(model_type="shout_each_test") }}\n{{ ref("items") }}',
+            "each": '{{ config(model_type="shout_each_test", each="items") }}\n{{ ref("items") }}',
         })
     finally:
         _REGISTRY.pop("shout_each_test", None)
@@ -129,7 +129,7 @@ def test_custom_kind_can_fan_out():
 # Files
 # ---------------------------------------------------------------------------
 
-def test_loop_attaches_each_items_file():
+def test_attaches_each_items_file():
     def llm(prompt, files=None, config=None):
         if prompt.startswith("draw"):
             return [File(b"one", name="1.png"), File(b"two", name="2.png")]
@@ -139,7 +139,7 @@ def test_loop_attaches_each_items_file():
         {
             "imgs": "draw two",
             "each": (
-                '{{ config(model_type="loop", promptfiles=["imgs"]) }}\n'
+                '{{ config(each="imgs", promptfiles=["imgs"]) }}\n'
                 "Critique {{ ref('imgs') }}"
             ),
         },
@@ -148,14 +148,14 @@ def test_loop_attaches_each_items_file():
     assert results["each"].value == ["1.png", "2.png"]
 
 
-def test_loop_over_a_dir():
+def test_each_over_a_dir():
     def llm(prompt, files=None, config=None):
         if prompt.startswith("draw"):
             return Dir({"a.txt": b"a", "b.txt": b"b"}, name="d")
         return prompt.split()[-1]
 
     _, _, results = run_models(
-        {"d": "draw", "each": '{{ config(model_type="loop") }}\nname {{ ref("d").name }}'},
+        {"d": "draw", "each": '{{ config(each="d") }}\nname {{ ref("d").name }}'},
         llm_call=llm,
     )
     assert results["each"].value == ["a.txt", "b.txt"]
@@ -166,7 +166,7 @@ def test_loop_over_a_dir():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_loop_model_gets_global_instruction_per_item():
+async def test_each_model_gets_global_instruction_per_item():
     prompts: list[str] = []
 
     def llm(prompt: str, config: dict | None = None) -> str:
@@ -176,7 +176,7 @@ async def test_loop_model_gets_global_instruction_per_item():
     await pbt.async_run(
         models_from_dict={
             "items": '{{ config(output_format="json") }}\nList things.',
-            "items_loop": '{{ config(model_type="loop") }}\nDescribe: {{ ref("items") }}',
+            "items_loop": '{{ config(each="items") }}\nDescribe: {{ ref("items") }}',
         },
         llm_call=llm,
         verbose=False,
@@ -188,18 +188,8 @@ async def test_loop_model_gets_global_instruction_per_item():
 
 
 # ---------------------------------------------------------------------------
-# loop_over
+# Choosing what to iterate
 # ---------------------------------------------------------------------------
-
-LOOP_MODELS = {
-    "one": '{{ config(output_format="json") }}\nList A.',
-    "two": '{{ config(output_format="json") }}\nList B.',
-    "fan": (
-        '{{ config(model_type="loop", loop_over="two") }}\n'
-        'Describe {{ ref("one") }} and {{ ref("two") }}'
-    ),
-}
-
 
 def _llm(prompt: str, config: dict | None = None) -> str:
     if (config or {}).get("output_format") == "json":
@@ -217,37 +207,21 @@ async def _run(models: dict) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_loop_over_disambiguates_multiple_list_deps():
-    outputs = await _run(LOOP_MODELS)
-    assert not isinstance(outputs["fan"], pbt.ModelError), outputs["fan"]
-    # One call per item in 'two' (3 items), not per item in 'one'.
+async def test_each_picks_one_of_several_list_deps():
+    models = {
+        "one": '{{ config(output_format="json") }}\nList A.',
+        "two": '{{ config(output_format="json") }}\nList B.',
+        "fan": '{{ config(each="two") }}\nDescribe {{ ref("one") }} and {{ ref("two") }}',
+    }
+    outputs = await _run(models)
     assert json.loads(outputs["fan"]) == ["described", "described", "described"]
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_loop_without_loop_over_errors():
-    models = {**LOOP_MODELS, "fan": '{{ config(model_type="loop") }}\n{{ ref("one") }}{{ ref("two") }}'}
-    outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
-    assert "loop_over" in str(outputs["fan"])
-
-
-@pytest.mark.asyncio
-async def test_loop_over_non_dependency_errors():
-    models = {
-        **LOOP_MODELS,
-        "fan": '{{ config(model_type="loop", loop_over="nope") }}\n{{ ref("one") }}{{ ref("two") }}',
-    }
-    outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
-    assert "not a dependency" in str(outputs["fan"])
-
-
-@pytest.mark.asyncio
-async def test_loop_over_non_list_dependency_errors():
+async def test_each_over_text_errors():
     models = {
         "text": "Just prose.",
-        "fan": '{{ config(model_type="loop", loop_over="text") }}\nDescribe {{ ref("text") }}',
+        "fan": '{{ config(each="text") }}\nDescribe {{ ref("text") }}',
     }
     outputs = await _run(models)
     assert isinstance(outputs["fan"], pbt.ModelError)

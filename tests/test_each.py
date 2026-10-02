@@ -15,7 +15,7 @@ import pytest
 from pbt import jsonpath
 from pbt.executor.parser_initial import extract_dependencies
 from pbt.storage import MemoryStorageBackend
-from tests.test_loop import run_models
+from tests.test_each_fanout import run_models
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ def test_map_map_reduce_pipeline():
     assert results["sections"].value == [["ch1.a", "ch1.b"], ["ch2.a"]]
     assert results["polish"].value == ["t:ch1.a", "t:ch1.b", "t:ch2.a"]
     assert results["report"].value == "REPORT t:ch1.a,t:ch1.b,t:ch2.a / ok:r1,ok:c1"
-    assert "[loop over 3 items from 'sections[*][*]']" in results["polish"].prompt_rendered
+    assert "[each over 3 items from 'sections[*][*]']" in results["polish"].prompt_rendered
 
 
 def test_each_adds_the_dependency_it_iterates():

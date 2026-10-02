@@ -9,7 +9,6 @@ including the ones you register yourself.
 
 ``""`` (plain LLM)   send the rendered prompt to the backend
 ``template``         the rendered text *is* the output (``exec_fn=None``)
-``loop``             the plain LLM call, once per item (``fan_out=True``)
 ``execute_python``   run the rendered text as Python
 ``agent``            hand the rendered text to mini-swe-agent as its task
 
@@ -210,16 +209,6 @@ LLM = ModelKind(name="", exec_fn=call_the_llm)
 #: rendered text is the output itself rather than a prompt to answer.
 TEMPLATE = ModelKind(name="template", exec_fn=None, accepts_global_instruction=False)
 
-#: Fan out over a JSON list from an upstream model, one LLM call per item.
-#: ``ref('<the list model>')`` yields the current item inside the template, so a
-#: loop model needs no syntax of its own.
-LOOP = ModelKind(
-    name="loop",
-    exec_fn=call_the_llm,
-    fan_out=True,
-    config_keys=frozenset({"loop_over"}),
-)
-
 PYTHON = ModelKind(
     name="execute_python",
     exec_fn=run_python,
@@ -233,5 +222,5 @@ AGENT = ModelKind(
     config_keys=frozenset({"agent_dir", "agent_model", "agent_step_limit", "agent_cost_limit"}),
 )
 
-for _kind in (LLM, TEMPLATE, LOOP, PYTHON, AGENT):
+for _kind in (LLM, TEMPLATE, PYTHON, AGENT):
     register_model_kind(_kind)

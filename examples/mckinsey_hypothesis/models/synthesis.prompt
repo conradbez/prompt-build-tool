@@ -1,6 +1,6 @@
 {# Roll the branch verdicts back up into an answer to the key question (Pyramid Principle). #}
 {{ config(output_format="json") }}
-{% set branches = {'market': ref('branch_market'), 'competition': ref('branch_competition'), 'economics': ref('branch_economics')} %}
+{% set names = ref('issue_tree.branches[*].name') %}
 {% set tree = ref('issue_tree') %}
 You are the engagement partner. Synthesise the team's work into an answer.
 
@@ -10,7 +10,7 @@ Success criteria: {{ ref('situation').success_criteria }}
 Original governing hypothesis: {{ tree.governing_hypothesis }}
 
 Branch results:
-{% for name, t in branches.items() %}
+{% for t in ref('branch') %}{% set name = names[loop.index0] %}
 - {{ name }}: {{ t.verdict }} ({{ t.confidence }} confidence)
   revised: {{ t.revised_hypothesis }}
 {% endfor %}

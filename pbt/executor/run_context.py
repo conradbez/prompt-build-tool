@@ -180,7 +180,7 @@ class RunContext:
     ) -> tuple[str, _RenderState]:
         """Render *spec*'s template and record it for the run report.
 
-        *extra_outputs* overlays the outputs used to resolve ``ref()`` — a loop
+        *extra_outputs* overlays the outputs used to resolve ``ref()`` — an each= model
         uses it to make ``ref('items')`` yield the current item.
 
         *primary* marks the render whose skip functions govern the model as a
@@ -360,7 +360,7 @@ class RunContext:
         a name could be both.
 
         Opened once per model and reused, so every call for a fan-out model
-        shares one set of handles — except when *state* rendered a loop item,
+        shares one set of handles — except when *state* rendered an each= item,
         whose ``ref()`` overlay may pick different upstream files per item.
         """
         overlay = getattr(state, "extra_outputs", None)

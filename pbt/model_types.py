@@ -24,9 +24,8 @@ or, equivalently, with the decorator::
         ...
 
 There is no base class to subclass and no instance to construct: a kind holds
-no per-model state, so it is data.  The one thing it may *not* express as a
-plain exec_fn gets its own field — ``fan_out`` (one node, many prompts) —
-because rendering is handled by the executor, outside execution.
+no per-model state, so it is data.  Fan-out is not a kind's concern: any
+model sets ``config(each=...)`` and the executor runs its kind once per item.
 
 Registering also declares the ``config()`` keys the kind consumes, so they stop
 triggering :class:`~pbt.executor.parser_initial.UnknownConfigKeyWarning` — there
@@ -98,11 +97,6 @@ class ModelKind:
     #: (Python source, a pass-through value) and so would be corrupted by it.
     accepts_global_instruction: bool = True
 
-    #: Fan out without ``config(each=...)``: the executor resolves the single
-    #: upstream JSON list (or ``loop_over``), renders once per item, runs
-    #: ``exec_fn`` on each concurrently, and collects the results in input
-    #: order.  Any model fans out with ``each=`` whatever its kind.
-    fan_out: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +121,6 @@ def model_kind(
     *,
     config_keys: "frozenset[str] | set[str] | None" = None,
     accepts_global_instruction: bool = True,
-    fan_out: bool = False,
 ):
     """Decorator form of :func:`register_model_kind`, wrapping an ``exec_fn``.
 
@@ -146,7 +139,6 @@ def model_kind(
             exec_fn=fn,
             config_keys=frozenset(config_keys or ()),
             accepts_global_instruction=accepts_global_instruction,
-            fan_out=fan_out,
         ))
         return fn
 
