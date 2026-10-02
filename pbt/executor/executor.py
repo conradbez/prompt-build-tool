@@ -146,6 +146,8 @@ async def _produce_one(
     if kind.exec_fn is None:
         passthrough = _passthrough_files(spec, ctx)
         return rendered if passthrough is None else passthrough
+    if state.skip_value is not None:
+        return state.skip_value  # a skip function replaced the work itself
 
     call = ModelCall(
         spec=spec,

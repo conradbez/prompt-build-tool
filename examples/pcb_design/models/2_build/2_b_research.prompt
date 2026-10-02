@@ -1,0 +1,54 @@
+{# Datasheet research, once per part whose orientation, pinout or drive level can't be read off the part. Notes and crops are passed on as files. #}
+{{ config(
+    each="parts.parts[*]",
+    model_type="agent",
+    output_format="json",
+    agent_dir="build/research",
+    agent_step_limit="60",
+    agent_cost_limit="2",
+) }}
+{% set p = ref('parts') %}
+{% if not p.polarised and p.pins | length <= 2 %}
+{{ skip_and_set_to_value("not researched: not polarised, the value is the only spec") }}
+{% else %}
+You are researching one part's datasheet before it goes on a PCB. Work in
+./{{ p.ref }}_{{ p.lcsc }}/ (create it). Other parts are researched in
+parallel in sibling folders, so do not touch them.
+
+Part {{ p.ref }} ({{ p.function }}): {{ p.value }}, LCSC {{ p.lcsc }}.
+How the design connects it:
+{{ p.pins | tojson(indent=2) }}
+
+1. Download the datasheet. The LCSC product page for {{ p.lcsc }} carries a
+   pdfUrl on wmsc.lcsc.com; otherwise use the manufacturer's site.
+   `uvx easyeda2kicad --full --lcsc_id={{ p.lcsc }}` gives the footprint, so
+   you can see its pad numbering too.
+2. Find only the facts needed to set up the PCB: pin numbering and the
+   physical marking for pin 1 or the cathode (band, chamfer, dot), the full
+   pinout, drive level or threshold (gate Vgs, forward current, supply range),
+   required external parts, and anything the part's own marking misleads about
+   (a module's shield dot that is not pin 1).
+3. Crop the diagram or table each fact comes from out of the PDF as a PNG
+   (`pdftoppm -png -r 200`, then crop with Python). One fact per crop.
+4. Compare with the design's pins above. Flag every mismatch, including a
+   datasheet pin 1 that is not the footprint's pad 1. One LED datasheet numbers
+   pin 1 as the anode while its footprint maps the cathode to pin 1.
+
+Write into the output directory you were given:
+- `{{ p.ref }}_{{ p.lcsc }}.md`: the notes, each fact with its page number,
+  each crop embedded as `![what it shows](crops/<name>.png)`
+- `crops/`: the cropped PNGs
+- the datasheet PDF
+
+Submit only this JSON:
+{
+  "ref": "{{ p.ref }}",
+  "lcsc": "{{ p.lcsc }}",
+  "datasheet_url": "...",
+  "pin1_marking": "the physical feature that marks pin 1 / cathode",
+  "pinout": [{"pin": "1", "name": "...", "footprint_pad": "1"}],
+  "drive": "gate threshold, forward current or supply range, with units",
+  "externals": ["parts the datasheet requires around it"],
+  "flags": ["each mismatch with the design; empty when none"]
+}
+{% endif %}

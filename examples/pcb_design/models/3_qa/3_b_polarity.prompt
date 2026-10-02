@@ -5,6 +5,7 @@
 {{ skip_and_set_to_value("not polarised") }}
 {% else %}
 {% set built = ref('board').output.pad_nets | selectattr('ref', 'equalto', p.ref) | list %}
+{% set notes = ref('research') | select('mapping') | selectattr('output.ref', 'equalto', p.ref) | list %}
 You are checking one polarised part in JLCPCB's component placement view,
 before ordering. On a real board a flyback diode's logical pins were right but
 its physical pads were reversed, and it shorted 12 V to ground.
@@ -13,11 +14,15 @@ Part {{ p.ref }} ({{ p.function }}), {{ p.value }}, LCSC {{ p.lcsc }}.
 Pins and the nets they land on:
 {{ p.pins | tojson(indent=2) }}
 
+Datasheet research for this part (from its datasheet, with page-cited crops):
+{{ notes[0].output | tojson(indent=2) if notes else "none: answer from what you know and say so" }}
+
 Nets on the physical pads of the built board, read from the .kicad_pcb:
 {{ built[0].pads | tojson(indent=2) if built else "MISSING: no pad nets read back for this part" }}
 
 1. Name the physical marking that identifies pin 1, the cathode or the anode
-   in this part's datasheet (band, chamfer, dot, "−").
+   in this part's datasheet (band, chamfer, dot, "−"). Use the research above
+   when there is one, and carry its flags forward into issues.
 2. State which net the marked pad must land on in this circuit, and whether
    the intended pins AND the built pads agree with it. Intended right and built
    wrong is exactly the reversed-diode failure.

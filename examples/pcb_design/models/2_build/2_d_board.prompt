@@ -21,6 +21,11 @@ Architecture (each block is a hypothesis):
 Parts, each pinned to an LCSC id. The pinned id is what JLC will place:
 {{ ref('parts') | tojson(indent=2) }}
 
+Datasheet research for the polarised and multi-pin parts (pinout, pin-1
+marking, drive level, required externals). Map pins to pads from this, not
+from the part name:
+{{ ref('research') | select('mapping') | map(attribute='output') | list | tojson(indent=2) }}
+
 Layout rules to place against:
 {{ ref('layout_rules') | tojson(indent=2) }}
 {% if promptdata("reference_project") %}

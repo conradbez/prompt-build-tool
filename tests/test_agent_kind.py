@@ -81,3 +81,42 @@ def test_agent_json_output_is_parsed(tmp_path, monkeypatch):
     })
     assert results["board"].value["output"] == {"drc_errors": 0}
     assert results["after"].llm_output.strip() == "errors: 0"
+
+
+def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_model(name, model_cfg):
+        calls.append(name)
+        return DeterministicModel(outputs=[
+            make_output("write", [{"command": (
+                "d=$(ls -d .pbt_out_*) && echo '# SS34' > $d/SS34.md "
+                "&& mkdir $d/crops && printf png > $d/crops/band.png"
+            )}]),
+            make_output("done", [{"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && echo noted"}]),
+        ])
+
+    monkeypatch.setattr(builtin_kinds, "_agent_model", fake_model)
+    from pbt.storage import MemoryStorageBackend
+
+    storage = MemoryStorageBackend()
+    models = {
+        "research": f'{{{{ config(model_type="agent", agent_dir="{tmp_path}") }}}}\nresearch SS34',
+        "names": (
+            '{{ config(model_type="template") }}'
+            "{% for f in ref('research').files %}{{ f.name }} {% endfor %}"
+        ),
+    }
+    _, _, results = run_models(models, storage=storage)
+
+    value = results["research"].value
+    assert value["output"].strip() == "noted"
+    by_name = {f.name: f for f in value["files"]}
+    assert by_name["SS34.md"].read_bytes() == b"# SS34\n"
+    assert by_name["crops"].files()[0].read_bytes() == b"png"
+    assert results["names"].llm_output.split() == ["SS34.md", "crops"]
+    assert not list(tmp_path.glob(".pbt_out_*")), "the output directory is removed"
+
+    _, _, again = run_models(models, storage=storage)
+    assert len(calls) == 1, "second run is served from cache"
+    assert {f.name for f in again["research"].value["files"]} == {"SS34.md", "crops"}

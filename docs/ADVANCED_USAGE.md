@@ -436,8 +436,17 @@ The output is a dict:
 | `output`   | what the agent submitted (its final reply, for opencode) |
 | `logs`     | the full message trajectory (opencode's JSON events) |
 | `time_run` | seconds the agent ran                   |
+| `files`    | what the agent wrote into its output directory, as `File` / `Dir` objects; absent when it wrote none |
 
-Downstream: `{{ ref('fix_tests')['output'] }}`.
+Downstream: `{{ ref('fix_tests')['output'] }}`. With `output_format="json"`,
+`output` is the parsed submission, so `{{ ref('fix_tests').output.key }}` works.
+
+The agent is told about an empty output directory inside `agent_dir`. Whatever
+it writes there, such as notes, cropped images or a PDF, becomes the model's
+files. They are stored as blobs and the directory is removed, so nothing is
+left behind to clean up. Attach them downstream with
+`promptfiles=["fix_tests.files"]` or read them in a template. A worked example
+is `research` in [`examples/pcb_design`](../examples/pcb_design).
 
 | config key         | meaning                                      |
 |--------------------|----------------------------------------------|

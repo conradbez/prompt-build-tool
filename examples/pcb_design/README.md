@@ -12,19 +12,28 @@ So every stage states what it expects to see, and the tests look for those
 landmarks.
 
 ```
-brief ─► requirements ─► architecture ─┬─► electrical_check (python) ──────────────────────────┐
-                                        └─► parts ─► layout_rules ─► board (agent: atopile+KiCad) ─┤
-                                                                       ├─► bom_line (each part) ───┤
-                                                                       └─► polarity (each part) ─► bringup ─► review
+brief ─► requirements ─► architecture ─┬─► electrical_check (python) ─────────────────────────────┐
+                                        └─► parts ─┬─► research (agent, each part) ─┐              │
+                                                   └─► layout_rules ────────────────┴─► board (agent) ─┤
+                                                                     ├─► bom_line (each part) ─────────┤
+                                                                     └─► polarity (each part) ─► bringup ─► review
 ```
+
+`research` follows the `complex_components_research` process: for
+every polarised or multi-pin part an agent downloads the datasheet, writes the
+facts needed to set up the PCB with page numbers, and crops the diagram each
+fact comes from. Nothing is kept in a research folder: the notes, the crops and
+the PDF are the model's output files. They show in `pbt docs`, land in
+`outputs/research/`, and reach `board` and `polarity` as data. Resistors and
+capacitors skip without an agent run.
 
 `board` is a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)
 working in `build/board/`. It follows the atopile flow: it writes the circuit
 as `.ato` with assertions, pins every LCSC id, and runs `ato build`. It then
 places the parts with a KiCad-Python script: it predicts every layout rule's
 measurement, measures the placed board, and runs `kicad-cli pcb drc`. If a rule
-or DRC fails, it changes the placement and tests again, recording each attempt. It submits the BOM atopile
-generated and the net on every polarised part's physical pads.
+or DRC fails, it changes the placement and tests again, recording each attempt.
+It submits the BOM atopile generated and the net on every polarised part's physical pads.
 
 Two QA stages run once per part, with `{{ config(each="parts.parts[*]") }}`.
 They mirror the two JLC upload steps you check line by line: the BOM page and
@@ -40,7 +49,7 @@ the files; `ref('parts')` still names `2_build/2_a_parts.prompt`.
 ```
 models/
   1_design/  1_a_brief  1_b_requirements  1_c_architecture  1_d_electrical_check
-  2_build/   2_a_parts  2_b_layout_rules  2_c_board
+  2_build/   2_a_parts  2_b_research  2_c_layout_rules  2_d_board
   3_qa/      3_a_bom_line  3_b_polarity  3_c_bringup  3_d_review
 ```
 
@@ -53,6 +62,7 @@ models/
 | `parts` | Pins an LCSC id on every part, records pinned value vs wanted value and pin nets |
 | `bom_line` | Map, once per part: pinned value vs wanted vs built, Basic vs Extended, stock, package, SMT or do-not-place (JLC step 2) |
 | `polarity` | Map, once per polarised part: datasheet marking, net on the marked pad as intended and as built, what JLC's 3D view should show (JLC step 3) |
+| `research` | Agent, once per polarised or multi-pin part: datasheet facts for the PCB, page-cited crops, mismatches with the design. Notes, crops and PDF are its output files |
 | `layout_rules` | At most six rules, each tied to the failure it prevents and its bench symptom |
 | `board` | Agent: `.ato` + `ato build`, placement tested against `layout_rules` and DRC, retried until it passes, then reads back the built BOM and pad nets |
 | `bringup` | Unpowered polarity inspections from `polarity`, then powered checks, negative test first |
@@ -75,7 +85,7 @@ pbt run --promptdata brief="ESP32 soil-moisture sensor, 3V3 only, capacitive pro
 ```
 
 The agent is capped at 150 steps and $5 (`agent_step_limit`, `agent_cost_limit`
-in `2_c_board.prompt`). Like every model it is cached on its rendered prompt:
+in `2_d_board.prompt`). Like every model it is cached on its rendered prompt:
 it re-runs only when the design, parts or layout rules change.
 
 ## Tests: the landmarks

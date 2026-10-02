@@ -42,6 +42,12 @@
 - [ ] {{ i }}
 {% endfor %}
 
+## Datasheet research
+| Ref | LCSC | Pin 1 marking | Drive | Flags | Files |
+|---|---|---|---|---|---|
+{% for d in ref('research') | select('mapping') %}| {{ d.output.ref }} | {{ d.output.lcsc }} | {{ d.output.pin1_marking }} | {{ d.output.drive }} | {{ d.output.flags | join('; ') or "none" }} | {{ d.files | map(attribute='name') | join(', ') }} |
+{% endfor %}
+
 ## BOM lines (JLC step 2)
 | Ref | LCSC | Value OK | Built OK | Tier OK | Stock | Assembly | Issues |
 |---|---|---|---|---|---|---|---|
