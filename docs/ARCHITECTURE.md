@@ -218,7 +218,7 @@ One row per model per run.
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment |
 | `run_id` | TEXT FK | Parent run |
-| `model_name` | TEXT | Stem of the `.prompt` file |
+| `model_name` | TEXT | Stem of the `.prompt` file, minus any `1_a_` sequence prefix; `model[i]` for an `each=` item |
 | `status` | TEXT | `pending` / `running` / `success` / `error` / `skipped` |
 | `prompt_template` | TEXT | Raw `.prompt` file contents |
 | `prompt_rendered` | TEXT | Fully-rendered prompt sent to the LLM |

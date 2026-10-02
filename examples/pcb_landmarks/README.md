@@ -24,6 +24,16 @@ component placement view. Each part is its own LLM call and its own cache
 entry. Change one part and only that part is re-checked. `polarity` skips
 non-polarised parts with `skip_and_set_to_value`, so a resistor costs no call.
 
+Models are grouped by stage, in reading order. The `1_a_` prefixes only sort
+the files; `ref('parts')` still names `2_build/2_a_parts.prompt`.
+
+```
+models/
+  1_design/  1_a_brief  1_b_requirements  1_c_architecture  1_d_electrical_check
+  2_build/   2_a_parts  2_b_layout_rules
+  3_qa/      3_a_bom_line  3_b_polarity  3_c_bringup  3_d_review
+```
+
 | Model | What it does |
 |---|---|
 | `brief` | Template: the board to design, overridable with `--promptdata brief=...` |

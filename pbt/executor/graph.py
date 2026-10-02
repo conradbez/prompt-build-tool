@@ -12,6 +12,7 @@ knows only that the name is registered.
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -33,12 +34,23 @@ from pbt.model_types import get_model_kind, known_model_kinds
 _PROMPT_SUFFIXES = (".prompt.jinja", ".prompt")
 
 
+#: A leading sequence prefix such as ``3_a_`` only orders files in a folder.
+_SEQUENCE_PREFIX = re.compile(r"^\d+_[a-z]_(?=\w)")
+
+
 def _prompt_name(p: Path) -> str:
-    """Return the model name for a prompt file, stripping any known suffix."""
+    """Return the model name for a prompt file.
+
+    Strips the suffix and any sequence prefix, so ``3_qa/3_a_bom_line.prompt``
+    is the model ``bom_line``: files sort in reading order, and reordering
+    them never breaks a ``ref()``.
+    """
+    name = p.stem
     for suffix in _PROMPT_SUFFIXES:
         if p.name.endswith(suffix):
-            return p.name[: -len(suffix)]
-    return p.stem
+            name = p.name[: -len(suffix)]
+            break
+    return _SEQUENCE_PREFIX.sub("", name)
 
 
 def _resolve_model_type(config: dict, name: str, path: object = None) -> str:
