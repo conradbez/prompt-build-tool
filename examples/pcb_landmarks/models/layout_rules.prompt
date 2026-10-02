@@ -1,0 +1,21 @@
+{# Layout rules, each tied to the failure it prevents. #}
+{{ config(output_format="json") }}
+You are writing placement and routing rules for this board.
+
+Brief: {{ ref('brief') }}
+
+Architecture:
+{{ ref('architecture') | tojson(indent=2) }}
+
+Parts:
+{{ ref('parts') | tojson(indent=2) }}
+
+Write at most six rules. Each rule names the failure it prevents and how that
+failure would show up on the bench. Cover at least: keeping noisy drive away
+from sensitive inputs, copper near any break-off line, decoupling distance, and
+mechanical orientation of any sensor.
+
+Return only JSON:
+{
+  "rules": [{"id": "L1", "rule": "...", "prevents": "...", "symptom_if_broken": "..."}]
+}

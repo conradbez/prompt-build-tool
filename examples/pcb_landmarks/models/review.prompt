@@ -1,0 +1,46 @@
+{# Pre-upload review sheet. No LLM call: reshapes upstream outputs into one page. #}
+{{ config(model_type="template") }}
+{%- set r = ref('requirements') %}{% set a = ref('architecture') %}{% set ec = ref('electrical_check') -%}
+# Design review: {{ r.function }}
+
+**Electrical landmarks:** {{ "all pass" if ec.all_pass else "FAILURES, fix before ordering" }}
+
+## Known limits
+{% for l in r.known_limits %}
+- {{ l }}
+{% endfor %}
+
+## Design hypotheses
+| Block | Choice | Wrong if |
+|---|---|---|
+{% for b in a.blocks %}| {{ b.name }} | {{ b.choice }} | {{ b.wrong_if | join('; ') }} |
+{% endfor %}
+
+## Electrical checks
+| Check | Detail | Pass |
+|---|---|---|
+{% for c in ec.checks %}| {{ c.check }} | {{ c.detail }} | {{ "yes" if c.pass else "**NO**" }} |
+{% endfor %}
+
+## Parts
+| Ref | LCSC | Value (pinned) | Wanted | Tier | Polarised |
+|---|---|---|---|---|---|
+{% for p in ref('parts').parts %}| {{ p.ref }} | {{ p.lcsc }} | {{ p.value }} | {{ p.wanted_value }} | {{ p.tier }} | {{ "yes" if p.polarised else "" }} |
+{% endfor %}
+
+## Layout rules
+{% for l in ref('layout_rules').rules %}
+{{ loop.index }}. **{{ l.id }}** {{ l.rule }}. Prevents: {{ l.prevents }}
+{% endfor %}
+
+## Bring-up
+{% for c in ref('bringup').checks %}
+{{ c.step }}. {{ c.action }}. Expect: {{ c.expect }}. If not: {{ c.if_not }}
+{% endfor %}
+
+## Upload checklist
+- [ ] DRC 0 errors, 0 unconnected
+- [ ] BOM line count matches parts table; every pinned value matches "Wanted"
+- [ ] Every polarised part checked in JLC 2D/3D view against datasheet and pad nets
+- [ ] No copper across the break-off line
+- [ ] Hash of `build/fab/` logged in `qaqc/UPLOAD_CHECKLIST.md`

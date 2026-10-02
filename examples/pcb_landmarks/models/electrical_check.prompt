@@ -1,0 +1,45 @@
+{# Deterministic landmarks: Ohm's law, gate drive and ESP32 pin rules. No LLM. #}
+{{ config(model_type="execute_python", output_format="json") }}
+import json
+
+a = json.loads({{ ref('architecture') | tojson | tojson }})
+
+STRAPPING = {0, 2, 5, 12, 15}
+FLASH = set(range(6, 12))
+INPUT_ONLY = set(range(34, 40))
+
+checks = []
+
+for p in a.get("current_paths", []):
+    ma = (p["supply_v"] - p["drop_v"]) / p["series_ohm"] * 1000
+    checks.append({
+        "check": f"current: {p['name']}",
+        "detail": f"({p['supply_v']} - {p['drop_v']}) V / {p['series_ohm']} Ω = {ma:.1f} mA (limit {p['max_ma']} mA)",
+        "pass": 0 < ma <= p["max_ma"],
+    })
+
+for s in a.get("switches", []):
+    checks.append({
+        "check": f"gate drive: {s['name']}",
+        "detail": f"gate {s['gate_drive_v']} V vs Rds(on) rated at {s['rds_on_rated_at_vgs_v']} V",
+        "pass": s["gate_drive_v"] >= s["rds_on_rated_at_vgs_v"],
+    })
+
+for g in a.get("gpios", []):
+    pin, role = g["pin"], g["role"]
+    problems = []
+    if pin in STRAPPING:
+        problems.append("strapping pin")
+    if pin in FLASH:
+        problems.append("flash pin")
+    if pin in INPUT_ONLY and role == "output":
+        problems.append("input-only pin used as output")
+    if pin in INPUT_ONLY and role == "input":
+        problems.append("input-only, no internal pull-up")
+    checks.append({
+        "check": f"GPIO{pin}: {g['net']}",
+        "detail": ", ".join(problems) or "ok",
+        "pass": not problems,
+    })
+
+output = {"all_pass": all(c["pass"] for c in checks), "checks": checks}

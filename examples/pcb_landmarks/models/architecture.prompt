@@ -1,0 +1,33 @@
+{# Each design choice is a hypothesis: predict the landmark that proves it before trusting it. #}
+{{ config(output_format="json") }}
+{% set r = ref('requirements') %}
+You are choosing the circuit topology for this board.
+
+Brief: {{ ref('brief') }}
+
+Requirements:
+{{ r | tojson(indent=2) }}
+
+For each block (e.g. emitter drive, receiver, power filtering), state the
+choice as a falsifiable hypothesis. Before committing, write down what you
+EXPECT to observe on the bench if the choice is right, and the observation that
+would prove it wrong. A choice with no "wrong_if" is a guess, not a design.
+
+Also give the numbers needed to check the design by arithmetic:
+- every series-resistor current path (supply, forward drop, resistor, limit)
+- every switch's gate drive against the voltage its Rds(on) is rated at
+- every ESP32 GPIO used and its role
+
+Return only JSON:
+{
+  "blocks": [{
+    "name": "...",
+    "choice": "...",
+    "hypothesis": "this choice works because ...",
+    "expect_if_right": ["bench observation"],
+    "wrong_if": ["bench observation that would disprove it"]
+  }],
+  "current_paths": [{"name": "...", "supply_v": 3.3, "drop_v": 1.3, "series_ohm": 51, "max_ma": 50}],
+  "switches": [{"name": "...", "gate_drive_v": 3.3, "rds_on_rated_at_vgs_v": 2.5}],
+  "gpios": [{"pin": 25, "role": "output | input", "net": "..."}]
+}

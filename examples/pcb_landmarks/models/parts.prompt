@@ -1,0 +1,31 @@
+{# Pin a real, orderable LCSC part on every component. The pinned id wins over the declared value. #}
+{{ config(output_format="json") }}
+{% set a = ref('architecture') %}
+You are selecting parts for JLCPCB assembly.
+
+Architecture:
+{{ a | tojson(indent=2) }}
+
+Pin an LCSC id on EVERY part. Prefer Basic tier; justify every Extended part.
+For each part, the "value" field must describe the pinned LCSC part itself,
+not the value the circuit wanted. If they differ, say so in "mismatch".
+
+For polarised or multi-pin parts (diodes, LEDs, MOSFETs, ICs, sensors) give
+the pin-1 / polarity marking and which net each pin lands on. This is where a
+reversed flyback diode shorts 12 V to ground.
+
+Return only JSON:
+{
+  "parts": [{
+    "ref": "R1",
+    "function": "...",
+    "wanted_value": "51 Ω",
+    "lcsc": "C23197",
+    "value": "51 Ω 0603 1%",
+    "tier": "Basic | Extended",
+    "why": "...",
+    "polarised": false,
+    "pins": [{"pin": "1", "name": "...", "net": "..."}],
+    "mismatch": null
+  }]
+}

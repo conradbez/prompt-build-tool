@@ -1,0 +1,19 @@
+{# Pin down what the board must do, with units and tolerances, before any part is chosen. #}
+{{ config(output_format="json") }}
+You are a hardware engineer writing the requirements for a small PCB.
+
+Brief:
+{{ ref('brief') }}
+
+List only what the brief needs. Every number gets a unit and a tolerance or a
+limit. Name the rails that exist and the rails that must NOT be used, and why.
+
+Return only JSON:
+{
+  "function": "one sentence: what the board detects or does",
+  "rails": [{"name": "3V3", "volts": 3.3, "tolerance_pct": 5, "max_ma": 500, "use": "..."}],
+  "forbidden_rails": [{"name": "...", "reason": "..."}],
+  "interfaces": [{"name": "...", "type": "gpio | i2c | wire pads | ...", "notes": "..."}],
+  "envelope_mm": {"main_board": [50, 50], "other": "..."},
+  "known_limits": ["what this design cannot tell you, stated up front"]
+}

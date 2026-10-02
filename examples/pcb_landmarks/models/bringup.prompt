@@ -1,0 +1,26 @@
+{# Bring-up plan: the first check must prove the sensor CAN fail, not that it passes. #}
+{{ config(output_format="json") }}
+You are planning first power-up of the assembled board.
+
+Brief: {{ ref('brief') }}
+
+Design hypotheses and the observations that would disprove them:
+{% for b in ref('architecture').blocks %}
+- {{ b.name }}: {{ b.hypothesis }}
+  wrong if: {{ b.wrong_if | join('; ') }}
+{% endfor %}
+
+Layout rules:
+{% for l in ref('layout_rules').rules %}
+- {{ l.id }} {{ l.rule }} (symptom if broken: {{ l.symptom_if_broken }})
+{% endfor %}
+
+Order the checks so each one is a landmark: say what you expect to see BEFORE
+measuring. Start with the negative test: force the failure condition (e.g.
+block the beam, disconnect a wire) and confirm the board reports it. A sensor
+that only ever reports success is following the map backwards.
+
+Return only JSON:
+{
+  "checks": [{"step": 1, "action": "...", "expect": "...", "if_not": "likely cause and fix"}]
+}
