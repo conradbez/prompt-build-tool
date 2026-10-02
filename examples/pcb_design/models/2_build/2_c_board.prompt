@@ -42,21 +42,20 @@ circuit.
   are added.
 - Run `ato build` until it passes. Keep the last 20 lines of its log.
 
-## 2. Placement, iterated
+## 2. Placement: place, test, fix
 The board file is under elec/layout/. Place parts with a KiCad-Python script
 (KiCad's bundled python3 can `import pcbnew`; on macOS it is inside
 /Applications/KiCad/KiCad.app). Fixed coordinates, no hand edits.
 
-Try at least three placement options that differ in a way that matters (e.g.
-where the receiver sits relative to the switching drive loop, where the
-decoupling sits). For each option:
 1. Before placing, predict the measurement for every layout rule (e.g.
    "receiver to Q1: > 30 mm").
-2. Place it, then measure the same thing from the board file with pcbnew.
+2. Place, then measure the same thing from the board file with pcbnew.
 3. Run `kicad-cli pcb drc --format json` and count errors. Unrouted nets are
    expected unless you route; count them separately.
-Keep the option whose measurements pass the most rules, then the fewest DRC
-errors. Leave the board file in that state.
+4. If every rule passes and DRC has no errors, stop. Otherwise change the
+   script to fix what failed and go back to step 1. Record each attempt.
+If you run low on steps before every rule passes, stop on the attempt with the
+fewest failures and list what still fails in open_issues.
 
 ## 3. Read back what was built
 - The BOM atopile generated (ref, LCSC id, value, footprint), from the build
@@ -73,11 +72,10 @@ Submit only this JSON:
   "bom": [{"ref": "R1", "lcsc": "C23197", "value": "...", "footprint": "..."}],
   "pad_nets": [{"ref": "D1", "pads": [{"pad": "1", "net": "12V"}]}],
   "placements": [{
-    "name": "A",
-    "idea": "what this option changes",
+    "attempt": 1,
+    "change": "first placement, or what was changed and why",
     "rule_checks": [{"rule": "L1", "predicted": "...", "measured": "...", "pass": true}],
-    "drc_errors": 0,
-    "chosen": false
+    "drc_errors": 0
   }],
   "drc": {"errors": 0, "unconnected": 0, "warnings": 0},
   "files": {"ato": "elec/src/board.ato", "board": "...", "placement_script": "..."},

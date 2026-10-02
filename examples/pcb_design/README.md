@@ -21,9 +21,9 @@ brief ─► requirements ─► architecture ─┬─► electrical_check (pyt
 `board` is a [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)
 working in `build/board/`. It follows the atopile flow: it writes the circuit
 as `.ato` with assertions, pins every LCSC id, and runs `ato build`. It then
-tries at least three placements with a KiCad-Python script. For each one it
-predicts every layout rule's measurement, measures the placed board, and runs
-`kicad-cli pcb drc`, then keeps the best. It submits the BOM atopile
+places the parts with a KiCad-Python script: it predicts every layout rule's
+measurement, measures the placed board, and runs `kicad-cli pcb drc`. If a rule
+or DRC fails, it changes the placement and tests again, recording each attempt. It submits the BOM atopile
 generated and the net on every polarised part's physical pads.
 
 Two QA stages run once per part, with `{{ config(each="parts.parts[*]") }}`.
@@ -54,7 +54,7 @@ models/
 | `bom_line` | Map, once per part: pinned value vs wanted vs built, Basic vs Extended, stock, package, SMT or do-not-place (JLC step 2) |
 | `polarity` | Map, once per polarised part: datasheet marking, net on the marked pad as intended and as built, what JLC's 3D view should show (JLC step 3) |
 | `layout_rules` | At most six rules, each tied to the failure it prevents and its bench symptom |
-| `board` | Agent: `.ato` + `ato build`, three or more placements scored against `layout_rules`, DRC, then reads back the built BOM and pad nets |
+| `board` | Agent: `.ato` + `ato build`, placement tested against `layout_rules` and DRC, retried until it passes, then reads back the built BOM and pad nets |
 | `bringup` | Unpowered polarity inspections from `polarity`, then powered checks, negative test first |
 | `review` | Reduce, as a template: one-page review sheet with the BOM and polarity tables, ending in the upload checklist |
 
@@ -88,7 +88,7 @@ real board built this way:
 | `pinned_parts_match_wanted` | The design asserts 51 Ω, the pinned LCSC id is something else. Assertions check the declared value, not the part that ships |
 | `polarised_parts_have_pinout` | A reversed flyback diode shorted 12 V to ground. Judges the per-part `polarity` checks |
 | `electrical_checks_pass` | LED over-current, a MOSFET only rated at 10 V gate driven from 3.3 V, a receiver on an input-only pin with no pull-up |
-| `board_builds_clean` | A build that passes assertions on the wrong part, a placement that breaks the rule it predicted it keeps, DRC errors |
+| `board_builds_clean` | A build that passes assertions on the wrong part, a final placement that still breaks a layout rule, DRC errors |
 | `bringup_starts_with_failure` | A receiver picking up board leakage reports "beam clear" with the beam blocked, so every vend looks successful |
 
 `electrical_check` is the cheapest landmark: arithmetic, no LLM, cached on its

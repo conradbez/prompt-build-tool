@@ -33,9 +33,9 @@
 - DRC: {{ board.drc.errors }} errors, {{ board.drc.unconnected }} unconnected, {{ board.drc.warnings }} warnings
 - Files: `{{ board.files.ato }}`, `{{ board.files.board }}`, `{{ board.files.placement_script }}` (under `build/board/`)
 
-| Placement | Idea | Rules passed | DRC errors | Chosen |
-|---|---|---|---|---|
-{% for o in board.placements %}| {{ o.name }} | {{ o.idea }} | {{ o.rule_checks | selectattr('pass') | list | length }}/{{ o.rule_checks | length }} | {{ o.drc_errors }} | {{ "**yes**" if o.chosen else "" }} |
+| Attempt | Change | Rules passed | DRC errors |
+|---|---|---|---|
+{% for o in board.placements %}| {{ o.attempt }} | {{ o.change }} | {{ o.rule_checks | selectattr('pass') | list | length }}/{{ o.rule_checks | length }} | {{ o.drc_errors }} |
 {% endfor %}
 
 {% for i in board.open_issues %}
