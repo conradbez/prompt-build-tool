@@ -1,0 +1,11 @@
+Did the board actually build, and does its layout keep its own predictions?
+
+{{ ref('board').output | tojson(indent=2) }}
+
+Fail if any of these hold:
+- ato_build is not "pass", or any assertion failed
+- the chosen placement fails a layout rule it predicted would pass, without an
+  open_issue explaining it
+- fewer than three placements were tried
+- drc.errors is not 0
+Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.

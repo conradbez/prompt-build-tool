@@ -1,3 +1,0 @@
-{# The board to design. Override with --promptdata brief="..." #}
-{{ config(model_type="template") }}
-{{ promptdata("brief") or "IR beam-break sensor for a vending-machine chute. ESP32 main board mounted flat on one chute wall, 3V3 rail only (plus a 12 V PWM motor rail that must not be used for sensing). The IR emitter sits on a small tab that snaps off the same PCB at mouse bites and is glued to the opposite wall, reconnected with two twisted wires. One PCB order from JLCPCB with assembly." }}

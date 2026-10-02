@@ -65,3 +65,19 @@ def test_agent_output_shape(tmp_path, scripted_agent):
 def test_agent_requires_agent_dir(scripted_agent):
     _, _, results = run_models({"a": '{{ config(model_type="agent") }}do it'})
     assert "agent_dir" in (results["a"].error or "")
+
+
+def test_agent_json_output_is_parsed(tmp_path, monkeypatch):
+    def fake_model(name, model_cfg):
+        return DeterministicModel(outputs=[make_output("done", [{
+            "command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && echo '{\"drc_errors\": 0}'"
+        }])])
+
+    monkeypatch.setattr(builtin_kinds, "_agent_model", fake_model)
+    _, _, results = run_models({
+        "board": f'{{{{ config(model_type="agent", agent_dir="{tmp_path}", output_format="json") }}}}\n'
+                 "build it",
+        "after": '{{ config(model_type="template") }}errors: {{ ref("board").output.drc_errors }}',
+    })
+    assert results["board"].value["output"] == {"drc_errors": 0}
+    assert results["after"].llm_output.strip() == "errors: 0"

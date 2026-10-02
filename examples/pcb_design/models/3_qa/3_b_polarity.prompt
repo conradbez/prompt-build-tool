@@ -4,6 +4,7 @@
 {% if not p.polarised %}
 {{ skip_and_set_to_value("not polarised") }}
 {% else %}
+{% set built = ref('board').output.pad_nets | selectattr('ref', 'equalto', p.ref) | list %}
 You are checking one polarised part in JLCPCB's component placement view,
 before ordering. On a real board a flyback diode's logical pins were right but
 its physical pads were reversed, and it shorted 12 V to ground.
@@ -12,10 +13,14 @@ Part {{ p.ref }} ({{ p.function }}), {{ p.value }}, LCSC {{ p.lcsc }}.
 Pins and the nets they land on:
 {{ p.pins | tojson(indent=2) }}
 
+Nets on the physical pads of the built board, read from the .kicad_pcb:
+{{ built[0].pads | tojson(indent=2) if built else "MISSING: no pad nets read back for this part" }}
+
 1. Name the physical marking that identifies pin 1, the cathode or the anode
    in this part's datasheet (band, chamfer, dot, "−").
-2. State which net the marked pad must land on in this circuit, and whether the
-   pins above agree.
+2. State which net the marked pad must land on in this circuit, and whether
+   the intended pins AND the built pads agree with it. Intended right and built
+   wrong is exactly the reversed-diode failure.
 3. Before looking, say what you EXPECT to see in JLC's 3D placement view if the
    part is right, and what would mean it is reversed or rotated. CPL rotation
    is often wrong for SOT-23, diodes and LEDs.
@@ -28,6 +33,7 @@ Return only JSON:
   "marking": "the datasheet marking for pin 1 / cathode",
   "marked_pad_net": "net the marked pad must be on",
   "pins_agree": true,
+  "built_pads_agree": true,
   "expect_in_jlc_3d": "...",
   "reversed_if": "...",
   "power_up_check": "...",

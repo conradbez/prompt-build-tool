@@ -1,6 +1,6 @@
 {# Pre-upload review sheet. No LLM call: reshapes upstream outputs into one page. #}
 {{ config(model_type="template") }}
-{%- set r = ref('requirements') %}{% set a = ref('architecture') %}{% set ec = ref('electrical_check') -%}
+{%- set board = ref('board').output %}{% set r = ref('requirements') %}{% set a = ref('architecture') %}{% set ec = ref('electrical_check') -%}
 # Design review: {{ r.function }}
 
 **Electrical landmarks:** {{ "all pass" if ec.all_pass else "FAILURES, fix before ordering" }}
@@ -28,16 +28,30 @@
 {% for p in ref('parts').parts %}| {{ p.ref }} | {{ p.lcsc }} | {{ p.value }} | {{ p.wanted_value }} | {{ p.tier }} | {{ "yes" if p.polarised else "" }} |
 {% endfor %}
 
+## Board build (atopile + KiCad)
+- `ato build`: **{{ board.ato_build }}**; assertions failing: {{ board.assertions | rejectattr('pass') | map(attribute='name') | join(', ') or "none" }}
+- DRC: {{ board.drc.errors }} errors, {{ board.drc.unconnected }} unconnected, {{ board.drc.warnings }} warnings
+- Files: `{{ board.files.ato }}`, `{{ board.files.board }}`, `{{ board.files.placement_script }}` (under `build/board/`)
+
+| Placement | Idea | Rules passed | DRC errors | Chosen |
+|---|---|---|---|---|
+{% for o in board.placements %}| {{ o.name }} | {{ o.idea }} | {{ o.rule_checks | selectattr('pass') | list | length }}/{{ o.rule_checks | length }} | {{ o.drc_errors }} | {{ "**yes**" if o.chosen else "" }} |
+{% endfor %}
+
+{% for i in board.open_issues %}
+- [ ] {{ i }}
+{% endfor %}
+
 ## BOM lines (JLC step 2)
-| Ref | LCSC | Value OK | Tier OK | Stock | Assembly | Issues |
-|---|---|---|---|---|---|---|
-{% for b in ref('bom_line') %}| {{ b.ref }} | {{ b.lcsc }} | {{ "yes" if b.value_matches else "**NO**" }} | {{ "yes" if b.tier_ok else "**NO**" }} | {{ b.stock }} | {{ b.assembly }} | {{ b.issues | join('; ') }} |
+| Ref | LCSC | Value OK | Built OK | Tier OK | Stock | Assembly | Issues |
+|---|---|---|---|---|---|---|---|
+{% for b in ref('bom_line') %}| {{ b.ref }} | {{ b.lcsc }} | {{ "yes" if b.value_matches else "**NO**" }} | {{ "yes" if b.built_matches else "**NO**" }} | {{ "yes" if b.tier_ok else "**NO**" }} | {{ b.stock }} | {{ b.assembly }} | {{ b.issues | join('; ') }} |
 {% endfor %}
 
 ## Polarity and pin 1 (JLC step 3)
 | Ref | Part | Marking | Marked pad net | Expect in JLC 3D | Reversed if | OK |
 |---|---|---|---|---|---|---|
-{% for c in ref('polarity') | select('mapping') %}| {{ c.ref }} | {{ c.part }} | {{ c.marking }} | {{ c.marked_pad_net }} | {{ c.expect_in_jlc_3d }} | {{ c.reversed_if }} | {{ "yes" if c.pins_agree and not c.issues else "**NO**" }} |
+{% for c in ref('polarity') | select('mapping') %}| {{ c.ref }} | {{ c.part }} | {{ c.marking }} | {{ c.marked_pad_net }} | {{ c.expect_in_jlc_3d }} | {{ c.reversed_if }} | {{ "yes" if c.pins_agree and c.built_pads_agree and not c.issues else "**NO**" }} |
 {% endfor %}
 
 ## Layout rules
@@ -57,7 +71,7 @@ Powered:
 {% endfor %}
 
 ## Upload checklist
-- [ ] DRC 0 errors, 0 unconnected
+- [ ] DRC 0 errors, 0 unconnected, run on the same board file that is exported
 - [ ] JLC "Parts detected" equals "Parts confirmed", and equals the BOM lines above
 - [ ] Every BOM line above is clean; every "do_not_place" part is absent from the JLC BOM and CPL
 - [ ] Every polarity row above checked in JLC's 3D view and screenshotted

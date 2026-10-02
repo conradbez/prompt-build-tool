@@ -1,0 +1,85 @@
+{# atopile + KiCad, built by an agent that iterates on placement. Predict each rule's measurement before placing. #}
+{{ config(
+    model_type="agent",
+    output_format="json",
+    agent_dir="build/board",
+    agent_step_limit="150",
+    agent_cost_limit="5",
+) }}
+You are building a real PCB with atopile 0.15 and KiCad 10, in the current
+directory. Work only in this directory. KiCad's GUI must stay closed: every
+step edits the .kicad_pcb file directly.
+
+Brief: {{ ref('brief') }}
+
+Requirements:
+{{ ref('requirements') | tojson(indent=2) }}
+
+Architecture (each block is a hypothesis):
+{{ ref('architecture') | tojson(indent=2) }}
+
+Parts, each pinned to an LCSC id. The pinned id is what JLC will place:
+{{ ref('parts') | tojson(indent=2) }}
+
+Layout rules to place against:
+{{ ref('layout_rules') | tojson(indent=2) }}
+{% if promptdata("reference_project") %}
+
+A working atopile project built this way is at {{ promptdata("reference_project") }}.
+Read its README and mech/scripts/ (safe_ato_build.py, layout_board.py,
+export_fab.py) for patterns that are known to work. Copy patterns, not the
+circuit.
+{% endif %}
+
+## 1. Circuit as code
+- Create an atopile project here (ato.yaml, elec/src/board.ato) and pin every
+  part above with its LCSC id. Fetch footprints with
+  `uvx easyeda2kicad --full --lcsc_id=<id>` or atopile's part tooling.
+- Put each requirement in the .ato as an assertion with units and tolerance.
+  An assertion checks the declared value, not the pinned part, so also record
+  the value of the part each LCSC id actually is.
+- Pin net names with override_net_name, so nets keep their names when parts
+  are added.
+- Run `ato build` until it passes. Keep the last 20 lines of its log.
+
+## 2. Placement, iterated
+The board file is under elec/layout/. Place parts with a KiCad-Python script
+(KiCad's bundled python3 can `import pcbnew`; on macOS it is inside
+/Applications/KiCad/KiCad.app). Fixed coordinates, no hand edits.
+
+Try at least three placement options that differ in a way that matters (e.g.
+where the receiver sits relative to the switching drive loop, where the
+decoupling sits). For each option:
+1. Before placing, predict the measurement for every layout rule (e.g.
+   "receiver to Q1: > 30 mm").
+2. Place it, then measure the same thing from the board file with pcbnew.
+3. Run `kicad-cli pcb drc --format json` and count errors. Unrouted nets are
+   expected unless you route; count them separately.
+Keep the option whose measurements pass the most rules, then the fewest DRC
+errors. Leave the board file in that state.
+
+## 3. Read back what was built
+- The BOM atopile generated (ref, LCSC id, value, footprint), from the build
+  output, not from the parts list above.
+- For every polarised part, the net on each physical pad, read from the
+  .kicad_pcb with pcbnew. A reversed diode once had the right pin names and
+  the wrong pads.
+
+Submit only this JSON:
+{
+  "ato_build": "pass | fail",
+  "ato_build_log_tail": "...",
+  "assertions": [{"name": "...", "pass": true}],
+  "bom": [{"ref": "R1", "lcsc": "C23197", "value": "...", "footprint": "..."}],
+  "pad_nets": [{"ref": "D1", "pads": [{"pad": "1", "net": "12V"}]}],
+  "placements": [{
+    "name": "A",
+    "idea": "what this option changes",
+    "rule_checks": [{"rule": "L1", "predicted": "...", "measured": "...", "pass": true}],
+    "drc_errors": 0,
+    "chosen": false
+  }],
+  "drc": {"errors": 0, "unconnected": 0, "warnings": 0},
+  "files": {"ato": "elec/src/board.ato", "board": "...", "placement_script": "..."},
+  "open_issues": ["what a human must still check"]
+}

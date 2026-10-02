@@ -116,7 +116,9 @@ async def run_agent(rendered: str, call: ModelCall) -> dict:
          "logs": <the full message trajectory>,
          "time_run": <seconds the agent ran>}
 
-    so a downstream model reads ``ref('fix')['output']``.
+    so a downstream model reads ``ref('fix')['output']``.  With
+    ``output_format="json"`` the submitted text is parsed, so a downstream
+    model reads ``ref('fix').output.key``.
 
     Config keys:
 
@@ -131,7 +133,12 @@ async def run_agent(rendered: str, call: ModelCall) -> dict:
     raw = await call.compute(
         rendered, compute=lambda: asyncio.to_thread(_exec_agent, rendered, call)
     )
-    return json.loads(raw)
+    result = json.loads(raw)
+    if call.spec.output_format == "json":
+        from pbt.executor.run_context import parse_json_output
+
+        result["output"] = parse_json_output(result["output"])
+    return result
 
 
 def _exec_agent(task: str, call: ModelCall) -> str:

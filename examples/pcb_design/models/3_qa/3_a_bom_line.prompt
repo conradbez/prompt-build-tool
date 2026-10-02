@@ -1,10 +1,14 @@
 {# JLC BOM step, once per part: the pinned LCSC part is what ships, not the value the circuit asked for. #}
 {{ config(each="parts.parts[*]", output_format="json") }}
 {% set p = ref('parts') %}
+{% set built = ref('board').output.bom | selectattr('ref', 'equalto', p.ref) | list %}
 You are reading one line of a JLCPCB assembly BOM before upload.
 
 Part {{ p.ref }} ({{ p.function }}):
 {{ p | tojson(indent=2) }}
+
+The line atopile actually generated for {{ p.ref }}:
+{{ built[0] | tojson if built else "MISSING: this part is not in the built BOM" }}
 
 Check this one line:
 1. Value: does the pinned LCSC part ({{ p.lcsc }}, "{{ p.value }}") match the wanted
@@ -18,6 +22,9 @@ Check this one line:
    circuit needs?
 5. Assembly: a through-hole or clip-in part (a sensor in terminals, wire pads)
    must be "do_not_place", not quoted for SMT.
+6. Built: does the generated line carry the same LCSC id and value as the
+   pinned part? A part missing from the built BOM, or built with a different
+   id, ships differently from the design.
 
 Return only JSON:
 {
@@ -27,6 +34,7 @@ Return only JSON:
   "tier_ok": true,
   "stock": "ok | low | unknown",
   "package_ok": true,
+  "built_matches": true,
   "assembly": "smt | do_not_place",
   "issues": ["empty when the line is clean"],
   "verify_on_jlc": "what to compare on JLC's BOM page for this line"
