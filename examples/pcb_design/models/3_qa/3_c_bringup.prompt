@@ -13,6 +13,9 @@ Design hypotheses and the observations that would disprove them:
 Polarised parts (from the per-part placement check):
 {% for c in ref('polarity') | select('mapping') %}
 - {{ c.ref }} {{ c.part }}: marked pad on {{ c.marked_pad_net }}; check: {{ c.power_up_check }}
+{% for i in c.issues %}
+  ISSUE: {{ i }}
+{% endfor %}
 {% endfor %}
 
 Layout rules:
@@ -21,7 +24,9 @@ Layout rules:
 {% endfor %}
 
 List the unpowered polarity inspections in "pre_power", one per polarised part
-above. Then order the powered checks so each one is a landmark: say what you expect to see BEFORE
+above. For a part with an ISSUE, the inspection must name the issue and say
+what reading confirms it, so a reversed part is caught before power, not by
+the supply collapsing. Then order the powered checks so each one is a landmark: say what you expect to see BEFORE
 measuring. Start with the negative test: force the failure condition (e.g.
 block the beam, disconnect a wire) and confirm the board reports it. A sensor
 that only ever reports success is following the map backwards.

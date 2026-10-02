@@ -76,8 +76,8 @@ Keep KiCad closed while it runs.
 
 ```bash
 cd examples/pcb_design
-export GEMINI_API_KEY=...
-export MSWEA_MODEL_NAME=gemini/gemini-3-flash-preview   # the agent's model, via litellm
+export GEMINI_API_KEY=...                              # default model gemini-3.5-flash-lite; override with GEMINI_MODEL
+export MSWEA_MODEL_NAME=gemini/gemini-3.5-flash-lite    # the agents' model, via litellm
 pbt run                     # writes build/board/ and outputs/review.md
 pbt test                    # check the landmarks
 pbt run --promptdata reference_project=~/path/to/a/working/atopile/project

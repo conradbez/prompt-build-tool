@@ -13,7 +13,7 @@ _RETRY_CODES = {429, 503}
 
 def llm_call(prompt: str) -> str:
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    model = os.environ.get("GEMINI_MODEL", "gemini-3.7-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
     for attempt in range(6):
         try:
             return client.models.generate_content(model=model, contents=prompt).text

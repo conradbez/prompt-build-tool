@@ -25,7 +25,10 @@ evidence does not show.
 
 This case was built with known faults. The models never saw this list:
 {{ promptdata('expected_faults') }}
-Also fail if the stage above misses a listed fault that concerns it, or
-reports a fault that is not listed.
+This test judges the BOM check, whose job is part values, LCSC ids, tier, stock, package and assembly. Polarity and pad mapping are not its job.
+Also fail if the BOM check misses a listed fault that is its job to catch, or
+reports a fault that is not listed. Faults outside its job do not count.
 {% endif %}
-Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.
+Reason first, then decide. Reply with only valid JSON, the verdict matching
+your reason:
+{"reason": "one sentence naming the evidence", "results": "pass" or "fail"}
