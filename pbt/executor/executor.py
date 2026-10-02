@@ -149,9 +149,12 @@ async def _produce_one(
     if state.skip_value is not None:
         return state.skip_value  # a skip function replaced the work itself
 
+    # An each= item overlays the iterated model with the current item, for
+    # code that reads call.outputs (Python ref()) just as for Jinja ref().
+    overlay = state.extra_outputs
     call = ModelCall(
         spec=spec,
-        outputs=ctx.outputs,
+        outputs={**ctx.outputs, **overlay} if overlay else ctx.outputs,
         llm=partial(ctx.call_llm, spec=spec, state=state),
         compute=partial(ctx.cached, spec=spec, state=state),
     )
@@ -231,12 +234,15 @@ async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:
     cached_value = ctx.cache_artifact(spec.name)
     if cached_value is None:
         cached_value = output
+    # Store under the key the call was looked up with.  A kind may widen it
+    # beyond the rendered prompt (execute_python adds its upstream outputs).
+    looked_up = state.cache_key if state is not None and state.calls == 1 else None
     ctx.storage.mark_model_success(
         ctx.run_id,
         spec.name,
         rendered,
         cached_value,
-        cache_key=ctx.cache_key(spec, rendered, ctx.files_for(spec)),
+        cache_key=looked_up or ctx.cache_key(spec, rendered, ctx.files_for(spec)),
         cached=ctx.served_from_cache(spec.name),
     )
     spent, cache_spent = ctx.spent_tokens(spec.name), ctx.cache_spent_tokens(spec.name)

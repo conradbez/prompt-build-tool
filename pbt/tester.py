@@ -181,6 +181,22 @@ def _open_test_files(
     return opened or None
 
 
+#: model_type of the rows that hold test verdicts, so reports can tell them
+#: apart from models.
+TEST_ROW_TYPE = "test"
+
+
+def _store_verdict(storage, run_id, name, source, rendered, output, cache_key) -> None:
+    """Store a judge's verdict under its cache key, so an unchanged test is not re-judged.
+
+    The prompt cache lives in ``model_results``, so the verdict needs a row.
+    SQLite's ``mark_model_success`` only updates an existing row, which is why
+    the row is created first.
+    """
+    storage.upsert_model_pending(run_id, name, source, [], model_type=TEST_ROW_TYPE)
+    storage.mark_model_success(run_id, name, rendered, output, cache_key=cache_key)
+
+
 def _parsed_json(value):
     """A stored JSON object or list, parsed, as downstream models see it.
 
@@ -243,7 +259,7 @@ def _run_classifier_test(
         score = float(classify_call(state, question))
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         output = json.dumps({"p_yes": score})
-        storage_backend.mark_model_success(run_id, display_name, rendered, output, cache_key=cache_key)
+        _store_verdict(storage_backend, run_id, display_name, rendered, rendered, output, cache_key)
     score = json.loads(output)["p_yes"]
 
     return TestResult(
@@ -390,7 +406,7 @@ def execute_tests(
                     t0 = time.monotonic()
                     llm_output = _invoke_llm(rendered, llm_call, files)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    storage_backend.mark_model_success(run_id, display_name, rendered, llm_output, cache_key=cache_key)
+                    _store_verdict(storage_backend, run_id, display_name, source, rendered, llm_output, cache_key)
 
                 passed = _parse_pass(llm_output)
                 result = TestResult(

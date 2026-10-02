@@ -60,7 +60,24 @@ async def run_python(rendered: str, call: ModelCall) -> Any:
     It goes through the same cache as an LLM call, so unchanged code does not
     re-execute on the next run.
     """
-    return await call.compute(rendered, compute=lambda: _exec_python(rendered, call))
+    # ref() in the Python code reads upstream outputs that never appear in the
+    # rendered text, so they join the cache key; otherwise a changed upstream
+    # would be served the old result.
+    key = rendered + "\x00upstream:" + _upstream_fingerprint(call)
+    return await call.compute(key, compute=lambda: _exec_python(rendered, call))
+
+
+def _upstream_fingerprint(call: ModelCall) -> str:
+    """A hash of every dependency's current output (files by their hashes)."""
+    import hashlib
+
+    from pbt.files import encode_output
+
+    seen = {
+        dep: encode_output(call.outputs[dep]) if call.outputs.get(dep) is not None else None
+        for dep in call.spec.depends_on
+    }
+    return hashlib.sha256(json.dumps(seen, sort_keys=True).encode()).hexdigest()
 
 
 def _exec_python(rendered: str, call: ModelCall) -> Any:

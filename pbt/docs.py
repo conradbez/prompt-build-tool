@@ -234,7 +234,11 @@ def generate_docs(
     runs_data = []
     for run in runs:
         rid = run["run_id"]
-        results = [_result(r) for r in run_results.get(rid, [])]
+        # Rows that hold cached test verdicts are not models.
+        results = [
+            _result(r) for r in run_results.get(rid, [])
+            if _column(r, "model_type") != "test"
+        ]
         used = _total(r["tokens_used"] for r in results)
         from_cache = _total(r["tokens_cached"] for r in results)
         runs_data.append({
