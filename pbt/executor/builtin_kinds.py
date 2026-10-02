@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,11 @@ async def run_agent(rendered: str, call: ModelCall) -> dict:
     ``output_format="json"`` the submitted text is parsed, so a downstream
     model reads ``ref('fix').output.key``.
 
+    The agent is also given an empty output directory.  Anything it writes
+    there becomes this model's files, under ``"files"`` (``File`` / ``Dir``
+    objects, stored in the blob store, not left on disk), so downstream
+    models read or attach them like any other model's files.
+
     Config keys:
 
     ``agent_dir``         working directory (required)
@@ -143,7 +149,7 @@ async def run_agent(rendered: str, call: ModelCall) -> dict:
     raw = await call.compute(
         rendered, compute=lambda: asyncio.to_thread(_exec_agent, rendered, call)
     )
-    result = json.loads(raw)
+    result = json.loads(raw) if isinstance(raw, str) else raw
     if call.spec.output_format == "json":
         from pbt.executor.run_context import parse_json_output
 
@@ -172,14 +178,38 @@ def _exec_agent(task: str, call: ModelCall) -> str:
             f"{', '.join(_AGENT_BACKENDS)}, not '{backend}'."
         )
 
+    # Unique per run, so agents fanned out over one agent_dir never share it.
+    # Inside agent_dir, because a backend may refuse to write outside it.
+    out_dir = workdir / f".pbt_out_{uuid.uuid4().hex[:8]}"
+    out_dir.mkdir()
+    task += _FILES_INSTRUCTION.format(out_dir=out_dir)
     started = time.monotonic()
-    if backend == "opencode":
-        output, logs = _exec_opencode(task, call, workdir)
-    else:
-        output, logs = _exec_mini_swe_agent(task, call, workdir)
+    try:
+        if backend == "opencode":
+            output, logs = _exec_opencode(task, call, workdir)
+        else:
+            output, logs = _exec_mini_swe_agent(task, call, workdir)
+        files = _collect_out_dir(out_dir)  # File reads its bytes now
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
     time_run = round(time.monotonic() - started, 3)
 
-    return json.dumps({"output": output, "logs": logs, "time_run": time_run}, default=str)
+    result = {
+        "output": output,
+        "logs": json.loads(json.dumps(logs, default=str)),
+        "time_run": time_run,
+    }
+    if files:
+        result["files"] = files
+        return result  # the cache stores files as blobs plus a manifest
+    return json.dumps(result)
+
+
+_FILES_INSTRUCTION = """
+
+To pass files on to the next step (images, notes, data), write them into
+{out_dir}. Everything in that directory is handed on with your final output.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +282,9 @@ def _exec_opencode(task: str, call: ModelCall, workdir: Path) -> tuple[str, list
     cmd.append(task + _OPENCODE_INSTRUCTION.format(workdir=workdir))
 
     env = os.environ.copy()
+    for pbt_key, opencode_key in _OPENCODE_KEY_ALIASES.items():
+        if env.get(pbt_key) and not env.get(opencode_key):
+            env[opencode_key] = env[pbt_key]
     mcp = _opencode_mcp_servers(config.get("agent_mcp"), call.spec.path)
     if mcp:
         env["OPENCODE_CONFIG_CONTENT"] = _merged_opencode_config(env.get("OPENCODE_CONFIG_CONTENT"), mcp)
@@ -297,6 +330,11 @@ def _exec_opencode(task: str, call: ModelCall, workdir: Path) -> tuple[str, list
         )
 
     return _opencode_final_text(events), events
+
+
+#: pbt's provider keys under the names opencode's SDKs read them from.
+#: OPENAI_API_KEY and ANTHROPIC_API_KEY already match.
+_OPENCODE_KEY_ALIASES = {"GEMINI_API_KEY": "GOOGLE_GENERATIVE_AI_API_KEY"}
 
 
 #: Smaller models tend to guess a path for new files; pin them to agent_dir.

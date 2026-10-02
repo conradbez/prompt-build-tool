@@ -478,7 +478,9 @@ write the answer to answer.md and reply with its contents.
 
 or, keeping the servers in a file: `agent_mcp="./opencode.json"`.
 
-The `opencode` binary is found on `PATH`, or at `PBT_OPENCODE_BIN`. Step and
+The `opencode` binary is found on `PATH`, or at `PBT_OPENCODE_BIN`. Provider
+keys are the same ones pbt uses: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and
+`GEMINI_API_KEY` (passed to opencode as `GOOGLE_GENERATIVE_AI_API_KEY`). Step and
 cost limits are enforced by pbt from opencode's per-step cost events: when
 exceeded, the process is stopped and the last log entry is
 `{"type": "exit", "reason": "..."}`.

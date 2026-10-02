@@ -24,6 +24,7 @@ FAKE_SCRIPT = """#!/bin/sh
 # Record how we were called, then behave like `opencode run --format json`.
 printf '%s\\n' "$@" > invocation.txt
 printf '%s' "${{OPENCODE_CONFIG_CONTENT:-}}" > config_content.txt
+printf '%s' "${{GOOGLE_GENERATIVE_AI_API_KEY:-}}" > google_key.txt
 echo hi > note.txt
 cat <<'JSON'
 {events}
@@ -78,7 +79,9 @@ def test_opencode_runs_in_dir_and_returns_last_message(tmp_path, fake_opencode):
     assert argv[:5] == ["run", "--format", "json", "--auto", "--dir"]
     assert "--model" in argv and argv[argv.index("--model") + 1] == "openai/gpt-4o-mini"
     task_arg = (workdir / "invocation.txt").read_text().split("--model\nopenai/gpt-4o-mini\n", 1)[1]
-    assert task_arg.lstrip().startswith("write hi to note.txt\n\nYour working directory is ")
+    assert task_arg.lstrip().startswith("write hi to note.txt\n\n")
+    assert "Your working directory is " in task_arg
+    assert "write them into" in task_arg  # the output-files directory
     assert str(workdir) in task_arg
     assert (workdir / "config_content.txt").read_text() == ""
 
@@ -166,3 +169,11 @@ def test_opencode_missing_binary(tmp_path, monkeypatch):
 def test_unknown_backend(tmp_path):
     with pytest.raises(ValueError, match="agent_backend must be one of"):
         _run_opencode(tmp_path, agent_backend="codex")
+
+
+def test_opencode_gets_gemini_key_under_its_own_name(tmp_path, fake_opencode, monkeypatch):
+    fake_opencode(DONE_EVENTS)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-123")
+    monkeypatch.delenv("GOOGLE_GENERATIVE_AI_API_KEY", raising=False)
+    _run_opencode(tmp_path)
+    assert (tmp_path / "google_key.txt").read_text() == "g-123"

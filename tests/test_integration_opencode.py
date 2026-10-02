@@ -2,9 +2,10 @@
 Integration test: an ``agent`` model with ``agent_backend="opencode"`` doing a
 small programming task through a real opencode binary and OpenAI model.
 
-Requires the ``opencode`` binary (PATH or PBT_OPENCODE_BIN) and OPENAI_API_KEY
-(environment or .env); skipped otherwise.  Override the model with
-PBT_OPENCODE_TEST_MODEL (an opencode ``provider/model`` name).
+Requires the ``opencode`` binary (PATH or PBT_OPENCODE_BIN) and one provider
+key (environment or .env): OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY;
+skipped otherwise.  Override the model with PBT_OPENCODE_TEST_MODEL (an
+opencode ``provider/model`` name).
 """
 
 from __future__ import annotations
@@ -20,12 +21,19 @@ from tests.test_model_types import run_models
 
 load_dotenv()
 
-pytestmark = pytest.mark.skipif(
-    not (_opencode_bin() and os.environ.get("OPENAI_API_KEY")),
-    reason="opencode binary or OPENAI_API_KEY not available",
-)
+#: A cheap tool-capable model per provider key, first one present wins.
+_MODEL_FOR_KEY = {
+    "OPENAI_API_KEY": "openai/gpt-4.1-mini",
+    "ANTHROPIC_API_KEY": "anthropic/claude-haiku-4-5",
+    "GEMINI_API_KEY": "google/gemini-3.8-flash",
+}
+DEFAULT_MODEL = next((m for k, m in _MODEL_FOR_KEY.items() if os.environ.get(k)), None)
+MODEL = os.environ.get("PBT_OPENCODE_TEST_MODEL") or DEFAULT_MODEL
 
-MODEL = os.environ.get("PBT_OPENCODE_TEST_MODEL", "openai/gpt-4.1-mini")
+pytestmark = pytest.mark.skipif(
+    not (_opencode_bin() and MODEL),
+    reason="opencode binary or a provider key (OPENAI/ANTHROPIC/GEMINI_API_KEY) not available",
+)
 
 TASK = """\
 Create a file fizzbuzz.py in the current directory defining a function
