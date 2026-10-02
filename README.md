@@ -19,6 +19,10 @@ pip install prompt-build-tool
 # pip install google-genai      # Gemini
 # pip install openai            # OpenAI
 # pip install anthropic         # Anthropic
+
+# Optional: coding agents for model_type="agent"
+# pip install "prompt-build-tool[agent]"   # mini-swe-agent
+# npm i -g opencode-ai                     # opencode, with MCP servers
 ```
 
 ### 2. Generate example

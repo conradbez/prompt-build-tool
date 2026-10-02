@@ -405,13 +405,20 @@ contain a path.
 
 ## Agent models (`model_type="agent"`)
 
-An `agent` model hands its rendered template to
-[mini-swe-agent](https://mini-swe-agent.com) as a task. The agent runs shell
-commands in `agent_dir` until it submits.
+An `agent` model hands its rendered template to a coding agent as a task. The
+agent runs shell commands in `agent_dir` until it submits. Two backends:
+
+| `agent_backend`  | what it is | install |
+|------------------|------------|---------|
+| `mini-swe-agent` (default) | [mini-swe-agent](https://mini-swe-agent.com): a minimal bash-only agent | `pip install "prompt-build-tool[agent]"` |
+| `opencode`       | [opencode](https://opencode.ai): a full coding agent with file tools and **MCP servers** | `npm i -g opencode-ai` (or `curl -fsSL https://opencode.ai/install \| bash`) |
 
 ```bash
-pip install "prompt-build-tool[agent]"
+pip install "prompt-build-tool[agent]"              # mini-swe-agent
 export MSWEA_MODEL_NAME=anthropic/claude-sonnet-5   # any litellm model name
+
+npm i -g opencode-ai                                # opencode (npm, not pip)
+opencode providers login                            # or export OPENAI_API_KEY etc.
 ```
 
 ```jinja
@@ -426,8 +433,8 @@ The output is a dict:
 
 | key        | value                                   |
 |------------|-----------------------------------------|
-| `output`   | what the agent submitted                |
-| `logs`     | the full message trajectory             |
+| `output`   | what the agent submitted (its final reply, for opencode) |
+| `logs`     | the full message trajectory (opencode's JSON events) |
 | `time_run` | seconds the agent ran                   |
 
 Downstream: `{{ ref('fix_tests')['output'] }}`.
@@ -435,12 +442,46 @@ Downstream: `{{ ref('fix_tests')['output'] }}`.
 | config key         | meaning                                      |
 |--------------------|----------------------------------------------|
 | `agent_dir`        | working directory (required; created if missing) |
-| `agent_model`      | litellm model name; default `MSWEA_MODEL_NAME` |
+| `agent_backend`    | `mini-swe-agent` (default) or `opencode`     |
+| `agent_model`      | litellm name for mini-swe-agent (default `MSWEA_MODEL_NAME`); `provider/model` for opencode (default: opencode's own config) |
 | `agent_step_limit` | max LLM calls, `0` = no limit (default `0`)  |
 | `agent_cost_limit` | max spend in dollars, `0` = no limit (default `3`) |
+| `agent_mcp`        | opencode only: MCP servers the agent may use (see below) |
 
 Results are cached on the rendered prompt, so an unchanged task does not
-re-run. The agent runs commands on your machine with no sandbox.
+re-run. Either agent runs commands on your machine with no sandbox (opencode
+is started with `--auto`, so it approves its own tool calls).
+
+### opencode with MCP servers (`agent_mcp`)
+
+`agent_mcp` is opencode's [`mcp` config block](https://opencode.ai/docs/mcp-servers/):
+a dict of server name to server config, either inline or as the path of an
+`opencode.json` (relative to the `.prompt` file). pbt passes it to opencode
+through `OPENCODE_CONFIG_CONTENT`, which opencode merges over its project and
+global config, so an `opencode.json` already in `agent_dir` still applies.
+
+```jinja
+{# models/research.prompt #}
+{{ config(
+    model_type="agent",
+    agent_backend="opencode",
+    agent_dir="./scratch",
+    agent_model="anthropic/claude-sonnet-4-5",
+    agent_mcp={
+        "docs": {"type": "remote", "url": "https://mcp.example.com/docs"},
+        "fs":   {"type": "local", "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "./data"]},
+    },
+) }}
+Use the docs MCP server to find how {{ ref('question') }} is configured, then
+write the answer to answer.md and reply with its contents.
+```
+
+or, keeping the servers in a file: `agent_mcp="./opencode.json"`.
+
+The `opencode` binary is found on `PATH`, or at `PBT_OPENCODE_BIN`. Step and
+cost limits are enforced by pbt from opencode's per-step cost events: when
+exceeded, the process is stopped and the last log entry is
+`{"type": "exit", "reason": "..."}`.
 
 ---
 

@@ -146,7 +146,7 @@ def extract_jinja_config(template_source: str) -> dict[str, str]:
 
     def _config(**kwargs) -> str:
         for k, v in kwargs.items():
-            captured[k] = json.dumps(v) if isinstance(v, list) else str(v)
+            captured[k] = json.dumps(v) if isinstance(v, (list, dict)) else str(v)
         return ""
 
     env = Environment(
