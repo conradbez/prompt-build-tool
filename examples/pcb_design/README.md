@@ -101,6 +101,13 @@ this board, which is the point.
 pbt test --case "Reversed flyback diode"
 ```
 
+The case also sets `promptdata: expected_faults`, the answer key: D1
+reversed, nothing else wrong. Only the tests read it, through
+`promptdata('expected_faults')`. No model does, so no stage can be told the
+answer. Each test then also fails if its stage misses a listed fault that
+concerns it, or reports one that is not listed. A clean run has no
+`expected_faults`, and the tests fall back to checking the evidence alone.
+
 ## Tests: the landmarks
 
 The tests check the map, not the board. Each one asks whether a stage was

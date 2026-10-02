@@ -19,6 +19,16 @@
 
 cases:
   - name: Reversed flyback diode
+    # Read by the tests only, never by the models, so a stage cannot be told
+    # the answer. Each test fails if its stage misses one of these that
+    # concerns it, or reports a fault not listed here.
+    promptdata:
+      expected_faults: |
+        - D1 (SS34 flyback) is reversed on the built board: its cathode, the
+          band side and footprint pad 1, is on MOTOR_DRAIN instead of 12V. The
+          parts list maps the cathode to pin 2, which is the cause.
+        - Nothing else is wrong. ato build, every assertion and DRC pass; R1
+          and Q2 are correct parts on the correct pads.
     given:
       requirements:
         function: ESP32 board switching a 12 V, 500 mA motor and driving an IR beam
