@@ -342,13 +342,24 @@ def register_command(main) -> None:
                 if inputs:
                     c.print(f"  [dim]{_truncate(', '.join(inputs))}[/dim]")
 
-                # Run models for this row
-                row_run_id = db.create_run(model_count=len(ordered_models), git_sha=git_sha)
+                # Run models for this row; given models are pinned, not run
+                unknown = sorted(set(case.given) - {m.name for m in ordered_models})
+                if unknown:
+                    err_console.print(
+                        f"[red]Error:[/red] case '{case.name}' gives {', '.join(unknown)}, "
+                        "which is not a model."
+                    )
+                    sys.exit(1)
+                if case.given:
+                    c.print(f"  [dim]given: {', '.join(case.given)}[/dim]")
+                case_models = models_for_case(ordered_models, case.given)
+                row_run_id = db.create_run(model_count=len(case_models), git_sha=git_sha)
                 model_run_results: list = []
-                on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(ordered_models))
+                on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(case_models))
                 run_results = asyncio.run(execute_run(
                     run_id=row_run_id,
-                    ordered_models=ordered_models,
+                    ordered_models=case_models,
+                    preloaded_outputs=case.given or None,
                     storage_backend=db,
                     on_model_start=on_model_start,
                     on_model_done=on_model_done,
@@ -362,9 +373,12 @@ def register_command(main) -> None:
                 db.finish_run(row_run_id, "success" if not run_errors else "partial")
 
                 model_outputs = {
-                    r.model_name: r.llm_output
-                    for r in run_results
-                    if r.status == "success" and r.llm_output
+                    **case.given,
+                    **{
+                        r.model_name: r.llm_output
+                        for r in run_results
+                        if r.status == "success" and r.llm_output
+                    },
                 }
 
                 # Run tests against this row's outputs
@@ -502,6 +516,32 @@ def _filter_cases(cases: list, patterns: tuple[str, ...]) -> list:
         return cases
     lowered = [p.lower() for p in patterns]
     return [c for c in cases if any(fnmatchcase(c.name.lower(), p) for p in lowered)]
+
+
+def models_for_case(ordered_models: list, given: dict) -> list:
+    """The models a case runs: none that are given, none that only feed given ones.
+
+    A model is kept when it is not given and either nothing depends on it or
+    something kept does.  So a case that pins ``board`` skips ``board`` and
+    any model whose output only ``board`` reads.
+    """
+    if not given:
+        return list(ordered_models)
+    children: dict[str, list[str]] = {m.name: [] for m in ordered_models}
+    for m in ordered_models:
+        for dep in m.depends_on:
+            children.setdefault(dep, []).append(m.name)
+    kept: dict[str, bool] = {}
+
+    def keep(name: str) -> bool:
+        if name not in kept:
+            kept[name] = False  # guards a cycle; the DAG check reports those
+            kept[name] = name not in given and (
+                not children.get(name) or any(keep(child) for child in children[name])
+            )
+        return kept[name]
+
+    return [m for m in ordered_models if keep(m.name)]
 
 
 def _truncate(text: str, limit: int = 160) -> str:

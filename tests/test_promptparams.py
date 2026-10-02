@@ -512,3 +512,78 @@ def test_cli_legacy_csv_points_to_yaml(promptparams_proj: Path) -> None:
     result = run_pbt("test", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
     assert "promptparams are now YAML" in output(result)
+
+
+# ---------------------------------------------------------------------------
+# given: pin a model's output for a case
+# ---------------------------------------------------------------------------
+
+def test_given_merges_like_promptdata(in_tmp: Path) -> None:
+    write(in_tmp / "promptparams.yml", """\
+baselines:
+  default:
+    given: {board: {pads: [12V, DRAIN]}, parts: [R1]}
+cases:
+  - name: Reversed
+    given: {board: {pads: [DRAIN, 12V]}, parts: null}
+""")
+    (case,) = load_cases()
+    assert case.given == {"board": {"pads": ["DRAIN", "12V"]}}
+
+
+def test_models_for_case_skips_given_and_what_only_feeds_them() -> None:
+    from pbt.cli.test import models_for_case
+    from pbt.executor.graph import build_models_from_dict
+
+    specs = list(build_models_from_dict({
+        "brief": "b",
+        "parts": "{{ ref('brief') }}",
+        "board": "{{ ref('parts') }}",
+        "review": "{{ ref('board') }} {{ ref('brief') }}",
+    }).values())
+    kept = [m.name for m in models_for_case(specs, {"board": {}})]
+    assert kept == ["brief", "review"]  # parts only fed board
+
+
+GIVEN_CLIENT_PY = '''\
+import pathlib
+
+def llm_call(prompt: str) -> str:
+    with open(pathlib.Path(__file__).parent / "calls.log", "a") as f:
+        f.write(prompt.replace("\\\\n", " ") + "\\\\n")
+    return '{"results": "pass"}'
+'''
+
+
+def test_cli_given_pins_a_model_and_reaches_downstream_and_tests(tmp_path: Path) -> None:
+    proj = tmp_path / "given_proj"
+    write(proj / "models" / "board.prompt", "Design the board.")
+    write(proj / "models" / "review.prompt",
+          "{{ config(model_type='template') }}D1 pad 1: {{ ref('board').pads[0] }}")
+    write(proj / "tests" / "review_flags.prompt",
+          "Review: {{ ref('review') }} / board: {{ ref('board').pads | join(',') }}")
+    write(proj / "client.py", GIVEN_CLIENT_PY)
+    write(proj / "promptparams.yml", """\
+cases:
+  - name: Reversed flyback diode
+    given:
+      board: {pads: [MOTOR_DRAIN, 12V]}
+""")
+    result = run_pbt("test", cwd=proj, check=False)
+    out = output(result)
+    assert result.returncode == 0, out
+    assert "given: board" in out
+    calls = (proj / "calls.log").read_text()
+    assert "Design the board" not in calls  # the given model never ran
+    assert "Review: D1 pad 1: MOTOR_DRAIN / board: MOTOR_DRAIN,12V" in calls
+
+
+def test_cli_given_unknown_model_errors(tmp_path: Path) -> None:
+    proj = tmp_path / "given_bad"
+    write(proj / "models" / "a.prompt", "A")
+    write(proj / "tests" / "t.prompt", "{{ ref('a') }}")
+    write(proj / "client.py", GIVEN_CLIENT_PY)
+    write(proj / "promptparams.yml", "cases:\n  - name: X\n    given: {nope: 1}\n")
+    result = run_pbt("test", cwd=proj, check=False)
+    assert result.returncode != 0
+    assert "gives nope, which is not a model" in output(result)

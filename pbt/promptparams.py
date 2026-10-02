@@ -41,6 +41,9 @@ Format
         extends: []                  # opt out of the default baseline
         promptdata:
           tone: terse
+      - name: Summary of a known bad outline
+        given:                       # pin a model's output instead of running it
+          outline: {sections: [Intro, Intro]}
 
 Rules
 -----
@@ -55,6 +58,11 @@ Rules
 * ``promptdata`` values may be any YAML value (multi-line strings included).
 * ``promptfiles`` values are a path or a list of paths, relative to the YAML
   file that declares them.
+* ``given`` maps a model name to the output it should have, like a dbt unit
+  test's ``given``.  That model does not run; its value reaches downstream
+  models and tests as if it had.  Models that only feed given models are not
+  run either.  Use it to test one model on a known input, e.g. a review step
+  on a board with a known fault.
 """
 
 from __future__ import annotations
@@ -73,7 +81,7 @@ DEFAULT_BASELINE = "default"
 EXAMPLE_PATH = "promptparams.yml.example"
 
 _FILE_KEYS = {"baselines", "cases"}
-_BASELINE_KEYS = {"extends", "promptdata", "promptfiles"}
+_BASELINE_KEYS = {"extends", "promptdata", "promptfiles", "given"}
 _CASE_KEYS = _BASELINE_KEYS | {"name"}
 _YAML_SUFFIXES = (".yml", ".yaml")
 
@@ -91,6 +99,7 @@ class TestCase:
     name: str
     promptdata: dict[str, Any] = field(default_factory=dict)
     promptfiles: dict[str, str | list[str]] = field(default_factory=dict)
+    given: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +160,12 @@ def load_baselines(paths: "list[str | Path] | tuple[str | Path, ...] | None" = N
 def build_case(name: str, spec: dict, baselines: dict[str, dict], where: str = "") -> TestCase:
     """Apply *spec*'s baselines (``default`` when it names none) and return the case."""
     merged = _inherit(spec, baselines, where or f"case '{name}'", default=True, chain=())
-    return TestCase(name=name, promptdata=merged["promptdata"], promptfiles=merged["promptfiles"])
+    return TestCase(
+        name=name,
+        promptdata=merged["promptdata"],
+        promptfiles=merged["promptfiles"],
+        given=merged["given"],
+    )
 
 
 def _load(paths) -> tuple[dict[str, dict], list[tuple[dict, Path, int]]]:
@@ -191,7 +205,7 @@ def _inherit(spec: dict, baselines: dict[str, dict], where: str, *, default: boo
     else:
         parents = []
 
-    merged: dict[str, dict] = {"promptdata": {}, "promptfiles": {}}
+    merged: dict[str, dict] = {"promptdata": {}, "promptfiles": {}, "given": {}}
     for parent in parents:
         parent = str(parent)
         if parent not in baselines:

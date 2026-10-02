@@ -1,0 +1,169 @@
+# Known fault: the reversed SS34 flyback diode
+# (circuit_board_as_code/qaqc/common_issues/diode_error.md).
+#
+# The circuit intent is right: the cathode is on 12 V. The part library mapped
+# the cathode to pin 2, but the SS34 footprint's pad 1 is the cathode (band).
+# So the built board puts the band on the MOSFET drain. When the motor
+# switches on, the diode conducts 12 V straight to ground and the supply drops
+# to ~0.8 V. ato build passes, the assertions pass, DRC is clean.
+#
+# Everything up to and including `board` is pinned below, so only the QA
+# stage runs: bom_line, polarity, bringup and review. The landmark is
+# tests/review_matches_evidence.prompt: it passes only if the review marks D1
+# reversed. polarised_parts_have_pinout is expected to FAIL here: that is the
+# landmark firing on a board that must not ship.
+#
+#   pbt test --case "Reversed flyback diode"
+
+cases:
+  - name: Reversed flyback diode
+    given:
+      requirements:
+        function: ESP32 board switching a 12 V, 500 mA motor and driving an IR beam
+        rails:
+          - {name: 12V, volts: 12, tolerance_pct: 10, max_ma: 1000, use: motor}
+          - {name: 3V3, volts: 3.3, tolerance_pct: 5, max_ma: 500, use: logic, IR LED}
+        forbidden_rails:
+          - {name: 5V, reason: no 5 V rail exists on this board}
+        interfaces:
+          - {name: motor, type: wire pads, notes: M+ on 12V, M- on MOTOR_DRAIN}
+        envelope_mm: {main_board: [50, 66]}
+        known_limits:
+          - Assertions check declared values, not the pinned parts or pad mapping
+
+      architecture:
+        blocks:
+          - name: motor drive
+            choice: AO3400A low-side switch with an SS34 flyback diode across the motor
+            hypothesis: the diode clamps the motor's turn-off spike to the 12 V rail
+            expect_if_right: [12 V stays up with the motor on, no spike above 12.5 V at turn-off]
+            wrong_if: [12 V collapses when the gate goes high, MOSFET hot with the motor off]
+          - name: IR emitter
+            choice: AO3400A low-side switch, 51 Ω ballast from 3V3
+            hypothesis: about 39 mA through the IR LED in 38 kHz bursts
+            expect_if_right: [receiver output low with the beam clear]
+            wrong_if: [receiver reads clear with the beam blocked]
+        current_paths:
+          - {name: IR LED ballast, supply_v: 3.3, drop_v: 1.3, series_ohm: 51, max_ma: 50}
+        switches:
+          - {name: Q1 IR LED switch, gate_drive_v: 3.3, rds_on_rated_at_vgs_v: 2.5}
+          - {name: Q2 motor switch, gate_drive_v: 3.3, rds_on_rated_at_vgs_v: 2.5}
+        gpios:
+          - {pin: 25, role: output, net: MOTOR_PWM}
+          - {pin: 26, role: output, net: IR_DRIVE}
+          - {pin: 32, role: input, net: IR_RX}
+
+      parts:
+        parts:
+          - ref: R1
+            function: IR LED ballast
+            wanted_value: 51 Ω
+            lcsc: C23197
+            value: 51 Ω 0603 1%
+            tier: Basic
+            why: Basic part at the exact value
+            polarised: false
+            pins: []
+            mismatch: null
+          - ref: D1
+            function: motor flyback diode
+            wanted_value: SS34 Schottky, 3 A, 40 V
+            lcsc: C8678
+            value: SS34 SMA
+            tier: Basic
+            why: common Basic Schottky
+            polarised: true
+            # The library's view: cathode on pin 2. This is the bug.
+            pins:
+              - {pin: "1", name: anode, net: MOTOR_DRAIN}
+              - {pin: "2", name: cathode, net: 12V}
+            mismatch: null
+          - ref: Q2
+            function: motor low-side switch
+            wanted_value: AO3400A N-MOSFET, logic level
+            lcsc: C20917
+            value: AO3400A SOT-23
+            tier: Basic
+            why: Rds(on) rated at 2.5 V gate
+            polarised: true
+            pins:
+              - {pin: "1", name: gate, net: motor_gate}
+              - {pin: "2", name: source, net: GND}
+              - {pin: "3", name: drain, net: MOTOR_DRAIN}
+            mismatch: null
+
+      layout_rules:
+        rules:
+          - id: L1
+            rule: Flyback diode D1 within 5 mm of the motor terminals and Q2's drain
+            prevents: inductive spike on a long loop
+            symptom_if_broken: ringing on MOTOR_DRAIN, MOSFET runs hot
+          - id: L2
+            rule: 12 V motor feed and return at least 1 mm wide
+            prevents: trace heating at 500 mA
+            symptom_if_broken: voltage drop at the motor, warm traces
+
+      # One item per part, in the same order as parts.parts.
+      research:
+        - "not researched: not polarised, the value is the only spec"
+        - output:
+            ref: D1
+            lcsc: C8678
+            datasheet_url: https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/C8678.pdf
+            pin1_marking: cathode band; the footprint's pad 1 is the cathode, on the band side
+            pinout:
+              - {pin: "1", name: cathode, footprint_pad: "1"}
+              - {pin: "2", name: anode, footprint_pad: "2"}
+            drive: 3 A forward, 40 V reverse, Vf 0.5 V at 3 A
+            externals: []
+            flags: []
+          files: []
+        - output:
+            ref: Q2
+            lcsc: C20917
+            datasheet_url: https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/C20917.pdf
+            pin1_marking: dot next to pin 1 (gate); the single leg is the drain
+            pinout:
+              - {pin: "1", name: gate, footprint_pad: "1"}
+              - {pin: "2", name: source, footprint_pad: "2"}
+              - {pin: "3", name: drain, footprint_pad: "3"}
+            drive: Vgs(th) 0.65-1.45 V, Rds(on) rated at Vgs 2.5 V
+            externals: [gate pull-down resistor]
+            flags: []
+          files: []
+
+      board:
+        output:
+          ato_build: pass
+          ato_build_log_tail: "INFO  Build successful"
+          assertions:
+            - {name: ballast current below 50 mA, pass: true}
+            - {name: d_flyback.cathode ~ motor_12v, pass: true}
+          bom:
+            - {ref: R1, lcsc: C23197, value: 51 Ω, footprint: R0603}
+            - {ref: D1, lcsc: C8678, value: SS34, footprint: SMA}
+            - {ref: Q2, lcsc: C20917, value: AO3400A, footprint: SOT-23}
+          # What the copper actually does: band (pad 1) on the drain.
+          pad_nets:
+            - ref: D1
+              pads:
+                - {pad: "1", net: MOTOR_DRAIN}
+                - {pad: "2", net: 12V}
+            - ref: Q2
+              pads:
+                - {pad: "1", net: motor_gate}
+                - {pad: "2", net: GND}
+                - {pad: "3", net: MOTOR_DRAIN}
+          placements:
+            - attempt: 1
+              change: first placement
+              rule_checks:
+                - {rule: L1, predicted: "< 5 mm", measured: 3.8 mm, pass: true}
+                - {rule: L2, predicted: ">= 1 mm", measured: 1.0 mm, pass: true}
+              drc_errors: 0
+          drc: {errors: 0, unconnected: 0, warnings: 5}
+          files:
+            ato: elec/src/board.ato
+            board: elec/layout/default/default.kicad_pcb
+            placement_script: layout_board.py
+          open_issues: []

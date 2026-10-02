@@ -181,6 +181,21 @@ def _open_test_files(
     return opened or None
 
 
+def _parsed_json(value):
+    """A stored JSON object or list, parsed, as downstream models see it.
+
+    Storage keeps a JSON model's output as text.  A test's ``ref('m').key``
+    needs the parsed value, exactly like a model's ``ref()`` does.  Only a
+    whole-string object or list is parsed, so prose stays prose.
+    """
+    if isinstance(value, str) and value.lstrip()[:1] in ("{", "["):
+        try:
+            return json.loads(value)
+        except ValueError:
+            pass
+    return value
+
+
 def _invoke_llm(rendered: str, llm_call: Callable, files: list | None = None) -> str:
     """
     Call *llm_call* with *rendered*, passing *files* when the callable
@@ -314,9 +329,10 @@ def execute_tests(
         if not isinstance(raw, str):
             return raw
         try:
-            return decode_output(raw, blobs)
+            value = decode_output(raw, blobs)
         except FileOutputError:
             return raw
+        return _parsed_json(value)
 
     model_outputs = {name: _decoded(raw) for name, raw in model_outputs.items()}
 

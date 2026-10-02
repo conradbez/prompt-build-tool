@@ -106,6 +106,27 @@ cases:
 
 See [`examples/generate_articles_example/promptparams/`](../examples/generate_articles_example/promptparams/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
 
+### Testing one model on a known input (`given`)
+
+A case can pin a model's output with `given`, like a dbt unit test. A pinned
+model does not run; its value reaches downstream models and tests as if it had.
+Models that only feed pinned models are skipped too. Use it to check that a
+later step catches a fault you have seen for real:
+
+```yaml
+cases:
+  - name: Reversed flyback diode
+    given:
+      board:                      # what the built board actually does
+        output:
+          pad_nets:
+            - {ref: D1, pads: [{pad: "1", net: MOTOR_DRAIN}, {pad: "2", net: 12V}]}
+```
+
+`pbt test --case "Reversed flyback diode"` then runs only what sits downstream
+of `board`. A full example, pinning every model up to the board so only QA
+runs, is [`examples/pcb_design/promptparams/reversed_flyback_diode.yml`](../examples/pcb_design/promptparams/reversed_flyback_diode.yml).
+
 ---
 
 ## `pbt serve`

@@ -88,6 +88,23 @@ The agent is capped at 150 steps and $5 (`agent_step_limit`, `agent_cost_limit`
 in `2_d_board.prompt`). Like every model it is cached on its rendered prompt:
 it re-runs only when the design, parts or layout rules change.
 
+## Known-fault cases
+
+`promptparams/reversed_flyback_diode.yml` replays the real reversed SS34
+(`circuit_board_as_code/qaqc/common_issues/diode_error.md`): the circuit intent is right, the
+library mapped the cathode to pin 2, and the built board puts the band on the
+MOSFET drain. It pins every model up to `board` with `given`, so only the QA
+stage runs, and checks that the review marks D1 reversed. `ato build`,
+assertions and DRC all pass on this board, which is the point.
+
+```bash
+pbt test --case "Reversed flyback diode"
+```
+
+`review_matches_evidence` passes when the review catches it.
+`polarised_parts_have_pinout` fails in this case on purpose: it is the
+landmark firing on a board that must not ship.
+
 ## Tests: the landmarks
 
 Each test targets a failure that actually happened or nearly happened on a
@@ -99,6 +116,7 @@ real board built this way:
 | `polarised_parts_have_pinout` | A reversed flyback diode shorted 12 V to ground. Judges the per-part `polarity` checks |
 | `electrical_checks_pass` | LED over-current, a MOSFET only rated at 10 V gate driven from 3.3 V, a receiver on an input-only pin with no pull-up |
 | `board_builds_clean` | A build that passes assertions on the wrong part, a final placement that still breaks a layout rule, DRC errors |
+| `review_matches_evidence` | A review sheet that marks a reversed part "yes": the judge works out reversals from research, built pads and intended pins itself |
 | `bringup_starts_with_failure` | A receiver picking up board leakage reports "beam clear" with the beam blocked, so every vend looks successful |
 
 `electrical_check` is the cheapest landmark: arithmetic, no LLM, cached on its
