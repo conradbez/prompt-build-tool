@@ -98,9 +98,10 @@ class ModelKind:
     #: (Python source, a pass-through value) and so would be corrupted by it.
     accepts_global_instruction: bool = True
 
-    #: One node, many prompts: the executor resolves the upstream JSON list,
-    #: renders once per item, runs ``exec_fn`` on each concurrently, and
-    #: collects the results into a list in input order.
+    #: Fan out without ``config(each=...)``: the executor resolves the single
+    #: upstream JSON list (or ``loop_over``), renders once per item, runs
+    #: ``exec_fn`` on each concurrently, and collects the results in input
+    #: order.  Any model fans out with ``each=`` whatever its kind.
     fan_out: bool = False
 
 

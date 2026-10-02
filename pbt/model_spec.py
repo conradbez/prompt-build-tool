@@ -44,6 +44,11 @@ class ModelSpec:
         return self.config.get("output_format", "text")
 
     @property
+    def each(self) -> str:
+        """The ``config(each=...)`` path this model fans out over, or ""."""
+        return self.config.get("each", "")
+
+    @property
     def output_extension(self) -> str:
         return self.config.get("output_extension", "md")
 

@@ -538,7 +538,8 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `output_extension` | File extension for `outputs/<model>.<ext>`; defaults to `"md"` |
 | `promptfiles` | Names of files this model receives at runtime — see [Passing files to models](#passing-files-to-models-promptfiles) |
 | `model_type` | `"template"`, `"loop"`, `"execute_python"`, `"agent"`, or a type you register; defaults to a plain LLM call |
-| `loop_over` | For loop models: which upstream model to fan out over |
+| `each` | Path to an upstream list; run this model once per item, any `model_type` — see [Map and reduce](#map-and-reduce-each) |
+| `loop_over` | For loop models: which upstream model to fan out over (same as `each`) |
 | `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
 
 Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
@@ -660,39 +661,46 @@ LLM call — for nodes that only reshape what upstream models already produced.
 
 ---
 
-## Looping over a list (`model_type="loop"`)
+## Map and reduce (`each=`)
 
-Set `model_type="loop"` in `config()` to call the LLM once per item in an upstream list, then combine the results back into a list.
+Set `each` in `config()` to run a model once per item of an upstream list, then collect the results back into a list. It works on any `model_type`.
 
-**1. Upstream model returns a JSON list:**
+| Model | Config | `ref()` inside yields | Output |
+|---|---|---|---|
+| `parts` | `output_format="json"` | | `{"parts": [p1, p2]}` |
+| `check` | `each="parts.parts[*]"`, `model_type="execute_python"` | `ref('parts')` = `p1`, then `p2` | `[c1, c2]` |
+| `chapters` | `output_format="json"` | | `[ch1, ch2]` |
+| `sections` | `each="chapters"`, `output_format="json"` | `ref('chapters')` = `ch1`, then `ch2` | `[[s1, s2], [s3]]` |
+| `polish` | `each="sections[*][*]"` | `ref('sections')` = `s1`, `s2`, `s3` | `[t1, t2, t3]` |
+| `report` | none | `ref('polish')` = `[t1, t2, t3]` | one string |
 
 ```jinja
-{# models/articles.prompt #}
-{{ config(output_format="json") }}
-Return a JSON array of 3 article titles about {{ promptdata("topic") }}.
+{# models/polish.prompt #}
+{{ config(each="sections[*][*]") }}
+Polish this section:
+{{ ref('sections') }}
 ```
 
-**2. Loop model processes each item:**
+- **Map.** Inside an `each` model, `ref()` of the iterated model yields the current item. Every other `ref()` yields the full upstream value. The calls run concurrently and the output keeps input order.
+- **Map over map.** Each `[*]` unnests one level, like Postgres `jsonb_array_elements`. `sections[*][*]` turns a list of lists into one flat list.
+- **Reduce.** Any model that `ref()`s the mapped list. Use `model_type="template"` for a reduce with no LLM call.
+- **Paths.** `.key`, `[n]` and `[*]`, in the SQL/JSON spelling. `each="chapters"` is shorthand for `chapters[*]`. A path that does not lead to a list fails with the type it found.
+- **Per item rows and cache.** Each item is stored as its own row, `polish[0]`, `polish[1]`, … in `pbt docs` and the database. Its raw response sits under that item's own cache key, so on the next run only changed items reach the LLM.
+
+The model named in `each` is a dependency even when the template never `ref()`s it. A skip function inside an `each` model applies to that item only; the model as a whole still succeeds.
+
+The same paths work in any `ref()`: `{{ ref('parts.parts[0].lcsc') }}`, or `{{ ref('sections[*][*]') }}` in a test to see exactly what `polish` iterated.
+
+### `model_type="loop"`
+
+`loop` is the plain LLM call that fans out without an `each`: it iterates the single upstream dependency that returns a list. `loop_over="articles"` picks one when several do, and accepts the same paths as `each`.
 
 ```jinja
 {# models/summaries.prompt #}
 {{ config(model_type="loop") }}
-
 Write a one-paragraph summary for this article title:
 {{ ref('articles') }}
 ```
-
-`ref('articles')` returns the **current item** on each iteration — no new syntax needed. The calls run concurrently.
-
-**Result:** `summaries` outputs a JSON list with one entry per item from `articles`, in input order. Downstream models receive the full combined list via `ref('summaries')`.
-
-**Multiple list dependencies** — if more than one upstream model returns a list, specify which to loop over:
-
-```jinja
-{{ config(model_type="loop", loop_over="articles") }}
-```
-
-A skip function inside a loop model applies to that item only; the model as a whole still succeeds.
 
 ---
 
@@ -919,7 +927,7 @@ pbt.register_model_kind(pbt.ModelKind(
 | `exec_fn` | `None` | `async (rendered, call) -> Any`. `None` means the rendered text *is* the output |
 | `config_keys` | `frozenset()` | The `config()` keys this kind reads |
 | `accepts_global_instruction` | `True` | `False` when the rendered text is not a prompt for a model to answer |
-| `fan_out` | `False` | Render once per item of an upstream JSON list, run `exec_fn` on each concurrently |
+| `fan_out` | `False` | Fan out without an `each`, over the single upstream list. Any model can fan out with `config(each=...)` regardless |
 
 The built-ins are nothing but this record. The default kind's `exec_fn` is
 just `await call.llm(rendered)`; `template` is
@@ -950,10 +958,11 @@ For a *one-off* calculation, you do not need a kind at all:
 model's template as Python. Write a kind when the behaviour is worth reusing
 across models and configuring per model, the way `truncate` takes `max_words`.
 
-**Fan out over a list.** Set `fan_out=True` and pbt finds the upstream
-dependency whose output is a JSON list, renders your template once per item
-(with `ref()` on that model yielding the current item), runs your `exec_fn` on
-each concurrently, and collects the results into a list. That is all `loop` is.
+**Fan out over a list.** Nothing to write: any model using your kind can set
+`config(each="model.key[*]")`, and pbt renders once per item, runs your
+`exec_fn` on each concurrently, and collects the results into a list. Set
+`fan_out=True` on the kind only if its models should fan out without an
+`each`, over the single upstream list. That is all `loop` is.
 
 **Cache expensive non-LLM work.** Anything slow and repeatable can go behind the
 same cache your LLM calls use, so it does not re-run when nothing changed:

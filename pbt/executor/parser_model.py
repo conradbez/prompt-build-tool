@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from jinja2 import Environment, StrictUndefined, meta
 
+from pbt import jsonpath
 from pbt.files import contains_files
 
 
@@ -35,6 +36,19 @@ class _RenderState:
     #: The ref() overlay this render used — a loop item — so promptfiles
     #: naming the looped model attach that item's files.
     extra_outputs: dict | None = None
+
+    #: Calls made for this one render, and the raw result of the call when
+    #: there was exactly one — what a fan-out item stores under its cache key.
+    calls: int = 0
+    cache_hits: int = 0
+    cache_artifact: str | None = None
+    cache_key: str | None = None
+
+    def record_call(self, raw: str, key: str, hit: bool) -> None:
+        self.calls += 1
+        self.cache_hits += hit
+        single = self.calls == 1
+        self.cache_artifact, self.cache_key = (raw, key) if single else (None, None)
 
 
 def render_prompt(
@@ -77,13 +91,14 @@ def render_prompt(
     state = _RenderState()
     model_context = _ModelContext(name=model_name)
 
-    def ref(model_name: str) -> str:
-        if model_name not in model_outputs:
+    def ref(path: str) -> Any:
+        name, steps = jsonpath.parse(path)
+        if name not in model_outputs:
             raise ValueError(
-                f"ref('{model_name}') — model '{model_name}' has no output yet. "
+                f"ref('{path}') — model '{name}' has no output yet. "
                 "This is likely a missing dependency or execution-order bug."
             )
-        return model_outputs[model_name]
+        return jsonpath.resolve(model_outputs[name], steps, f"ref('{path}')")
 
     def _promptdata_fn(name: str):
         return _promptdata.get(name)

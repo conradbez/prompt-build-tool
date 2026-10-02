@@ -15,7 +15,8 @@ import warnings
 from jinja2 import Environment, Undefined
 
 
-_REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)['"]\s*\)""")
+#: ref('model') or ref('model.key[0][*]') — the dependency is the leading name.
+_REF_PATTERN = re.compile(r"""\bref\(\s*['"](\w+)(?:[.\[][^'"]*)?['"]\s*\)""")
 _PROMPTDATA_PATTERN = re.compile(r"""\bpromptdata\(\s*['"](\w+)['"]\s*\)""")
 
 # Every config() key pbt acts on regardless of model kind.  Kind-specific keys
@@ -28,6 +29,7 @@ _BUILTIN_CONFIG_KEYS = frozenset({
     "promptfiles",
     "model_type",
     "global_instruction",
+    "each",
 })
 
 _extra_config_keys: set[str] = set()

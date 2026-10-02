@@ -5,7 +5,8 @@ The executor owns everything that is the same for every model, so that a model
 kind never has to reimplement it:
 
   1. Look up the kind for the model's ``model_type``.
-  2. Render the template — once, or once per item for a ``fan_out`` kind.
+  2. Render the template — once, or once per item for a model with
+     ``config(each=...)`` (or a ``fan_out`` kind such as ``loop``).
   3. Hand the rendered text to the kind's ``exec_fn``, with the cached LLM call
      and cached compute preloaded onto a :class:`~pbt.model_types.ModelCall`.
   4. Apply skip propagation from the model's own template.
@@ -30,9 +31,10 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
+from pbt import jsonpath
 from pbt.executor.parser_model import _RenderState
 from pbt.executor.run_context import RunContext, parse_json_output
-from pbt.files import BlobStore, Dir, contains_files, decode_output, encode_output, persist_files
+from pbt.files import BlobStore, contains_files, decode_output, encode_output, persist_files
 from pbt.model_spec import ModelSpec
 from pbt.model_types import ModelCall, ModelKind, get_model_kind
 from pbt.storage.base import StorageBackend
@@ -59,37 +61,46 @@ class ModelRunResult:
     value: Any = None
 
 
-def _as_items(value: Any) -> list | None:
-    """The items a loop iterates over: a JSON list, or the files of a Dir."""
-    if isinstance(value, list):
-        return value
-    if isinstance(value, Dir):
-        return value.files()
-    return None
+def _resolve_each(spec: ModelSpec, kind: ModelKind, ctx: RunContext) -> tuple[str, str, list] | None:
+    """``(model, path, items)`` a fan-out model iterates, or None if it does not fan out.
+
+    ``config(each='parts.items[*]')`` fans out any kind.  A ``fan_out`` kind
+    (``loop``) without one falls back to ``loop_over``, then to the single
+    upstream dependency that returns a list.
+    """
+    path = spec.each or (spec.config.get("loop_over", "") if kind.fan_out else "")
+    if not path:
+        if not kind.fan_out:
+            return None
+        dep, items = _only_list_dep(spec, ctx)
+        return dep, dep, items
+
+    name, steps = jsonpath.parse(path)
+    key = "each" if spec.each else "loop_over"
+    label = f"Model '{spec.name}': {key}='{path}'"
+    if name not in spec.depends_on:
+        raise ValueError(
+            f"{label} is not a dependency of this model. "
+            f"Dependencies: {spec.depends_on!r}."
+        )
+    value = jsonpath.resolve(ctx.outputs[name], steps, label)
+    items = jsonpath.as_items(value)
+    if items is None:
+        raise ValueError(
+            f"{label} does not return a JSON list, it is {jsonpath.describe(value)}. "
+            "Point the path at a list (e.g. 'model.key[*]'), and make sure the "
+            "upstream model has output_format='json'."
+        )
+    return name, path, items
 
 
-def _resolve_fan_out_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
-    """Pick the upstream dependency a fan-out model iterates over."""
+def _only_list_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
+    """The single upstream dependency whose output is a list."""
     list_deps = {
         dep: items
         for dep in spec.depends_on
-        if (items := _as_items(ctx.outputs.get(dep))) is not None
+        if (items := jsonpath.as_items(ctx.outputs.get(dep))) is not None
     }
-
-    pinned = spec.config.get("loop_over", "")
-    if pinned:
-        if pinned not in spec.depends_on:
-            raise ValueError(
-                f"Loop model '{spec.name}': loop_over='{pinned}' is not a "
-                f"dependency of this model. Dependencies: {spec.depends_on!r}."
-            )
-        if pinned not in list_deps:
-            raise ValueError(
-                f"Loop model '{spec.name}': loop_over='{pinned}' does not return "
-                "a JSON list. Ensure it has output_format='json' and returns a list."
-            )
-        return pinned, list_deps[pinned]
-
     if not list_deps:
         raise ValueError(
             f"Loop model '{spec.name}': no upstream dependency returns a JSON list. "
@@ -98,9 +109,38 @@ def _resolve_fan_out_dep(spec: ModelSpec, ctx: RunContext) -> tuple[str, list]:
     if len(list_deps) > 1:
         raise ValueError(
             f"Loop model '{spec.name}': multiple dependencies return lists: "
-            f"{list(list_deps)}. Add loop_over='model_name' to config() to disambiguate."
+            f"{list(list_deps)}. Add each='model_name' (or loop_over=) to config() "
+            "to disambiguate."
         )
     return next(iter(list_deps.items()))
+
+
+def _store_item(
+    spec: ModelSpec, ctx: RunContext, index: int, rendered: str, state: _RenderState, value: Any
+) -> None:
+    """Write one fan-out item as its own row, ``model[i]``.
+
+    The row is the item's landmark in ``pbt docs`` and its prompt-cache entry:
+    the raw response sits under the item's own cache key, so an unchanged item
+    is served from cache on the next run while only changed items are re-sent.
+    """
+    name = f"{spec.name}[{index}]"
+    ctx.storage.upsert_model_pending(
+        ctx.run_id, name, spec.source, spec.depends_on, spec.model_type, spec.config
+    )
+    output = encode_output(value)
+    cacheable = state.cache_artifact is not None and state.skip_value is None
+    ctx.storage.mark_model_success(
+        ctx.run_id,
+        name,
+        rendered,
+        state.cache_artifact if cacheable else output,
+        cache_key=state.cache_key if cacheable else None,
+        cached=state.calls > 0 and state.cache_hits == state.calls,
+    )
+    record = getattr(ctx.storage, "record_validated_output", None)
+    if cacheable and output != state.cache_artifact and record is not None:
+        record(ctx.run_id, name, output)
 
 
 #: A template whose whole body is one ref(), optionally after its config().
@@ -120,7 +160,10 @@ def _passthrough_files(spec: ModelSpec, ctx: RunContext) -> Any:
     match = _SOLE_REF.match(spec.source)
     if match is None:
         return None
-    value = ctx.outputs.get(match.group("name"))
+    name, steps = jsonpath.parse(match.group("name"))
+    if name not in ctx.outputs:
+        return None
+    value = jsonpath.resolve(ctx.outputs[name], steps, f"ref('{match.group('name')}')")
     return value if contains_files(value) else None
 
 
@@ -154,17 +197,18 @@ async def _produce_one(
 async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
     """Render *spec* and produce its output value.
 
-    A ``fan_out`` kind renders once per item of an upstream JSON list and runs
+    A model with ``each=`` (or a ``fan_out`` kind) renders once per item and runs
     its exec_fn on each concurrently, collecting the results in input order.
     Per-item renders are not *primary*: one skipped item must not mark the whole
     model skipped.
     """
-    if not kind.fan_out:
+    fan = _resolve_each(spec, kind, ctx)
+    if fan is None:
         rendered, state = ctx.render(spec)
         return await _produce_one(kind, spec, ctx, rendered, state)
 
-    dep_name, items = _resolve_fan_out_dep(spec, ctx)
-    ctx.note(spec, f"[loop over {len(items)} items from '{dep_name}']")
+    dep_name, path, items = fan
+    ctx.note(spec, f"[loop over {len(items)} items from '{path}']")
     renders = [
         ctx.render(spec, extra_outputs={dep_name: item}, primary=False)
         for item in items
@@ -176,9 +220,12 @@ async def _produce(kind: ModelKind, spec: ModelSpec, ctx: RunContext) -> Any:
             return parse_json_output(value)
         return value
 
-    return list(await asyncio.gather(
+    values = list(await asyncio.gather(
         *(one(rendered, state) for rendered, state in renders)
     ))
+    for index, ((rendered, state), value) in enumerate(zip(renders, values)):
+        _store_item(spec, ctx, index, rendered, state, value)
+    return values
 
 
 async def execute_model(spec: ModelSpec, ctx: RunContext) -> ModelRunResult:

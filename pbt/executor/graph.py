@@ -24,6 +24,7 @@ from pbt.executor.parser_initial import (
     parse_model_config,
     warn_unknown_config_keys,
 )
+from pbt import jsonpath
 from pbt.files import split_model_path
 from pbt.model_spec import ModelSpec
 from pbt.model_types import get_model_kind, known_model_kinds
@@ -72,13 +73,20 @@ def build_spec(name: str, source: str, path: Path | None = None) -> ModelSpec:
     """Parse one template into a :class:`ModelSpec`, warning about bad config."""
     config = parse_model_config(source)
     warn_unknown_config_keys(config, name, path)
+    depends_on = extract_dependencies(source)
+    if config.get("each"):
+        # The model a fan-out iterates is a dependency even if the template
+        # never ref()s it.
+        upstream, _ = jsonpath.parse(config["each"])
+        if upstream not in depends_on:
+            depends_on.append(upstream)
     return ModelSpec(
         name=name,
         source=source,
         path=path.resolve() if path is not None else Path("<inline>"),
         model_type=_resolve_model_type(config, name, path),
         config=config,
-        depends_on=extract_dependencies(source),
+        depends_on=depends_on,
         promptdata_used=detect_used_promptdata(source),
         promptfiles_used=_parse_promptfiles(config),
     )

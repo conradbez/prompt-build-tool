@@ -284,6 +284,8 @@ class RunContext:
                 acct.calls += 1
                 acct.cache_hits += 1
                 self._record_artifact(acct, hit)
+                if state is not None:
+                    state.record_call(hit, key, hit=True)
                 lookup = getattr(self.storage, "get_cached_token_usage", None)
                 if lookup is not None:
                     acct.cache_spent_tokens = add_tokens(acct.cache_spent_tokens, lookup(key))
@@ -299,7 +301,10 @@ class RunContext:
         acct.elapsed_ms += int((time.monotonic() - started) * 1000)
         if contains_files(result):
             persist_files(result, self.blobs)
-        self._record_artifact(acct, encode_output(result))
+        raw = encode_output(result)
+        self._record_artifact(acct, raw)
+        if state is not None:
+            state.record_call(raw, key, hit=False)
         return result
 
     @staticmethod
