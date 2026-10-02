@@ -1,0 +1,18 @@
+Does the bring-up plan act on what QA found? Do not judge whether the board is
+right: a plan for a faulty board passes if it targets the fault.
+
+Polarity checks:
+{{ ref('polarity') | select('mapping') | list | tojson(indent=2) }}
+
+Bring-up plan:
+{{ ref('bringup') | tojson(indent=2) }}
+
+Fail if any of these hold:
+- a polarised part has no unpowered inspection in "pre_power"
+- a part whose polarity check found an issue is inspected only generically,
+  without naming the issue
+- the first powered check confirms the happy path instead of forcing the
+  failure condition (block the beam, remove the signal, disconnect a wire) and
+  expecting the board to report it. A sensor that only ever reports success
+  cannot be told from one that always says "clear".
+Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.

@@ -91,33 +91,32 @@ it re-runs only when the design, parts or layout rules change.
 ## Known-fault cases
 
 `promptparams/reversed_flyback_diode.yml` replays the real reversed SS34
-(`circuit_board_as_code/qaqc/common_issues/diode_error.md`): the circuit intent is right, the
-library mapped the cathode to pin 2, and the built board puts the band on the
-MOSFET drain. It pins every model up to `board` with `given`, so only the QA
-stage runs, and checks that the review marks D1 reversed. `ato build`,
-assertions and DRC all pass on this board, which is the point.
+(`circuit_board_as_code/qaqc/common_issues/diode_error.md`): the circuit
+intent is right, the library mapped the cathode to pin 2, and the built board
+puts the band on the MOSFET drain. It pins every model up to `board` with
+`given`, so only the QA stage runs. `ato build`, assertions and DRC all pass on
+this board, which is the point.
 
 ```bash
 pbt test --case "Reversed flyback diode"
 ```
 
-`review_matches_evidence` passes when the review catches it.
-`polarised_parts_have_pinout` fails in this case on purpose: it is the
-landmark firing on a board that must not ship.
-
 ## Tests: the landmarks
 
-Each test targets a failure that actually happened or nearly happened on a
-real board built this way:
+The tests check the map, not the board. Each one asks whether a stage was
+honest about its evidence, so every test passes on a clean board and on a
+known-fault case alike, as long as the process catches the fault. A failing
+test names the stage that drifted.
 
-| Test | Failure it catches |
-|---|---|
-| `pinned_parts_match_wanted` | The design asserts 51 Ω, the pinned LCSC id is something else. Assertions check the declared value, not the part that ships |
-| `polarised_parts_have_pinout` | A reversed flyback diode shorted 12 V to ground. Judges the per-part `polarity` checks |
-| `electrical_checks_pass` | LED over-current, a MOSFET only rated at 10 V gate driven from 3.3 V, a receiver on an input-only pin with no pull-up |
-| `board_builds_clean` | A build that passes assertions on the wrong part, a final placement that still breaks a layout rule, DRC errors |
-| `review_matches_evidence` | A review sheet that marks a reversed part "yes": the judge works out reversals from research, built pads and intended pins itself |
-| `bringup_starts_with_failure` | A receiver picking up board leakage reports "beam clear" with the beam blocked, so every vend looks successful |
+| Test | Stage it checks | The drift it catches |
+|---|---|---|
+| `electrical_checks_cover_design` | `electrical_check` | A current path, switch or GPIO the architecture gave that was never checked |
+| `board_report_is_honest` | `board` | A build or DRC failure reported as clean; a final placement that breaks a rule without saying so |
+| `bom_checks_match_evidence` | `bom_line` | A 51 Ω part pinned or built as 510 Ω that the check calls a match |
+| `polarity_checks_match_evidence` | `polarity` | A diode with the right pin names on the wrong pads that the check calls fine |
+| `review_matches_evidence` | `review` | A reversed part marked "yes" on the review sheet |
+| `bringup_follows_findings` | `bringup` | A polarity finding with no inspection before power-up; a first powered check that only confirms the happy path |
 
-`electrical_check` is the cheapest landmark: arithmetic, no LLM, cached on its
-code. When it fails, fix `architecture`, not the review.
+Each test works the answer out from the evidence before reading the stage's
+verdict. That makes the judge an independent landmark rather than a second
+opinion on the same guess.

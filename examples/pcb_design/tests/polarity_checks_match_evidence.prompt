@@ -1,0 +1,26 @@
+Is each per-part polarity check honest about its evidence? Work out the answer
+yourself before reading its verdict. Do not judge whether the board is right:
+a reversed part that is flagged passes this test.
+
+For each polarised part, the datasheet research says which footprint pad is
+the cathode or pin 1. The built board says which net each physical pad is on.
+The intended circuit says which net the cathode or pin 1 must be on. A part is
+reversed when the marked pad sits on the wrong net, even if its pin names look
+right.
+
+Datasheet research:
+{{ ref('research') | select('mapping') | map(attribute='output') | list | tojson(indent=2) }}
+
+Built pad nets:
+{{ ref('board').output.pad_nets | tojson(indent=2) }}
+
+Intended pins:
+{{ ref('parts').parts | selectattr('polarised') | list | tojson(indent=2) }}
+
+Per-part polarity checks:
+{{ ref('polarity') | select('mapping') | list | tojson(indent=2) }}
+
+Fail if a part you found reversed has built_pads_agree true or no issue
+naming it, or a part you found correct is flagged reversed. Also fail if a
+check's marking is vague ("see datasheet") instead of a physical feature.
+Reply with only valid JSON: {"results": "pass"} or {"results": "fail"}.

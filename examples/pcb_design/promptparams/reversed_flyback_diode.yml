@@ -8,10 +8,12 @@
 # to ~0.8 V. ato build passes, the assertions pass, DRC is clean.
 #
 # Everything up to and including `board` is pinned below, so only the QA
-# stage runs: bom_line, polarity, bringup and review. The landmark is
-# tests/review_matches_evidence.prompt: it passes only if the review marks D1
-# reversed. polarised_parts_have_pinout is expected to FAIL here: that is the
-# landmark firing on a board that must not ship.
+# stage runs: bom_line, polarity, bringup and review. Every test checks that a
+# stage was honest about its evidence, not that the board is good, so all of
+# them pass when QA catches D1. The ones that would miss it:
+#   polarity_checks_match_evidence  D1 reversed but its check says the pads agree
+#   review_matches_evidence         D1 marked "yes" on the review sheet
+#   bringup_follows_findings        no D1 inspection before power-up
 #
 #   pbt test --case "Reversed flyback diode"
 
