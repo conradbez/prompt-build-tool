@@ -1,0 +1,33 @@
+{# JLC BOM step, once per part: the pinned LCSC part is what ships, not the value the circuit asked for. #}
+{{ config(each="parts.parts[*]", output_format="json") }}
+{% set p = ref('parts') %}
+You are reading one line of a JLCPCB assembly BOM before upload.
+
+Part {{ p.ref }} ({{ p.function }}):
+{{ p | tojson(indent=2) }}
+
+Check this one line:
+1. Value: does the pinned LCSC part ({{ p.lcsc }}, "{{ p.value }}") match the wanted
+   value "{{ p.wanted_value }}"? A design assertion on the declared value passes
+   even when the pinned id is 10x off: 51 Ω was wanted, C23193 is 510 Ω.
+2. Tier: is it Extended where a Basic part with the same value and package
+   exists? Each Extended part adds about $3 to the order.
+3. Stock: is this part likely to be low stock or end of life? You cannot see live
+   stock, so say "unknown" rather than guess.
+4. Package: does the package in the LCSC description match the footprint the
+   circuit needs?
+5. Assembly: a through-hole or clip-in part (a sensor in terminals, wire pads)
+   must be "do_not_place", not quoted for SMT.
+
+Return only JSON:
+{
+  "ref": "{{ p.ref }}",
+  "lcsc": "{{ p.lcsc }}",
+  "value_matches": true,
+  "tier_ok": true,
+  "stock": "ok | low | unknown",
+  "package_ok": true,
+  "assembly": "smt | do_not_place",
+  "issues": ["empty when the line is clean"],
+  "verify_on_jlc": "what to compare on JLC's BOM page for this line"
+}

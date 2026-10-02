@@ -10,17 +10,24 @@ Design hypotheses and the observations that would disprove them:
   wrong if: {{ b.wrong_if | join('; ') }}
 {% endfor %}
 
+Polarised parts (from the per-part placement check):
+{% for c in ref('polarity') | select('mapping') %}
+- {{ c.ref }} {{ c.part }}: marked pad on {{ c.marked_pad_net }}; check: {{ c.power_up_check }}
+{% endfor %}
+
 Layout rules:
 {% for l in ref('layout_rules').rules %}
 - {{ l.id }} {{ l.rule }} (symptom if broken: {{ l.symptom_if_broken }})
 {% endfor %}
 
-Order the checks so each one is a landmark: say what you expect to see BEFORE
+List the unpowered polarity inspections in "pre_power", one per polarised part
+above. Then order the powered checks so each one is a landmark: say what you expect to see BEFORE
 measuring. Start with the negative test: force the failure condition (e.g.
 block the beam, disconnect a wire) and confirm the board reports it. A sensor
 that only ever reports success is following the map backwards.
 
 Return only JSON:
 {
+  "pre_power": [{"ref": "D1", "inspect": "...", "expect": "..."}],
   "checks": [{"step": 1, "action": "...", "expect": "...", "if_not": "likely cause and fix"}]
 }

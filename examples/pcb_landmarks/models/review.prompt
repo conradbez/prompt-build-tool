@@ -28,19 +28,38 @@
 {% for p in ref('parts').parts %}| {{ p.ref }} | {{ p.lcsc }} | {{ p.value }} | {{ p.wanted_value }} | {{ p.tier }} | {{ "yes" if p.polarised else "" }} |
 {% endfor %}
 
+## BOM lines (JLC step 2)
+| Ref | LCSC | Value OK | Tier OK | Stock | Assembly | Issues |
+|---|---|---|---|---|---|---|
+{% for b in ref('bom_line') %}| {{ b.ref }} | {{ b.lcsc }} | {{ "yes" if b.value_matches else "**NO**" }} | {{ "yes" if b.tier_ok else "**NO**" }} | {{ b.stock }} | {{ b.assembly }} | {{ b.issues | join('; ') }} |
+{% endfor %}
+
+## Polarity and pin 1 (JLC step 3)
+| Ref | Part | Marking | Marked pad net | Expect in JLC 3D | Reversed if | OK |
+|---|---|---|---|---|---|---|
+{% for c in ref('polarity') | select('mapping') %}| {{ c.ref }} | {{ c.part }} | {{ c.marking }} | {{ c.marked_pad_net }} | {{ c.expect_in_jlc_3d }} | {{ c.reversed_if }} | {{ "yes" if c.pins_agree and not c.issues else "**NO**" }} |
+{% endfor %}
+
 ## Layout rules
 {% for l in ref('layout_rules').rules %}
 {{ loop.index }}. **{{ l.id }}** {{ l.rule }}. Prevents: {{ l.prevents }}
 {% endfor %}
 
 ## Bring-up
+Before power:
+{% for c in ref('bringup').pre_power %}
+- [ ] {{ c.ref }}: {{ c.inspect }}. Expect: {{ c.expect }}
+{% endfor %}
+
+Powered:
 {% for c in ref('bringup').checks %}
 {{ c.step }}. {{ c.action }}. Expect: {{ c.expect }}. If not: {{ c.if_not }}
 {% endfor %}
 
 ## Upload checklist
 - [ ] DRC 0 errors, 0 unconnected
-- [ ] BOM line count matches parts table; every pinned value matches "Wanted"
-- [ ] Every polarised part checked in JLC 2D/3D view against datasheet and pad nets
+- [ ] JLC "Parts detected" equals "Parts confirmed", and equals the BOM lines above
+- [ ] Every BOM line above is clean; every "do_not_place" part is absent from the JLC BOM and CPL
+- [ ] Every polarity row above checked in JLC's 3D view and screenshotted
 - [ ] No copper across the break-off line
 - [ ] Hash of `build/fab/` logged in `qaqc/UPLOAD_CHECKLIST.md`
