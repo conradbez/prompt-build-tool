@@ -139,7 +139,7 @@ pbt ls
 
 ### `pbt test`
 
-Run `tests/*.prompt` files against the latest run's outputs. Each test passes when the LLM returns `{"results": "pass"}`.
+Run `tests/*.prompt` files against the latest run's outputs. Each test passes when the LLM returns `{"results": "pass"}`. YAML cases can instead use `expect` to compare selected output fields directly, without a judge or test prompt files; see [YAML expectations](docs/ADVANCED_USAGE.md#checking-expected-outputs-expect).
 
 ```bash
 pbt test

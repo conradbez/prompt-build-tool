@@ -1,34 +1,8 @@
-# Known fault: the reversed SS34 flyback diode
-# (circuit_board_as_code/qaqc/common_issues/diode_error.md).
-#
-# The circuit intent is right: the cathode is on 12 V. The part library mapped
-# the cathode to pin 2, but the SS34 footprint's pad 1 is the cathode (band).
-# So the built board puts the band on the MOSFET drain. When the motor
-# switches on, the diode conducts 12 V straight to ground and the supply drops
-# to ~0.8 V. ato build passes, the assertions pass, DRC is clean.
-#
-# Everything up to and including `board` is pinned below, so only the QA
-# stage runs: bom_line, polarity, bringup and review. Every test checks that a
-# stage was honest about its evidence, not that the board is good, so all of
-# them pass when QA catches D1. The ones that would miss it:
-#   polarity_checks_match_evidence  D1 reversed but its check says the pads agree
-#   review_matches_evidence         D1 marked "yes" on the review sheet
-#   bringup_follows_findings        no D1 inspection before power-up
-#
-#   pbt test --case "Reversed flyback diode"
-
-cases:
-  - name: Reversed flyback diode
-    # Read by the tests only, never by the models, so a stage cannot be told
-    # the answer. Each test fails if its stage misses one of these that
-    # concerns it, or reports a fault not listed here.
-    promptdata:
-      expected_faults: |
-        - D1 (SS34 flyback) is reversed on the built board: its cathode, the
-          band side and footprint pad 1, is on MOTOR_DRAIN instead of 12V. The
-          parts list maps the cathode to pin 2, which is the cause.
-        - Nothing else is wrong. ato build, every assertion and DRC pass; R1
-          and Q2 are correct parts on the correct pads.
+# Saved evidence from a reversed SS34 flyback diode.
+# Logical pins and DRC pass, but physical pad 1 (cathode) is on MOTOR_DRAIN.
+# Share the inputs; each case states the QA result we expect.
+baselines:
+  default:
     given:
       requirements:
         function: ESP32 board switching a 12 V, 500 mA motor and driving an IR beam
@@ -144,8 +118,8 @@ cases:
             flags: []
           files: []
 
-      board:
-        output:
+      board: &reversed_board
+        output: &reversed_output
           ato_build: pass
           ato_build_log_tail: "INFO  Build successful"
           assertions:
@@ -179,3 +153,31 @@ cases:
             board: elec/layout/default/default.kicad_pcb
             placement_script: layout_board.py
           open_issues: []
+
+cases:
+  - name: Reversed flyback diode
+    expect:
+      polarity:
+        - {ref: D1, built_pads_agree: false}
+        - {ref: Q2, built_pads_agree: true, issues: []}
+
+  - name: Corrected flyback diode
+    given:
+      board:
+        <<: *reversed_board
+        output:
+          <<: *reversed_output
+          pad_nets:
+            - ref: D1
+              pads:
+                - {pad: "1", net: 12V}
+                - {pad: "2", net: MOTOR_DRAIN}
+            - ref: Q2
+              pads:
+                - {pad: "1", net: motor_gate}
+                - {pad: "2", net: GND}
+                - {pad: "3", net: MOTOR_DRAIN}
+    expect:
+      polarity:
+        - {ref: D1, built_pads_agree: true}
+        - {ref: Q2, built_pads_agree: true, issues: []}

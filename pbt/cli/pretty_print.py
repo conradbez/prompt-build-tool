@@ -158,7 +158,10 @@ def make_test_callbacks(
             c.print(f"[red]FAIL[/red] [dim]({score}{result.execution_ms} ms)[/dim]")
         elif result.status == "fail":
             c.print("[red]FAIL[/red]")
-            c.print(f"    LLM returned: [dim]{result.llm_output!r}[/dim]")
+            if result.judge == "assertion":
+                c.print(f"    {_escape(result.error)}")
+            else:
+                c.print(f"    LLM returned: [dim]{result.llm_output!r}[/dim]")
         else:
             c.print("[red]ERROR[/red]")
             c.print(f"    [dim]{result.error}[/dim]")

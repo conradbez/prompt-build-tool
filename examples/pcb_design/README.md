@@ -8,8 +8,8 @@ The point is the loop from [`motivation.md`](../../motivation.md): make a
 prediction, check it against something real, update. An LLM writing hardware
 will happily follow the map backwards. A sensor that only ever reports "beam
 clear" looks like a working sensor until a product gets stuck in the chute.
-So every stage states what it expects to see, and the tests look for those
-landmarks.
+The developer preserves lessons from that iteration as saved inputs and
+expected outputs, then replays them after changing prompts.
 
 ```
 brief ─► requirements ─► architecture ─┬─► electrical_check (python) ─────────────────────────────┐
@@ -79,7 +79,7 @@ cd examples/pcb_design
 export GEMINI_API_KEY=...                              # default model gemini-3.5-flash-lite; override with GEMINI_MODEL
 export MSWEA_MODEL_NAME=gemini/gemini-3.5-flash-lite    # the agents' model, via litellm
 pbt run                     # writes build/board/ and outputs/review.md
-pbt test                    # check the landmarks
+pbt test                    # replay the saved regression cases
 pbt run --promptdata reference_project=~/path/to/a/working/atopile/project
 pbt run --promptdata brief="ESP32 soil-moisture sensor, 3V3 only, capacitive probe on a 2-wire cable"
 ```
@@ -101,29 +101,29 @@ this board, which is the point.
 pbt test --case "Reversed flyback diode"
 ```
 
-The case also sets `promptdata: expected_faults`, the answer key: D1
-reversed, nothing else wrong. Only the tests read it, through
-`promptdata('expected_faults')`. No model does, so no stage can be told the
-answer. Each test then also fails if its stage misses a listed fault that
-concerns it, or reports one that is not listed. A clean run has no
-`expected_faults`, and the tests fall back to checking the evidence alone.
+## Tests: given inputs, expect outputs
 
-## Tests: the landmarks
+Each YAML case uses `given` to supply saved evidence and `expect` to check
+selected fields in the QA output. PBT compares the fields directly, without
+another LLM judging the answer:
 
-The tests check the map, not the board. Each one asks whether a stage was
-honest about its evidence, so every test passes on a clean board and on a
-known-fault case alike, as long as the process catches the fault. A failing
-test names the stage that drifted.
+```yaml
+expect:
+  polarity:
+    - {ref: D1, built_pads_agree: false}
+    - {ref: Q2, built_pads_agree: true, issues: []}
+```
 
-| Test | Stage it checks | The drift it catches |
-|---|---|---|
-| `electrical_checks_cover_design` | `electrical_check` | A current path, switch or GPIO the architecture gave that was never checked |
-| `board_report_is_honest` | `board` | A build or DRC failure reported as clean; a final placement that breaks a rule without saying so |
-| `bom_checks_match_evidence` | `bom_line` | A 51 Ω part pinned or built as 510 Ω that the check calls a match |
-| `polarity_checks_match_evidence` | `polarity` | A diode with the right pin names on the wrong pads that the check calls fine |
-| `review_matches_evidence` | `review` | A reversed part marked "yes" on the review sheet |
-| `bringup_follows_findings` | `bringup` | A polarity finding with no inspection before power-up; a first powered check that only confirms the happy path |
+The reversed case must reject D1. A second case corrects D1's physical pad
+connections and must accept them. Both must accept Q2, so indiscriminately
+flagging components cannot pass. The corrected case checks physical pad
+agreement only: the saved parts list still contains the original library's
+incorrect logical pin mapping.
 
-Each test works the answer out from the evidence before reading the stage's
-verdict. That makes the judge an independent landmark rather than a second
-opinion on the same guess.
+Only listed fields are checked; list items are matched by `ref`. Expectations
+stay outside model inputs. A missing item, missing field, or wrong value fails
+`pbt test` with the field path, and the command exits nonzero for CI.
+
+These are integration tests of QA on saved evidence. They do not rebuild a
+board, validate the research against a live datasheet, or certify the board.
+Run `pbt test` for both cases, or select one with `--case`.

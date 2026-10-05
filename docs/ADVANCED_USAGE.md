@@ -127,6 +127,45 @@ cases:
 of `board`. A full example, pinning every model up to the board so only QA
 runs, is [`examples/pcb_design/promptparams/reversed_flyback_diode.yml`](../examples/pcb_design/promptparams/reversed_flyback_diode.yml).
 
+
+### Checking expected outputs (`expect`)
+
+A case can assert selected output fields directly, without an LLM judge or
+any files under `tests/`:
+
+```yaml
+cases:
+  - name: Reversed flyback diode
+    given:
+      # Saved upstream outputs, as in the PCB example.
+      board: {output: {pad_nets: [{ref: D1, pads: [{pad: "1", net: MOTOR_DRAIN}]}]}}
+    expect:
+      polarity:
+        - {ref: D1, built_pads_agree: false}
+        - {ref: Q2, built_pads_agree: true}
+```
+
+The snippet illustrates the format; the complete runnable fixture is in
+`examples/pcb_design/promptparams/reversed_flyback_diode.yml`.
+
+`expect` maps model names to expected outputs. Mappings compare only listed
+fields, recursively. Nonempty lists whose expected items all have a `ref`
+match each item by that field, regardless of order; each must match exactly
+one actual item, and unlisted items are ignored. Other lists compare by
+position and require equal lengths; `[]` asserts an empty list. Scalars
+compare exactly, with booleans distinct from numbers. Nested `null` asserts
+a null value.
+
+Expectations inherit from baselines like `given`: a case replaces the whole
+expectation for a model, and a model-level `null` removes an inherited
+expectation. Expected values are never injected into model prompts.
+
+Results appear as `expect.polarity[Reversed flyback diode]`. Missing models,
+items, fields, and unequal values fail with the affected field path. A failed
+assertion or model execution makes `pbt test` exit nonzero for CI. Existing
+`tests/*.prompt` checks can run alongside assertions. `--check-latest` skips
+YAML cases, including their expectations.
+
 ---
 
 ## `pbt serve`

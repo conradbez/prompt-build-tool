@@ -288,6 +288,7 @@ def execute_tests(
     param_label: str = "",
     judge: str = "llm",
     classify_call: Callable[[str, str], float] | None = None,
+    expect: dict | None = None,
 ) -> list[TestResult]:
     """
     Execute each test prompt against the given model outputs.
@@ -321,6 +322,9 @@ def execute_tests(
     judge:
         ``"llm"`` (default) or ``"classifier"`` — the judge for tests that do
         not pick one with ``config(judge=...)``.
+    expect:
+        Per-model partial output assertions, evaluated without a judge.
+        With cases, each case supplies its own expectations.
     classify_call:
         Classifier backend ``(state, question) -> P(yes)``.  Required only
         when a test is classifier-judged.
@@ -328,7 +332,7 @@ def execute_tests(
     from pbt.classifier import parse_judge
 
     parse_judge(judge, "execute_tests")
-    if llm_call is None and judge == "llm":
+    if tests and llm_call is None and judge == "llm":
         raise ValueError(
             "llm_call must be provided to execute_tests(). "
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
@@ -372,6 +376,30 @@ def execute_tests(
             work.append((display_name, param_label, tests[test_name], promptdata, promptfiles))
 
     results: list[TestResult] = []
+
+    from pbt.expectations import mismatches
+
+    expectation_cases = [(c.name, c.expect) for c in cases] if cases else [(param_label, expect or {})]
+    for label, expectations in expectation_cases:
+        for model, expected in expectations.items():
+            name = f"expect.{model}" + (f"[{label}]" if label else "")
+            if on_test_start:
+                on_test_start(name)
+            failures = (
+                mismatches(model_outputs[model], expected, model)
+                if model in model_outputs else [f"{model}: missing model output"]
+            )
+            result = TestResult(
+                test_name=name, status="fail" if failures else "pass",
+                judge="assertion", param_label=label,
+                prompt_rendered=json.dumps(expected, ensure_ascii=False),
+                llm_output=json.dumps({"results": "fail" if failures else "pass", "reason": "\n".join(failures)}),
+                error="\n".join(failures),
+            )
+            storage_backend.record_test_result(run_id, result)
+            results.append(result)
+            if on_test_done:
+                on_test_done(result)
 
     for display_name, label, source, promptdata, promptfiles in work:
         if on_test_start:

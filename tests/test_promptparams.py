@@ -587,3 +587,95 @@ def test_cli_given_unknown_model_errors(tmp_path: Path) -> None:
     result = run_pbt("test", cwd=proj, check=False)
     assert result.returncode != 0
     assert "gives nope, which is not a model" in output(result)
+
+
+def test_expect_inherits_and_replaces_per_model(in_tmp):
+    write(in_tmp / 'promptparams.yml', '''
+baselines:
+  default:
+    expect: {a: {ok: true}, b: {ok: false}}
+cases:
+  - name: Override
+    expect: {a: {ok: false}, b: null}
+''')
+    case = load_cases()[0]
+    assert case.expect == {'a': {'ok': False}}
+    assert not case.promptdata
+
+
+def test_expect_without_judge_records_missing_output():
+    results = _run_tests({}, llm_call=None, expect={'missing': {'ok': True}})
+    assert results[0].status == 'fail'
+    assert results[0].judge == 'assertion'
+    assert 'missing model output' in results[0].error
+
+
+@pytest.mark.parametrize('expected, exit_code', [('false', 0), ('true', 1)])
+def test_cli_yaml_expect_without_prompt_tests(tmp_path, expected, exit_code):
+    proj = tmp_path / 'expect_proj'
+    write(proj / 'models' / 'board.prompt', 'Design the board.')
+    write(proj / 'models' / 'polarity.prompt', '''{{ config(model_type='template') }}
+[{"ref": "D1", "built_pads_agree": {{ ref('board').correct | tojson }}},
+ {"ref": "Q2", "built_pads_agree": true}]
+''')
+    write(proj / 'client.py', GIVEN_CLIENT_PY)
+    write(proj / 'promptparams.yml', f'''
+cases:
+  - name: Diode
+    given:
+      board: {{correct: false}}
+    expect:
+      polarity:
+        - {{ref: Q2, built_pads_agree: true}}
+        - {{ref: D1, built_pads_agree: {expected}}}
+''')
+    result = run_pbt('test', cwd=proj, check=False)
+    assert result.returncode == exit_code, output(result)
+    assert 'expect.polarity' in output(result)
+    assert not (proj / 'calls.log').exists()
+    if exit_code:
+        assert 'polarity[ref=D1].built_pads_agree' in output(result)
+
+
+def test_pcb_cases_have_opposite_expectations():
+    cases = load_cases([Path(__file__).parents[1] / 'examples/pcb_design/promptparams'])
+    assert len(cases) == 2
+    assert cases[0].expect['polarity'][0]['built_pads_agree'] is False
+    assert cases[1].expect['polarity'][0]['built_pads_agree'] is True
+    assert cases[0].given['board']['output']['pad_nets'][0]['pads'][0]['net'] == 'MOTOR_DRAIN'
+    assert cases[1].given['board']['output']['pad_nets'][0]['pads'][0]['net'] == '12V'
+
+
+def test_expect_can_run_alongside_prompt_tests():
+    results = _run_tests({'smoke': NO_PARAMS_TEST_SOURCE}, cases=[
+        TestCase(name='Known', expect={'absent': True})
+    ])
+    assert [(r.test_name, r.status) for r in results] == [
+        ('expect.absent[Known]', 'fail'), ('smoke[Known]', 'pass')
+    ]
+
+
+@pytest.mark.parametrize('expectation, fragment', [
+    ('{missing: true}', 'expects unknown model'),
+    ('[true]', "'expect' must be a mapping"),
+])
+def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
+    proj = tmp_path / 'invalid_expect'
+    write(proj / 'models' / 'a.prompt', "{{ config(model_type='template') }}ok")
+    write(proj / 'client.py', GIVEN_CLIENT_PY)
+    write(proj / 'promptparams.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
+    result = run_pbt('test', cwd=proj, check=False)
+    assert result.returncode != 0
+    assert fragment in output(result)
+
+
+def test_cli_model_failure_fails_even_when_expectations_pass(tmp_path):
+    proj = tmp_path / 'failed_run'
+    write(proj / 'models' / 'good.prompt', "{{ config(model_type='template') }}ok")
+    write(proj / 'models' / 'bad.prompt', 'Fail this model')
+    write(proj / 'client.py', 'def llm_call(prompt):\n    raise RuntimeError("model unavailable")\n')
+    write(proj / 'promptparams.yml', 'cases:\n  - name: Failure\n    expect: {good: ok}\n')
+    result = run_pbt('test', cwd=proj, check=False)
+    assert result.returncode != 0
+    assert 'expect.good' in output(result)
+    assert 'PASS' in output(result)

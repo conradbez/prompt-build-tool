@@ -190,13 +190,6 @@ def register_command(main) -> None:
         # Discover tests
         # ------------------------------------------------------------------
         tests = load_tests(tests_dir)
-        if not tests:
-            c.print(
-                f"[yellow]No test files found in '{tests_dir}'.[/yellow]\n"
-                f"Create *.prompt files there to get started."
-            )
-            return
-
         # ------------------------------------------------------------------
         # Load models
         # ------------------------------------------------------------------
@@ -312,6 +305,10 @@ def register_command(main) -> None:
             )
             sys.exit(1)
 
+        if not tests and not any(case.expect for case in cases):
+            c.print(f"[yellow]No tests found.[/yellow] Create *.prompt files in '{tests_dir}' or add expect to YAML cases.")
+            return
+
         if cases:
             # --------------------------------------------------------------
             # Per-case mode: run models then test for each case
@@ -334,6 +331,7 @@ def register_command(main) -> None:
             git_sha = _git_sha()
             all_test_results: list = []
 
+            any_run_errors = False
             for idx, case in enumerate(cases, start=1):
                 row_promptdata, row_promptfiles = case.promptdata, case.promptfiles
                 c.rule(f"[bold]Case {idx}/{len(cases)}[/bold] — {case.name}")
@@ -349,6 +347,10 @@ def register_command(main) -> None:
                         f"[red]Error:[/red] case '{case.name}' gives {', '.join(unknown)}, "
                         "which is not a model."
                     )
+                    sys.exit(1)
+                unknown_expected = sorted(set(case.expect) - set(all_models))
+                if unknown_expected:
+                    err_console.print(f"Error: case '{case.name}' expects unknown model(s): {', '.join(unknown_expected)}")
                     sys.exit(1)
                 if case.given:
                     c.print(f"  [dim]given: {', '.join(case.given)}[/dim]")
@@ -370,6 +372,7 @@ def register_command(main) -> None:
                     global_instruction=global_instruction,
                 ))
                 run_errors = sum(1 for r in run_results if r.status == "error")
+                any_run_errors = any_run_errors or bool(run_errors)
                 db.finish_run(row_run_id, "success" if not run_errors else "partial")
 
                 model_outputs = {
@@ -383,7 +386,7 @@ def register_command(main) -> None:
 
                 # Run tests against this row's outputs
                 row_test_results: list = []
-                on_start, on_done = pretty_print.make_test_callbacks(c, row_test_results, total=len(tests))
+                on_start, on_done = pretty_print.make_test_callbacks(c, row_test_results, total=len(tests) + len(case.expect))
                 execute_tests(
                     run_id=row_run_id,
                     tests=tests,
@@ -395,6 +398,7 @@ def register_command(main) -> None:
                     promptdata=row_promptdata or None,
                     promptfiles=row_promptfiles or None,
                     param_label=case.name,
+                    expect=case.expect,
                     judge=judge,
                     classify_call=classify_call,
                 )
@@ -431,7 +435,7 @@ def register_command(main) -> None:
                     sys.exit(1)
                 c.print(f"  [dim]saved case '{save_case_name}' → {saved}[/dim]")
 
-            if total_failed:
+            if total_failed or any_run_errors:
                 sys.exit(1)
 
         else:

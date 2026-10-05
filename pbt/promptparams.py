@@ -45,6 +45,11 @@ Format
         given:                       # pin a model's output instead of running it
           outline: {sections: [Intro, Intro]}
 
+* ``expect`` maps model names to partial expected outputs, compared directly
+  without a judge. Mapping fields are partial; lists of mappings with ``ref``
+  match by ref; other lists have exact length and order. Expectations inherit
+  per model like ``given`` and are never passed to models.
+
 Rules
 -----
 * ``name`` is how the case is reported (``tone_test[Casual tone for
@@ -81,7 +86,7 @@ DEFAULT_BASELINE = "default"
 EXAMPLE_PATH = "promptparams.yml.example"
 
 _FILE_KEYS = {"baselines", "cases"}
-_BASELINE_KEYS = {"extends", "promptdata", "promptfiles", "given"}
+_BASELINE_KEYS = {"extends", "promptdata", "promptfiles", "given", "expect"}
 _CASE_KEYS = _BASELINE_KEYS | {"name"}
 _YAML_SUFFIXES = (".yml", ".yaml")
 
@@ -100,6 +105,7 @@ class TestCase:
     promptdata: dict[str, Any] = field(default_factory=dict)
     promptfiles: dict[str, str | list[str]] = field(default_factory=dict)
     given: dict[str, Any] = field(default_factory=dict)
+    expect: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +171,7 @@ def build_case(name: str, spec: dict, baselines: dict[str, dict], where: str = "
         promptdata=merged["promptdata"],
         promptfiles=merged["promptfiles"],
         given=merged["given"],
+        expect=merged["expect"],
     )
 
 
@@ -205,7 +212,7 @@ def _inherit(spec: dict, baselines: dict[str, dict], where: str, *, default: boo
     else:
         parents = []
 
-    merged: dict[str, dict] = {"promptdata": {}, "promptfiles": {}, "given": {}}
+    merged: dict[str, dict] = {"promptdata": {}, "promptfiles": {}, "given": {}, "expect": {}}
     for parent in parents:
         parent = str(parent)
         if parent not in baselines:
