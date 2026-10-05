@@ -18,7 +18,18 @@ So what does the "intuition" loop that allows us to update our mental map look l
 
 These checks only help if you make a prediction first. "I expect to see the river on my left" is a test of your intuition.
 
-`pbt tests` is a strutured way for us humans to look up and spot the landmarks as the LLM is following our map of models. They should be there to test what we expect to get out, making sure the map's intuition still holds against the real world.
+The journey is the developer iterating towards a solution they are happy with, such as a PCB design. Running `pbt` is a tool the developer uses along the way.
+
+1. **The map** is the developer’s understanding of the problem, expressed through the models.
+2. **A step** is a change to a prompt, assumption, component, or connection.
+3. **A landmark** is an expectation that lets the developer check whether that change moved them in the right direction.
+4. **Tests** preserve those expectations across iterations.
+
+`pbt tests` is a structured way for us humans to look up and spot those landmarks as we develop our map of models. They should test what we expect to get out, making sure the map’s intuition still holds against the real world.
+
+For example, the PCB design’s reversed-diode case preserves a lesson learned during development:
+
+> “I discovered that correct logical pin names don’t guarantee correct physical pad connections. I’ve changed my process to account for that. This test checks that my process still catches the mistake as I keep developing it.”
 
 # Creating the maps
 
