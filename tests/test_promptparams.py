@@ -666,7 +666,7 @@ def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
     write(proj / 'promptparams.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
     result = run_pbt('test', cwd=proj, check=False)
     assert result.returncode != 0
-    assert fragment in output(result)
+    assert fragment in " ".join(output(result).split())
 
 
 def test_cli_model_failure_fails_even_when_expectations_pass(tmp_path):
