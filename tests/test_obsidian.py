@@ -108,3 +108,75 @@ def test_cli_obsidian_run_passes_options_through(tmp_path: Path) -> None:
     assert (tmp_path / "obsidian_models" / "article.prompt").is_file()
     assert (tmp_path / "outputs" / "article.md").is_file()
     assert not (tmp_path / "outputs" / "other.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Prompt vs data notes
+# ---------------------------------------------------------------------------
+
+def test_data_notes_become_template_models(tmp_path: Path) -> None:
+    vault = _vault(tmp_path, {
+        "Style.md": "---\npbt: data\n---\nTone: playful.\n",
+        "Forced.md": "---\npbt: prompt\n---\nFacts only.\n",
+        "Typed.md": "---\npbt:\n  model_type: template\n---\nAlready a template.\n",
+        "Tagline.md": "Write a tagline in the tone of [[Style]].\n",
+    })
+    judged: list[str] = []
+
+    def judge(title: str, text: str) -> str:
+        judged.append(title)
+        return "data"
+
+    converted = convert_vault(vault, judge)
+    models = build_models_from_dict({n: c.source for n, c in converted.items()})
+
+    assert models["style"].model_type == "template"
+    assert models["typed"].model_type == "template"
+    assert models["forced"].model_type == ""
+    assert models["tagline"].model_type == "template"
+    assert judged == ["Tagline"]  # explicitly marked notes are never judged
+    assert (converted["tagline"].kind, converted["tagline"].kind_source) == ("data", "judge")
+    assert convert_vault(vault)["tagline"].kind == "prompt"  # no judge: prompt
+
+
+def test_llm_and_classifier_judges_and_cache(tmp_path: Path) -> None:
+    from pbt.obsidian.judge import cached, classifier_judge, llm_judge, parse_llm_verdict
+
+    assert parse_llm_verdict('Sure: {"kind": "data"}') == "data"
+    assert parse_llm_verdict("data") == "data"
+    assert parse_llm_verdict("no idea") == "prompt"
+
+    prompts: list[str] = []
+    judge = llm_judge(lambda prompt: prompts.append(prompt) or '{"kind": "data"}')
+    assert judge("Facts", "We sell socks.") == "data"
+    assert "We sell socks." in prompts[0]
+
+    assert classifier_judge(lambda state, question: 0.9)("T", "Write a poem.") == "prompt"
+    assert classifier_judge(lambda state, question: 0.1)("T", "Socks.") == "data"
+
+    calls: list[str] = []
+    cache_path = tmp_path / "judgements.json"
+    for _ in range(2):
+        j = cached(lambda title, text: calls.append(text) or "data", "llm", cache_path)
+        assert j("T", "same text") == "data"
+    assert calls == ["same text"]
+
+
+def test_cli_judge_notes_uses_client_llm(tmp_path: Path) -> None:
+    _vault(tmp_path, {
+        "Brand.md": "Brand facts: we sell socks.\n",
+        "Tagline.md": "Write a tagline using [[Brand]].\n",
+    })
+    (tmp_path / "client.py").write_text(
+        "def llm_call(prompt, config=None):\n"
+        "    if '\"kind\": \"prompt\"' in prompt:\n"
+        "        return '{\"kind\": \"data\"}' if 'Brand facts' in prompt else '{\"kind\": \"prompt\"}'\n"
+        "    return 'llm output'\n",
+        encoding="utf-8",
+    )
+
+    result = run_pbt("obsidian", "run", "vault", "--judge-notes", "llm", cwd=tmp_path, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "outputs" / "brand.md").read_text(encoding="utf-8") == "Brand facts: we sell socks.\n"
+    assert (tmp_path / "outputs" / "tagline.md").read_text(encoding="utf-8") == "llm output"

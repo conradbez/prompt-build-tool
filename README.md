@@ -192,7 +192,9 @@ pbt docs --open    # and opens it
 
 Use an Obsidian vault as the models folder: each note is a model and `[[links]]`
 between notes become `ref()`. The vault is converted to `.prompt` files, then the
-regular command runs on them; extra options pass through.
+regular command runs on them; extra options pass through. Notes holding plain
+information rather than instructions can be marked `pbt: data` (or judged by your
+LLM with `--judge-notes llm`) and are used as-is, without an LLM call.
 
 ```bash
 pbt obsidian run my_vault --promptdata tone=formal

@@ -56,6 +56,36 @@ Keep the tone of [[Style Guide]].
 
 `pbt: false` leaves a note out of the build.
 
+## Prompt notes vs data notes
+
+Not every note is an instruction for the LLM — some are information you wrote
+down: facts, a style guide, a product brief. A **data** note becomes a
+`model_type="template"` model: its Jinja and `[[links]]` still render, but no
+LLM is called, and its text is passed as-is to the notes that link to it.
+
+Mark a note yourself in its frontmatter:
+
+```markdown
+---
+pbt: data        # or: pbt: prompt
+---
+Brand facts: we sell socks, founded 2019, playful tone.
+```
+
+A `pbt:` config that sets `model_type` counts as marked too. Unmarked notes are
+prompts — unless you let a judge decide:
+
+```bash
+pbt obsidian run my_vault --judge-notes llm         # asks client.py's llm_call
+pbt obsidian run my_vault --judge-notes classifier  # client.py's classify_call; P(yes) ≥ 0.5 → prompt
+```
+
+Set `obsidian_judge = "llm"` in `client.py` to make it the default
+(`--judge-notes off` turns it off for one call). Marked notes are never judged.
+Verdicts are cached in `.pbt/obsidian_judgements.json` on the note's text, so
+only new or edited notes are judged again. `pbt obsidian build` shows each
+note's kind, with `(judged)` where the judge decided.
+
 ## From Python
 
 ```python
@@ -63,6 +93,10 @@ import pbt
 from pbt.obsidian import load_vault
 
 pbt.run(models_from_dict=load_vault("my_vault"), llm_call=my_llm_call)
+
+# with a judge for unmarked notes
+from pbt.obsidian.judge import llm_judge
+load_vault("my_vault", judge=llm_judge(my_llm_call))
 ```
 
 `convert_vault()` returns the per-note details (model name, links, unresolved
