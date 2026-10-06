@@ -188,6 +188,18 @@ pbt docs           # writes .pbt/docs/index.html
 pbt docs --open    # and opens it
 ```
 
+### `pbt obsidian`
+
+Use an Obsidian vault as the models folder: each note is a model and `[[links]]`
+between notes become `ref()`. The vault is converted to `.prompt` files, then the
+regular command runs on them; extra options pass through.
+
+```bash
+pbt obsidian run my_vault --promptdata tone=formal
+```
+
+See [Obsidian vaults](docs/OBSIDIAN.md).
+
 ---
 
 ## Passing variables to templates (`promptdata()`)

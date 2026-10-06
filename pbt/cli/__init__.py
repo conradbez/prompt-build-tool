@@ -8,6 +8,7 @@ pbt test         Run test prompts from the tests/ directory.
 pbt ls           List discovered models and their dependencies.
 pbt show-runs    Show recent run history from the SQLite store.
 pbt show-result  Print the stored output for a specific model + run.
+pbt obsidian     Run an Obsidian vault's notes as models ([[links]] → ref()).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from pbt.cli.vscode import is_running_in_vscode, setup_vscode_associations
 from pbt.cli.type_hints import register_command as _register_type_hints, generate_stubs as _generate_stubs
 from pbt.cli.init_files import register_command as _register_init
 from pbt.cli.test import register_command as _register_test
+from pbt.obsidian.cli import register_command as _register_obsidian
 from pbt.cli import pretty_print
 from pbt.cli.pretty_print import console, err_console
 
@@ -537,6 +539,13 @@ _register_init(main)
 # ---------------------------------------------------------------------------
 
 _register_type_hints(main)
+
+
+# ---------------------------------------------------------------------------
+# pbt obsidian  (Obsidian vault → .prompt layer, defined in pbt/obsidian/)
+# ---------------------------------------------------------------------------
+
+_register_obsidian(main)
 
 
 # ---------------------------------------------------------------------------
