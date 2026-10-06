@@ -121,10 +121,10 @@ def test_data_notes_become_template_models(tmp_path: Path) -> None:
         "Typed.md": "---\npbt:\n  model_type: template\n---\nAlready a template.\n",
         "Tagline.md": "Write a tagline in the tone of [[Style]].\n",
     })
-    judged: list[str] = []
+    judged: list = []
 
-    def judge(title: str, text: str) -> str:
-        judged.append(title)
+    def judge(note) -> str:
+        judged.append(note)
         return "data"
 
     converted = convert_vault(vault, judge)
@@ -134,32 +134,42 @@ def test_data_notes_become_template_models(tmp_path: Path) -> None:
     assert models["typed"].model_type == "template"
     assert models["forced"].model_type == ""
     assert models["tagline"].model_type == "template"
-    assert judged == ["Tagline"]  # explicitly marked notes are never judged
+    assert [n.title for n in judged] == ["Tagline"]  # explicitly marked notes are never judged
+    assert judged[0].links_to == ["Style"]
     assert (converted["tagline"].kind, converted["tagline"].kind_source) == ("data", "judge")
     assert convert_vault(vault)["tagline"].kind == "prompt"  # no judge: prompt
 
 
 def test_llm_and_classifier_judges_and_cache(tmp_path: Path) -> None:
-    from pbt.obsidian.judge import cached, classifier_judge, llm_judge, parse_llm_verdict
+    from pbt.obsidian.judge import NoteInfo, cached, classifier_judge, llm_judge, parse_llm_verdict
 
     assert parse_llm_verdict('Sure: {"kind": "data"}') == "data"
     assert parse_llm_verdict("data") == "data"
     assert parse_llm_verdict("no idea") == "prompt"
 
+    facts = NoteInfo("Facts", "We sell socks.", folder="Sources", linked_from=["Pitch"])
     prompts: list[str] = []
-    judge = llm_judge(lambda prompt: prompts.append(prompt) or '{"kind": "data"}')
-    assert judge("Facts", "We sell socks.") == "data"
-    assert "We sell socks." in prompts[0]
+    judge = llm_judge(lambda prompt: prompts.append(prompt) or '{"kind": "data"}', context="A sock startup.")
+    assert judge(facts) == "data"
+    for expected in ("We sell socks.", "hypothesis", "Used by (notes that link to this one): Pitch",
+                     "Folder: Sources", "A sock startup."):
+        assert expected in prompts[0]
 
-    assert classifier_judge(lambda state, question: 0.9)("T", "Write a poem.") == "prompt"
-    assert classifier_judge(lambda state, question: 0.1)("T", "Socks.") == "data"
+    seen: list[tuple[str, str]] = []
+    assert classifier_judge(lambda state, question: seen.append((state, question)) or 0.9)(facts) == "prompt"
+    assert classifier_judge(lambda state, question: 0.1)(facts) == "data"
+    state, question = seen[0]
+    assert "reference material" in question and "Used by" in state and "We sell socks." in state
 
-    calls: list[str] = []
+    calls: list[NoteInfo] = []
     cache_path = tmp_path / "judgements.json"
     for _ in range(2):
-        j = cached(lambda title, text: calls.append(text) or "data", "llm", cache_path)
-        assert j("T", "same text") == "data"
-    assert calls == ["same text"]
+        j = cached(lambda note: calls.append(note) or "data", "llm", cache_path)
+        assert j(facts) == "data"
+    assert len(calls) == 1
+    cached(lambda note: calls.append(note) or "data", "llm", cache_path)(
+        NoteInfo("Facts", "We sell socks.", linked_from=[]))
+    assert len(calls) == 2  # links changed: judged again
 
 
 def test_cli_judge_notes_uses_client_llm(tmp_path: Path) -> None:
@@ -168,14 +178,17 @@ def test_cli_judge_notes_uses_client_llm(tmp_path: Path) -> None:
         "Tagline.md": "Write a tagline using [[Brand]].\n",
     })
     (tmp_path / "client.py").write_text(
+        "obsidian_judge = 'llm'\n"
+        "obsidian_judge_context = 'Sock startup research.'\n"
         "def llm_call(prompt, config=None):\n"
         "    if '\"kind\": \"prompt\"' in prompt:\n"
+        "        assert 'Sock startup research.' in prompt and 'Used by' in prompt\n"
         "        return '{\"kind\": \"data\"}' if 'Brand facts' in prompt else '{\"kind\": \"prompt\"}'\n"
         "    return 'llm output'\n",
         encoding="utf-8",
     )
 
-    result = run_pbt("obsidian", "run", "vault", "--judge-notes", "llm", cwd=tmp_path, check=False)
+    result = run_pbt("obsidian", "run", "vault", cwd=tmp_path, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "outputs" / "brand.md").read_text(encoding="utf-8") == "Brand facts: we sell socks.\n"

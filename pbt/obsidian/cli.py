@@ -17,7 +17,8 @@ in the current directory, as for a plain ``pbt run``.
 
 ``--judge-notes llm|classifier`` asks client.py whether each unmarked note is a
 prompt or data (see :mod:`pbt.obsidian.judge`); ``obsidian_judge = "llm"`` in
-client.py makes that the default.
+client.py makes that the default, and ``obsidian_judge_context = "..."`` tells
+the judge about the project.
 """
 
 from __future__ import annotations
@@ -61,24 +62,25 @@ _judge_option = click.option(
 def resolve_judge(choice: str | None, out: str) -> note_judge.NoteJudge | None:
     """Build the note judge for *choice*, with client.py looked up beside *out*."""
     try:
+        module = try_load_client_module(out)
         if choice is None:
-            module = try_load_client_module(out)
             choice = getattr(module, "obsidian_judge", None) or "off"
             if choice not in JUDGE_CHOICES:
                 raise ValueError(f"client.py obsidian_judge must be one of {', '.join(JUDGE_CHOICES)}; got {choice!r}.")
         if choice == "off":
             return None
+        context = getattr(module, "obsidian_judge_context", None) or None
         if choice == "llm":
-            judge = note_judge.llm_judge(resolve_llm_call(out))
+            judge = note_judge.llm_judge(resolve_llm_call(out), context)
         else:
             classify_call = resolve_classify_call(out)
             if classify_call is None:
                 raise ValueError("--judge-notes classifier needs a classify_call(state, question) in client.py.")
-            judge = note_judge.classifier_judge(classify_call)
+            judge = note_judge.classifier_judge(classify_call, context)
     except Exception as exc:
         err_console.print(f"[red]Note judge error:[/red] {escape(str(exc))}")
         sys.exit(1)
-    return note_judge.cached(judge, choice)
+    return note_judge.cached(judge, "\x00".join((choice, context or "")))
 
 
 def build_or_exit(vault: str, out: str, judge_notes: str | None = None, quiet: bool = False) -> None:

@@ -77,14 +77,32 @@ prompts — unless you let a judge decide:
 
 ```bash
 pbt obsidian run my_vault --judge-notes llm         # asks client.py's llm_call
-pbt obsidian run my_vault --judge-notes classifier  # client.py's classify_call; P(yes) ≥ 0.5 → prompt
+pbt obsidian run my_vault --judge-notes classifier  # client.py's classify_call; P(wants AI input) ≥ 0.5 → prompt
 ```
 
-Set `obsidian_judge = "llm"` in `client.py` to make it the default
-(`--judge-notes off` turns it off for one call). Marked notes are never judged.
-Verdicts are cached in `.pbt/obsidian_judgements.json` on the note's text, so
-only new or edited notes are judged again. `pbt obsidian build` shows each
-note's kind, with `(judged)` where the judge decided.
+The judge is told the situation — the vault mixes **reference material** the
+user keeps for other notes (facts, sources, background, a brief) with notes they
+want **AI input on** (hypotheses to test, ideas, open questions, drafts, tasks) —
+and sees, for each note, its title, folder, the notes that link to it, the notes
+it links to, and its text. Being linked to is a strong hint of reference
+material; a note that links out and proposes or asks is usually a prompt.
+
+Tell it about your project in `client.py` for better calls:
+
+```python
+# client.py
+obsidian_judge = "llm"   # default for every `pbt obsidian` command
+obsidian_judge_context = """
+Early-stage research for a sock subscription startup. Notes in Sources/ are
+interview transcripts and market data; Hypotheses/ holds claims we want challenged.
+"""
+```
+
+`--judge-notes off` turns the judge off for one call. Marked notes are never
+judged. Verdicts are cached in `.pbt/obsidian_judgements.json` on everything the
+judge sees (text, folder, links, your context), so only notes that changed — or
+whose links changed — are judged again. `pbt obsidian build` shows each note's
+kind, with `(judged)` where the judge decided.
 
 ## From Python
 
@@ -96,7 +114,7 @@ pbt.run(models_from_dict=load_vault("my_vault"), llm_call=my_llm_call)
 
 # with a judge for unmarked notes
 from pbt.obsidian.judge import llm_judge
-load_vault("my_vault", judge=llm_judge(my_llm_call))
+load_vault("my_vault", judge=llm_judge(my_llm_call, context="What this vault is about"))
 ```
 
 `convert_vault()` returns the per-note details (model name, links, unresolved
