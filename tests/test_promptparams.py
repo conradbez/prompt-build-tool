@@ -60,13 +60,67 @@ def test_explicit_missing_path_is_an_error(in_tmp: Path) -> None:
         load_cases(["nope.yml"])
 
 
-def test_default_file_and_directory_are_combined_in_order(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", "cases:\n  - name: root\n")
-    write(in_tmp / "promptparams" / "b.yml", "cases:\n  - name: b\n")
-    write(in_tmp / "promptparams" / "a" / "nested.yaml", "cases:\n  - name: nested\n")
-    write(in_tmp / "promptparams" / "notes.txt", "ignored")
+def test_tests_dir_files_are_combined_in_order(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "cases.yml", "cases:\n  - name: root\n")
+    write(in_tmp / "tests" / "b.yml", "cases:\n  - name: b\n")
+    write(in_tmp / "tests" / "a" / "nested.yaml", "cases:\n  - name: nested\n")
+    write(in_tmp / "tests" / "notes.txt", "ignored")
+    write(in_tmp / "tests" / "check.prompt", "not yaml")
 
-    assert [c.name for c in load_cases()] == ["root", "nested", "b"]
+    assert [c.name for c in load_cases(models={"a"})] == ["nested", "b", "root"]
+
+
+# ---------------------------------------------------------------------------
+# A folder named after a model scopes given/expect to it
+# ---------------------------------------------------------------------------
+
+def test_model_folder_puts_given_and_expect_under_the_model(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "fixtures" / "board" / "reversed.yml", """\
+baselines:
+  reversed_board:
+    given: {pads: [1, 2]}
+cases:
+  - name: Reversed
+    extends: reversed_board
+    expect: {ok: false}
+  - name: Removed
+    extends: reversed_board
+    given: null
+""")
+    cases = {c.name: c for c in load_cases(models={"board", "review"})}
+    assert cases["Reversed"].given == {"board": {"pads": [1, 2]}}
+    assert cases["Reversed"].expect == {"board": {"ok": False}}
+    assert cases["Removed"].given == {}  # null drops the inherited board
+
+
+def test_model_folder_value_can_be_any_yaml(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "research" / "two.yml", "cases:\n  - name: X\n    given: [a, b]\n")
+    assert load_cases(models={"research"})[0].given == {"research": ["a", "b"]}
+
+
+def test_scoped_baseline_combines_with_an_unscoped_one(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "base.yml", "baselines:\n  default:\n    given: {parts: [R1]}\n")
+    write(in_tmp / "tests" / "board" / "b.yml", """\
+baselines:
+  bad_board:
+    given: {pads: []}
+cases:
+  - name: Bad board
+    extends: [default, bad_board]
+""")
+    case = load_cases(models={"parts", "board"})[0]
+    assert case.given == {"parts": ["R1"], "board": {"pads": []}}
+
+
+def test_folder_that_is_not_a_model_is_an_error(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "fixtures" / "x.yml", "cases:\n  - name: X\n")
+    with pytest.raises(PromptParamsError, match="folder 'fixtures' is not a model"):
+        load_cases(models={"board"})
+
+
+def test_explicit_file_in_a_subfolder_is_not_scoped(in_tmp: Path) -> None:
+    write(in_tmp / "tests" / "fixtures" / "x.yml", "cases:\n  - name: X\n    given: {board: 1}\n")
+    assert load_cases(["tests/fixtures/x.yml"])[0].given == {"board": 1}
 
 
 def test_a_file_named_twice_loads_once(in_tmp: Path) -> None:
@@ -76,7 +130,7 @@ def test_a_file_named_twice_loads_once(in_tmp: Path) -> None:
 
 
 def test_empty_file_is_fine(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", "")
+    write(in_tmp / "tests" / "cases.yml", "")
     assert load_cases() == []
 
 
@@ -101,8 +155,8 @@ baselines:
 
 
 def cases_by_name(in_tmp: Path, cases_yaml: str) -> dict[str, TestCase]:
-    write(in_tmp / "promptparams" / "base.yml", BASE)
-    write(in_tmp / "promptparams" / "cases.yml", cases_yaml)
+    write(in_tmp / "tests" / "base.yml", BASE)
+    write(in_tmp / "tests" / "cases.yml", cases_yaml)
     return {c.name: c for c in load_cases()}
 
 
@@ -177,7 +231,7 @@ cases:
 
 
 def test_empty_baseline_is_allowed(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", "baselines:\n  default:\ncases:\n  - name: X\n")
+    write(in_tmp / "tests" / "cases.yml", "baselines:\n  default:\ncases:\n  - name: X\n")
     assert load_cases()[0].promptdata == {}
 
 
@@ -187,7 +241,7 @@ def test_unknown_baseline_is_an_error(in_tmp: Path) -> None:
 
 
 def test_baseline_loop_is_an_error(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", """\
+    write(in_tmp / "tests" / "cases.yml", """\
 baselines:
   a: {extends: b}
   b: {extends: a}
@@ -199,14 +253,14 @@ cases:
 
 
 def test_baseline_defined_twice_is_an_error(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams" / "a.yml", "baselines:\n  default: {}\n")
-    write(in_tmp / "promptparams" / "b.yml", "baselines:\n  default: {}\n")
+    write(in_tmp / "tests" / "a.yml", "baselines:\n  default: {}\n")
+    write(in_tmp / "tests" / "b.yml", "baselines:\n  default: {}\n")
     with pytest.raises(PromptParamsError, match="already defined"):
         load_cases()
 
 
 def test_typos_in_keys_are_errors(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", "cases:\n  - name: X\n    promtdata: {a: 1}\n")
+    write(in_tmp / "tests" / "cases.yml", "cases:\n  - name: X\n    promtdata: {a: 1}\n")
     with pytest.raises(PromptParamsError, match="promtdata"):
         load_cases()
 
@@ -216,13 +270,13 @@ def test_typos_in_keys_are_errors(in_tmp: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_unnamed_cases_get_file_based_names(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams" / "edge.yml", "cases:\n  - promptdata: {a: 1}\n  - promptdata: {a: 2}\n")
+    write(in_tmp / "tests" / "edge.yml", "cases:\n  - promptdata: {a: 1}\n  - promptdata: {a: 2}\n")
     assert [c.name for c in load_cases()] == ["edge_1", "edge_2"]
 
 
 def test_duplicate_case_names_across_files_are_an_error(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams" / "a.yml", "cases:\n  - name: Same\n")
-    write(in_tmp / "promptparams" / "b.yml", "cases:\n  - name: Same\n")
+    write(in_tmp / "tests" / "a.yml", "cases:\n  - name: Same\n")
+    write(in_tmp / "tests" / "b.yml", "cases:\n  - name: Same\n")
     with pytest.raises(PromptParamsError, match="already used"):
         load_cases()
 
@@ -238,17 +292,17 @@ baselines:
     promptfiles:
       doc: docs/report.pdf
 """)
-    write(in_tmp / "promptparams" / "cases.yml", """\
+    write(in_tmp / "tests" / "cases.yml", """\
 cases:
   - name: Default doc
   - name: Two charts
     promptfiles:
       charts: [q1.png, q2.png]
 """)
-    cases = {c.name: c for c in load_cases(["shared", "promptparams"])}
+    cases = {c.name: c for c in load_cases(["shared", "tests"])}
     assert cases["Default doc"].promptfiles == {"doc": str(Path("shared/docs/report.pdf"))}
     assert cases["Two charts"].promptfiles["charts"] == [
-        str(Path("promptparams/q1.png")), str(Path("promptparams/q2.png")),
+        str(Path("tests/q1.png")), str(Path("tests/q2.png")),
     ]
 
 
@@ -257,11 +311,11 @@ cases:
 # ---------------------------------------------------------------------------
 
 def test_save_case_round_trips_and_keeps_inheriting(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams" / "base.yml", BASE)
+    write(in_tmp / "tests" / "base.yml", BASE)
     write(in_tmp / "report.pdf", "x")
-    path = save_case("promptparams", "Playful tone!", {"tone": "playful"}, {"doc": "report.pdf"})
+    path = save_case("tests", "Playful tone!", {"tone": "playful"}, {"doc": "report.pdf"})
 
-    assert path == Path("promptparams/playful_tone.yml")
+    assert path == Path("tests/playful_tone.yml")
     saved = yaml.safe_load(path.read_text())
     assert saved == {"cases": [{
         "name": "Playful tone!",
@@ -274,9 +328,9 @@ def test_save_case_round_trips_and_keeps_inheriting(in_tmp: Path) -> None:
 
 
 def test_save_case_refuses_to_overwrite(in_tmp: Path) -> None:
-    save_case("promptparams", "One", {"a": "1"}, {})
+    save_case("tests", "One", {"a": "1"}, {})
     with pytest.raises(PromptParamsError, match="already exists"):
-        save_case("promptparams", "one", {"a": "2"}, {})
+        save_case("tests", "one", {"a": "2"}, {})
 
 
 def test_write_example_is_valid_yaml_with_a_default_baseline(tmp_path: Path) -> None:
@@ -421,8 +475,8 @@ def promptparams_proj(tmp_path: Path) -> Path:
     (proj / "models" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
     (proj / "tests" / "tone_test.prompt").write_text(SIMPLE_TEST_PROMPT_WITH_PROMPTDATA, encoding="utf-8")
     (proj / "client.py").write_text(SIMPLE_PROMPTPARAMS_CLIENT_PY, encoding="utf-8")
-    write(proj / "promptparams" / "tone.yml", PROJECT_CASES)
-    write(proj / "promptparams" / "more.yml", "cases:\n  - name: Casual\n    extends: casual\n")
+    write(proj / "tests" / "tone.yml", PROJECT_CASES)
+    write(proj / "tests" / "more.yml", "cases:\n  - name: Casual\n    extends: casual\n")
 
     yield proj
     shutil.rmtree(proj)
@@ -453,7 +507,7 @@ def test_cli_case_filter(promptparams_proj: Path) -> None:
 
 
 def test_cli_explicit_promptparams_path(promptparams_proj: Path) -> None:
-    result = run_pbt("test", "--promptparams", "promptparams/tone.yml", cwd=promptparams_proj, check=False)
+    result = run_pbt("test", "--promptparams", "tests/tone.yml", cwd=promptparams_proj, check=False)
     out = output(result)
     assert "2 cases" in out
     assert "tone_test[Casual]" not in out
@@ -470,7 +524,7 @@ def test_cli_inline_params_inherit_default_and_save_case(promptparams_proj: Path
     assert "tone=playful, audience=engineers" in out  # the default baseline filled the gap
     assert "tone_test[Playful tone]" in out
 
-    saved = promptparams_proj / "promptparams" / "playful_tone.yml"
+    saved = promptparams_proj / "tests" / "playful_tone.yml"
     assert yaml.safe_load(saved.read_text()) == {
         "cases": [{"name": "Playful tone", "promptdata": {"tone": "playful"}}]
     }
@@ -489,11 +543,11 @@ def test_cli_inline_extends(promptparams_proj: Path) -> None:
 def test_cli_save_case_requires_params(promptparams_proj: Path) -> None:
     result = run_pbt("test", "--save-case", "X", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
-    assert not (promptparams_proj / "promptparams" / "x.yml").exists()
+    assert not (promptparams_proj / "tests" / "x.yml").exists()
 
 
 def test_cli_bad_yaml_is_reported(promptparams_proj: Path) -> None:
-    write(promptparams_proj / "promptparams" / "bad.yml", "cases:\n  - extends: nope\n")
+    write(promptparams_proj / "tests" / "bad.yml", "cases:\n  - extends: nope\n")
     result = run_pbt("test", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
     assert "'nope'" in output(result) and "unknown baseline" in output(result)
@@ -506,20 +560,12 @@ def test_cli_writes_yaml_example(promptparams_proj: Path) -> None:
     assert set(doc["baselines"]["default"]["promptdata"]) == {"tone", "audience"}
 
 
-def test_cli_legacy_csv_points_to_yaml(promptparams_proj: Path) -> None:
-    shutil.rmtree(promptparams_proj / "promptparams")
-    write(promptparams_proj / "promptparams.csv", "promptdata.tone\nformal\n")
-    result = run_pbt("test", cwd=promptparams_proj, check=False)
-    assert result.returncode != 0
-    assert "promptparams are now YAML" in output(result)
-
-
 # ---------------------------------------------------------------------------
 # given: pin a model's output for a case
 # ---------------------------------------------------------------------------
 
 def test_given_merges_like_promptdata(in_tmp: Path) -> None:
-    write(in_tmp / "promptparams.yml", """\
+    write(in_tmp / "tests" / "cases.yml", """\
 baselines:
   default:
     given: {board: {pads: [12V, DRAIN]}, parts: [R1]}
@@ -563,7 +609,7 @@ def test_cli_given_pins_a_model_and_reaches_downstream_and_tests(tmp_path: Path)
     write(proj / "tests" / "review_flags.prompt",
           "Review: {{ ref('review') }} / board: {{ ref('board').pads | join(',') }}")
     write(proj / "client.py", GIVEN_CLIENT_PY)
-    write(proj / "promptparams.yml", """\
+    write(proj / "tests" / "cases.yml", """\
 cases:
   - name: Reversed flyback diode
     given:
@@ -583,14 +629,14 @@ def test_cli_given_unknown_model_errors(tmp_path: Path) -> None:
     write(proj / "models" / "a.prompt", "A")
     write(proj / "tests" / "t.prompt", "{{ ref('a') }}")
     write(proj / "client.py", GIVEN_CLIENT_PY)
-    write(proj / "promptparams.yml", "cases:\n  - name: X\n    given: {nope: 1}\n")
+    write(proj / "tests" / "cases.yml", "cases:\n  - name: X\n    given: {nope: 1}\n")
     result = run_pbt("test", cwd=proj, check=False)
     assert result.returncode != 0
     assert "gives nope, which is not a model" in output(result)
 
 
 def test_expect_inherits_and_replaces_per_model(in_tmp):
-    write(in_tmp / 'promptparams.yml', '''
+    write(in_tmp / 'tests' / 'cases.yml', '''
 baselines:
   default:
     expect: {a: {ok: true}, b: {ok: false}}
@@ -619,7 +665,7 @@ def test_cli_yaml_expect_without_prompt_tests(tmp_path, expected, exit_code):
  {"ref": "Q2", "built_pads_agree": true}]
 ''')
     write(proj / 'client.py', GIVEN_CLIENT_PY)
-    write(proj / 'promptparams.yml', f'''
+    write(proj / 'tests' / 'cases.yml', f'''
 cases:
   - name: Diode
     given:
@@ -638,7 +684,7 @@ cases:
 
 
 def test_pcb_cases_have_opposite_expectations():
-    cases = load_cases([Path(__file__).parents[1] / 'examples/pcb_design/promptparams'])
+    cases = load_cases([Path(__file__).parents[1] / 'examples/pcb_design/tests'])
     assert len(cases) == 2
     assert cases[0].expect['polarity'][0]['built_pads_agree'] is False
     assert cases[1].expect['polarity'][0]['built_pads_agree'] is True
@@ -663,7 +709,7 @@ def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
     proj = tmp_path / 'invalid_expect'
     write(proj / 'models' / 'a.prompt', "{{ config(model_type='template') }}ok")
     write(proj / 'client.py', GIVEN_CLIENT_PY)
-    write(proj / 'promptparams.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
+    write(proj / 'tests' / 'cases.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
     result = run_pbt('test', cwd=proj, check=False)
     assert result.returncode != 0
     assert fragment in " ".join(output(result).split())
@@ -674,7 +720,7 @@ def test_cli_model_failure_fails_even_when_expectations_pass(tmp_path):
     write(proj / 'models' / 'good.prompt', "{{ config(model_type='template') }}ok")
     write(proj / 'models' / 'bad.prompt', 'Fail this model')
     write(proj / 'client.py', 'def llm_call(prompt):\n    raise RuntimeError("model unavailable")\n')
-    write(proj / 'promptparams.yml', 'cases:\n  - name: Failure\n    expect: {good: ok}\n')
+    write(proj / 'tests' / 'cases.yml', 'cases:\n  - name: Failure\n    expect: {good: ok}\n')
     result = run_pbt('test', cwd=proj, check=False)
     assert result.returncode != 0
     assert 'expect.good' in output(result)

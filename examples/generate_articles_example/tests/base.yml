@@ -1,4 +1,4 @@
-# Shared inputs. Every case in promptparams/*.yml starts from `default`
+# Shared inputs. Every case in tests/*.yml starts from `default`
 # unless it says `extends:` something else.
 baselines:
   default:

@@ -92,7 +92,7 @@ def llm_call(prompt: str) -> pbt.LLMResult:
 
 ## Bulk testing with YAML cases (`pbt test`)
 
-List named sets of inputs in `promptparams.yml` or any `promptparams/*.yml` (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
+List named sets of inputs in any `*.yml` under `tests/`, at any depth (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
 
 ```yaml
 baselines:
@@ -104,7 +104,7 @@ cases:
     promptdata: {topic: How rockets reach orbit}
 ```
 
-See [`examples/generate_articles_example/promptparams/`](../examples/generate_articles_example/promptparams/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
+See [`examples/generate_articles_example/tests/`](../examples/generate_articles_example/tests/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
 
 ### Testing one model on a known input (`given`)
 
@@ -125,7 +125,7 @@ cases:
 
 `pbt test --case "Reversed flyback diode"` then runs only what sits downstream
 of `board`. A full example, pinning every model up to the board so only QA
-runs, is [`examples/pcb_design/promptparams/reversed_flyback_diode.yml`](../examples/pcb_design/promptparams/reversed_flyback_diode.yml).
+runs, is [`examples/pcb_design/tests/reversed_flyback_diode.yml`](../examples/pcb_design/tests/reversed_flyback_diode.yml).
 
 
 ### Checking expected outputs (`expect`)
@@ -146,7 +146,29 @@ cases:
 ```
 
 The snippet illustrates the format; the complete runnable fixture is in
-`examples/pcb_design/promptparams/reversed_flyback_diode.yml`.
+`examples/pcb_design/tests/reversed_flyback_diode.yml`.
+
+### One folder per model
+
+A file whose direct parent folder is named after a model belongs to that
+model, like Ansible's `host_vars/<host>/`. Its `given` and `expect` are that
+model's value, written without the model header. Folders above the parent
+are free, so `tests/fixtures/board/reversed.yml` belongs to `board`:
+
+```yaml
+# tests/fixtures/board/reversed.yml
+baselines:
+  reversed_board:
+    given:                        # = given: {board: {...}}
+      output:
+        pad_nets:
+          - {ref: D1, pads: [{pad: "1", net: MOTOR_DRAIN}, {pad: "2", net: 12V}]}
+```
+
+Baselines are shared across files, so a case elsewhere can combine it with
+others: `extends: [default, reversed_board]`. A subfolder that is not named
+after a model is an error, so a typo or a renamed model fails loudly. Files
+directly in `tests/` are not scoped.
 
 `expect` maps model names to expected outputs. Mappings compare only listed
 fields, recursively. Nonempty lists whose expected items all have a `ref`

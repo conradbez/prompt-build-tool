@@ -9,8 +9,8 @@ passes when the LLM returns JSON containing ``{"results": "pass"}``.
 
 Two modes:
 
-* **Per-case** — when promptparams YAML cases are found (``promptparams.yml``,
-  ``promptparams/*.yml``, or ``--promptparams``), or inline ``--promptdata`` /
+* **Per-case** — when YAML cases are found (``tests/**/*.yml`` or
+  ``--promptparams``), or inline ``--promptdata`` /
   ``--promptfile`` params are supplied, ``pbt run`` is executed once per case
   and tests are reported for each named case individually.
 * **Single-run** — otherwise tests run against the latest (or ``--run-id``)
@@ -72,7 +72,7 @@ def register_command(main) -> None:
         "--tests-dir",
         default="tests",
         show_default=True,
-        help="Directory containing *.prompt test files.",
+        help="Directory containing *.prompt test files and *.yml test cases.",
     )
     @click.option(
         "--run-id",
@@ -87,7 +87,7 @@ def register_command(main) -> None:
         metavar="PATH",
         help=(
             "YAML file or directory of test cases (repeatable; files are combined). "
-            "Default: promptparams.yml and promptparams/*.yml when they exist. "
+            "Default: every *.yml under the tests dir. "
             "When cases are found, pbt run is executed for each case and tests "
             "are reported per case."
         ),
@@ -144,7 +144,7 @@ def register_command(main) -> None:
         metavar="NAME",
         help=(
             "After running, save the inline --promptdata/--promptfile params as a "
-            "named case in promptparams/<name>.yml so it is re-tested in future "
+            "named case in <tests-dir>/<name>.yml so it is re-tested in future "
             "parameterised runs. Requires at least one --promptdata or --promptfile."
         ),
     )
@@ -232,7 +232,7 @@ def register_command(main) -> None:
         dag_promptfiles = get_dag_promptfiles(all_models)
 
         # Not a *.yml file, so it is never loaded as cases itself; users copy
-        # it into place (cp promptparams.yml.example promptparams.yml).
+        # it into place (cp promptparams.yml.example tests/cases.yml).
         example_path = Path(EXAMPLE_PATH)
         try:
             write_example(example_path, dag_promptdata, dag_promptfiles)
@@ -275,11 +275,10 @@ def register_command(main) -> None:
             )
             sys.exit(1)
 
-        _reject_csv(promptparams_paths)
-
         # ------------------------------------------------------------------
         # Load promptparams cases (optional; skipped when --check-latest).
         # ------------------------------------------------------------------
+        promptparams_paths = promptparams_paths or (tests_dir,)
         inline_spec: dict = {"promptdata": inline_data, "promptfiles": inline_files}
         if extends:
             inline_spec["extends"] = list(extends)
@@ -288,13 +287,13 @@ def register_command(main) -> None:
                 cases = [build_case(
                     save_case_name or "inline",
                     inline_spec,
-                    load_baselines(promptparams_paths),
+                    load_baselines(promptparams_paths, all_models),
                     where="inline params",
                 )]
             elif check_latest:
                 cases = []
             else:
-                cases = _filter_cases(load_cases(promptparams_paths), case_filters)
+                cases = _filter_cases(load_cases(promptparams_paths, all_models), case_filters)
         except PromptParamsError as exc:
             err_console.print(f"[red]promptparams error:[/red] {exc}")
             sys.exit(1)
@@ -424,7 +423,7 @@ def register_command(main) -> None:
             if save_case_name is not None:
                 try:
                     saved = save_case(
-                        "promptparams",
+                        tests_dir,
                         save_case_name,
                         inline_data,
                         inline_files,
@@ -484,32 +483,6 @@ def register_command(main) -> None:
             errored = sum(1 for r in test_results if r.status == "error")
             if failed or errored:
                 sys.exit(1)
-
-
-def _reject_csv(paths: tuple[str, ...]) -> None:
-    """Stop with a pointer to the YAML format when only a legacy CSV is around."""
-    from pbt.promptparams import find_promptparams_files
-
-    legacy = [p for p in paths if p.endswith(".csv")]
-    if not paths and Path("promptparams.csv").exists():
-        try:
-            if not find_promptparams_files():
-                legacy = ["promptparams.csv"]
-        except PromptParamsError:
-            pass
-    if legacy:
-        err_console.print(
-            f"[red]Error:[/red] {legacy[0]}: promptparams are now YAML. Move each row to a "
-            "named case in promptparams.yml, e.g.\n\n"
-            "  cases:\n"
-            "    - name: Formal tone\n"
-            "      promptdata:\n"
-            "        tone: formal\n"
-            "      promptfiles:\n"
-            "        document: report.pdf\n\n"
-            "See the README section on promptparams."
-        )
-        sys.exit(1)
 
 
 def _filter_cases(cases: list, patterns: tuple[str, ...]) -> list:

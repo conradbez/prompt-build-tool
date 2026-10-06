@@ -6,16 +6,29 @@ reports every test prompt against that case's outputs.
 
 Where cases live
 ----------------
-``promptparams.yml`` and every ``*.yml`` / ``*.yaml`` file under
-``promptparams/`` are loaded and combined (``--promptparams PATH`` replaces
-those defaults; it is repeatable and accepts files or directories).  Files are
-read in sorted path order, so the case order is stable.
+Every ``*.yml`` / ``*.yaml`` file under the tests directory (``tests/``, at
+any depth) is loaded and combined (``--promptparams PATH`` replaces that
+default; it is repeatable and accepts files or directories).  Files are read
+in sorted path order, so the case order is stable.
+
+A file in a subfolder belongs to the model the folder is named after, like
+Ansible's ``host_vars/<host>/``: only the direct parent folder counts, so
+``tests/fixtures/board/reversed.yml`` belongs to ``board``.  Its ``given`` and
+``expect`` values are that model's, written without the model header::
+
+    # tests/board/reversed.yml
+    cases:
+      - name: Reversed diode
+        given: {pad_nets: [...]}     # = given: {board: {pad_nets: [...]}}
+
+A subfolder that is not named after a model is an error.  Files directly in
+the tests directory (or named explicitly) are not scoped.
 
 Format
 ------
 ::
 
-    # promptparams/base.yml
+    # tests/base.yml
     baselines:
       default:                       # every case starts from this ...
         promptdata:
@@ -81,7 +94,7 @@ from typing import Any
 import yaml
 
 
-DEFAULT_PATHS = ("promptparams.yml", "promptparams")
+DEFAULT_PATHS = ("tests",)
 DEFAULT_BASELINE = "default"
 EXAMPLE_PATH = "promptparams.yml.example"
 
@@ -89,6 +102,7 @@ _FILE_KEYS = {"baselines", "cases"}
 _BASELINE_KEYS = {"extends", "promptdata", "promptfiles", "given", "expect"}
 _CASE_KEYS = _BASELINE_KEYS | {"name"}
 _YAML_SUFFIXES = (".yml", ".yaml")
+_SCOPED_KEYS = ("given", "expect")  # written without the model header in a model's folder
 
 
 class PromptParamsError(ValueError):
@@ -112,39 +126,56 @@ class TestCase:
 # Loading
 # ---------------------------------------------------------------------------
 
-def find_promptparams_files(paths: "list[str | Path] | tuple[str | Path, ...] | None" = None) -> list[Path]:
+PathsArg = "list[str | Path] | tuple[str | Path, ...] | None"
+ModelsArg = "set[str] | list[str] | None"
+
+
+def find_promptparams_files(paths: PathsArg = None) -> list[Path]:
     """Return the YAML files *paths* name, expanding directories.
 
-    With no *paths*, the defaults (``promptparams.yml`` and ``promptparams/``)
-    are used, and ones that do not exist are skipped.  A path given explicitly
-    must exist.
+    With no *paths*, the default (the ``tests/`` directory) is used and
+    skipped when it does not exist.  A path given explicitly must exist.
+    """
+    return [f for f, _ in _discover(paths)]
+
+
+def _discover(paths: PathsArg) -> list[tuple[Path, str | None]]:
+    """Each YAML file *paths* name, with the model its folder scopes it to.
+
+    A file found inside a directory and not directly in it is scoped to its
+    direct parent folder's name.  Files named explicitly are never scoped.
     """
     explicit = bool(paths)
-    found: list[Path] = []
+    found: list[tuple[Path, str | None]] = []
     for raw in paths or DEFAULT_PATHS:
         p = Path(raw)
         if p.is_dir():
-            found.extend(sorted(
-                f for f in p.rglob("*") if f.is_file() and f.suffix in _YAML_SUFFIXES
-            ))
+            found.extend(
+                (f, None if f.parent == p else f.parent.name)
+                for f in sorted(p.rglob("*"))
+                if f.is_file() and f.suffix in _YAML_SUFFIXES
+            )
         elif p.is_file():
-            found.append(p)
+            found.append((p, None))
         elif explicit:
             raise PromptParamsError(f"promptparams path not found: {p}")
-    # The same file named twice (a file and its directory) loads once.
-    unique: dict[Path, Path] = {}
-    for f in found:
-        unique.setdefault(f.resolve(), f)
+    # The same file named twice (a file and its directory) loads once; the
+    # first spelling wins, as it sets the order.
+    unique: dict[Path, tuple[Path, str | None]] = {}
+    for f, scope in found:
+        unique.setdefault(f.resolve(), (f, scope))
     return list(unique.values())
 
 
-def load_cases(paths: "list[str | Path] | tuple[str | Path, ...] | None" = None) -> list[TestCase]:
+def load_cases(paths: PathsArg = None, models: ModelsArg = None) -> list[TestCase]:
     """Load, combine and resolve every case in the promptparams files.
 
-    Returns an empty list when there are no files, so callers can treat that
-    the same as "no parameterisation requested".
+    *models* are the project's model names; a file in a subfolder must sit in
+    a folder named after one of them.  Returns an empty list when there are
+    no files, so callers can treat that the same as "no parameterisation
+    requested".
     """
-    baselines, raw_cases = _load(paths)
+    baselines, raw_cases = _load(paths, models)
     resolved: list[TestCase] = []
     seen: dict[str, Path] = {}
     for spec, path, idx in raw_cases:
@@ -158,9 +189,9 @@ def load_cases(paths: "list[str | Path] | tuple[str | Path, ...] | None" = None)
     return resolved
 
 
-def load_baselines(paths: "list[str | Path] | tuple[str | Path, ...] | None" = None) -> dict[str, dict]:
+def load_baselines(paths: PathsArg = None, models: ModelsArg = None) -> dict[str, dict]:
     """Return every baseline in the promptparams files, by name."""
-    return _load(paths)[0]
+    return _load(paths, models)[0]
 
 
 def build_case(name: str, spec: dict, baselines: dict[str, dict], where: str = "") -> TestCase:
@@ -175,13 +206,21 @@ def build_case(name: str, spec: dict, baselines: dict[str, dict], where: str = "
     )
 
 
-def _load(paths) -> tuple[dict[str, dict], list[tuple[dict, Path, int]]]:
+def _load(paths, models) -> tuple[dict[str, dict], list[tuple[dict, Path, int]]]:
     """Parse every file: all baselines by name, and each raw case with its origin."""
     baselines: dict[str, dict] = {}
     defined_in: dict[str, Path] = {}
     raw_cases: list[tuple[dict, Path, int]] = []
+    known_models = set(models or ())
 
-    for path in find_promptparams_files(paths):
+    for path, scope in _discover(paths):
+        if scope is not None and scope not in known_models:
+            known = ", ".join(sorted(known_models)) or "none"
+            raise PromptParamsError(
+                f"{path}: folder '{scope}' is not a model (models: {known}). "
+                "Test-case YAML in a subfolder must sit in a folder named after "
+                "the model it gives or expects."
+            )
         doc = _read_yaml(path)
         for name, spec in _mapping(doc.get("baselines"), path, "baselines").items():
             name = str(name)
@@ -191,15 +230,22 @@ def _load(paths) -> tuple[dict[str, dict], list[tuple[dict, Path, int]]]:
                     f"{path}: baseline '{name}' is already defined in {defined_in[name]}."
                 )
             _check_keys(spec, _BASELINE_KEYS, path, f"baseline '{name}'")
-            baselines[name] = _resolve_paths(spec, path)
+            baselines[name] = _resolve_paths(_scope(spec, scope), path)
             defined_in[name] = path
         cases = doc.get("cases") or []
         if not isinstance(cases, list):
             raise PromptParamsError(f"{path}: 'cases' must be a list.")
         for idx, spec in enumerate(cases, start=1):
             _check_keys(spec, _CASE_KEYS, path, f"case {idx}")
-            raw_cases.append((_resolve_paths(spec, path), path, idx))
+            raw_cases.append((_resolve_paths(_scope(spec, scope), path), path, idx))
     return baselines, raw_cases
+
+
+def _scope(spec: dict, model: str | None) -> dict:
+    """Put *spec*'s given/expect under *model*, the folder's model."""
+    if model is None:
+        return spec
+    return {**spec, **{k: {model: spec[k]} for k in _SCOPED_KEYS if k in spec}}
 
 
 def _inherit(spec: dict, baselines: dict[str, dict], where: str, *, default: bool, chain: tuple) -> dict:
@@ -382,7 +428,7 @@ def write_example(
         else ["    promptfiles:", f"      {promptfiles_keys[0]}: <path/to/another>"]
     )
     lines = [
-        "# Copy to promptparams.yml, or any *.yml in promptparams/ (they are combined).",
+        "# Copy to any *.yml in tests/ (every one there is combined).",
         "baselines:",
         "  default:            # every case starts from this unless it sets `extends`",
         *block("    "),
