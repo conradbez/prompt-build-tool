@@ -1,15 +1,18 @@
 """
-pbt obsidian — use an Obsidian vault's notes as pbt models.
+pbt obsidian — use markdown notes (an Obsidian vault, or any linked .md files)
+as pbt models.
 
-Every subcommand first converts the vault into ``.prompt`` files (see
+SOURCE is either a vault folder (every note in it) or a single ``.md`` note
+(it and every note it links to, with links resolved relative to each note's
+folder).  Every subcommand first converts SOURCE into ``.prompt`` files (see
 :mod:`pbt.obsidian.converter`), then hands over to the ordinary pbt command
 with ``--models-dir`` pointing at them:
 
-    pbt obsidian build VAULT              # convert only
-    pbt obsidian run   VAULT [pbt run options]
-    pbt obsidian ls    VAULT
-    pbt obsidian test  VAULT [pbt test options]
-    pbt obsidian docs  VAULT [pbt docs options]
+    pbt obsidian build SOURCE              # convert only
+    pbt obsidian run   SOURCE [pbt run options]
+    pbt obsidian ls    SOURCE
+    pbt obsidian test  SOURCE [pbt test options]
+    pbt obsidian docs  SOURCE [pbt docs options]
 
 The generated directory defaults to ``obsidian_models/`` in the current
 directory, so ``client.py`` (looked up beside the models directory) is the one
@@ -32,14 +35,14 @@ from rich.table import Table
 from pbt.cli.pretty_print import console, err_console
 from pbt.llm import resolve_classify_call, resolve_llm_call, try_load_client_module
 from pbt.obsidian import judge as note_judge
-from pbt.obsidian.converter import ObsidianError, convert_vault, write_models
+from pbt.obsidian.converter import ObsidianError, convert, write_models
 
 DEFAULT_OUT = "obsidian_models"
 
 #: pbt commands that take --models-dir and get an `obsidian` counterpart.
 PASSTHROUGH_COMMANDS = ("run", "ls", "test", "docs")
 
-_vault_argument = click.argument("vault", type=click.Path(exists=True, file_okay=False))
+_source_argument = click.argument("source", type=click.Path(exists=True))
 _out_option = click.option(
     "--out",
     default=DEFAULT_OUT,
@@ -83,11 +86,11 @@ def resolve_judge(choice: str | None, out: str) -> note_judge.NoteJudge | None:
     return note_judge.cached(judge, "\x00".join((choice, context or "")))
 
 
-def build_or_exit(vault: str, out: str, judge_notes: str | None = None, quiet: bool = False) -> None:
-    """Convert *vault* into *out*, printing unresolved links; exit on error."""
+def build_or_exit(source: str, out: str, judge_notes: str | None = None, quiet: bool = False) -> None:
+    """Convert *source* into *out*, printing unresolved links; exit on error."""
     judge = resolve_judge(judge_notes, out)
     try:
-        converted = convert_vault(vault, judge)
+        converted = convert(source, judge)
         write_models(converted, out)
     except ObsidianError as exc:
         err_console.print(f"[red]Obsidian error:[/red] {escape(str(exc))}")
@@ -96,7 +99,7 @@ def build_or_exit(vault: str, out: str, judge_notes: str | None = None, quiet: b
     for note in converted.values():
         for target in note.unresolved:
             err_console.print(
-                f"[yellow]Warning:[/yellow] {escape(str(note.note_path))}: {escape(f'[[{target}]]')} is not a note in the vault; kept as text.",
+                f"[yellow]Warning:[/yellow] {escape(str(note.note_path))}: {escape(f'[[{target}]]')} does not lead to a note; kept as text.",
                 soft_wrap=True,
             )
 
@@ -105,11 +108,11 @@ def build_or_exit(vault: str, out: str, judge_notes: str | None = None, quiet: b
         data_label = f" ({len(data)} data: {', '.join(data)})" if data else ""
         console.print(
             f"  [dim]Obsidian:[/dim] {len(converted)} notes{escape(data_label)} "
-            f"from [cyan]{escape(vault)}[/cyan] → [cyan]{escape(out)}/[/cyan]\n"
+            f"from [cyan]{escape(source)}[/cyan] → [cyan]{escape(out)}/[/cyan]\n"
         )
         return
 
-    table = Table(title=f"{vault} → {out}/", show_lines=False)
+    table = Table(title=f"{source} → {out}/", show_lines=False)
     table.add_column("Note")
     table.add_column("Model", style="cyan")
     table.add_column("Kind")
@@ -125,15 +128,18 @@ def register_command(main: click.Group) -> None:
 
     @main.group("obsidian")
     def obsidian() -> None:
-        """Use an Obsidian vault's notes as pbt models ([[links]] become ref())."""
+        """Use markdown notes as pbt models: links between notes become ref().
+
+        SOURCE is a vault folder, or one .md note plus every note it links to.
+        """
 
     @obsidian.command("build")
-    @_vault_argument
+    @_source_argument
     @_out_option
     @_judge_option
-    def build(vault: str, out: str, judge_notes: str | None) -> None:
-        """Convert the notes in VAULT into .prompt files."""
-        build_or_exit(vault, out, judge_notes)
+    def build(source: str, out: str, judge_notes: str | None) -> None:
+        """Convert the notes in SOURCE (a folder, or a .md note and its links) into .prompt files."""
+        build_or_exit(source, out, judge_notes)
 
     for name in PASSTHROUGH_COMMANDS:
         _register_passthrough(main, obsidian, name)
@@ -143,17 +149,17 @@ def _register_passthrough(main: click.Group, group: click.Group, name: str) -> N
     @group.command(
         name,
         help=(
-            f"Build VAULT, then `pbt {name} --models-dir OUT`. "
-            f"Options after VAULT that this command does not know go to `pbt {name}`."
+            f"Build SOURCE (a folder, or a .md note and its links), then `pbt {name} --models-dir OUT`. "
+            f"Options after SOURCE that this command does not know go to `pbt {name}`."
         ),
         context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
     )
-    @_vault_argument
+    @_source_argument
     @_out_option
     @_judge_option
     @click.pass_context
-    def passthrough(ctx: click.Context, vault: str, out: str, judge_notes: str | None) -> None:
-        build_or_exit(vault, out, judge_notes, quiet=True)
+    def passthrough(ctx: click.Context, source: str, out: str, judge_notes: str | None) -> None:
+        build_or_exit(source, out, judge_notes, quiet=True)
         target = main.commands[name]
         with target.make_context(name, ["--models-dir", out, *ctx.args], parent=ctx) as sub:
             target.invoke(sub)

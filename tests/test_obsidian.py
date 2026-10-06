@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from pbt.executor.graph import build_dag, build_models_from_dict, load_models
-from pbt.obsidian import ObsidianError, convert_vault, load_vault, write_models
+from pbt.obsidian import ObsidianError, convert, convert_vault, load_vault, write_models
 from tests.conftest import STUB_CLIENT_PY, run_pbt
 
 
@@ -193,3 +193,60 @@ def test_cli_judge_notes_uses_client_llm(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "outputs" / "brand.md").read_text(encoding="utf-8") == "Brand facts: we sell socks.\n"
     assert (tmp_path / "outputs" / "tagline.md").read_text(encoding="utf-8") == "llm output"
+
+
+# ---------------------------------------------------------------------------
+# A single .md note as the source: links resolve from each note's folder
+# ---------------------------------------------------------------------------
+
+def test_single_note_follows_relative_links(tmp_path: Path) -> None:
+    _vault(tmp_path, {
+        "project/plan.md": "Plan using [[research/Market]] and [the brief](../shared/Brief%20Notes.md).\n",
+        "project/research/Market.md": "Market from [[../../shared/Brief Notes|the brief]] and [[Sizing]].\n",
+        "project/research/Sizing.md": "Sizing data. [site](https://example.com/a.md) [[Nowhere]]\n",
+        "shared/Brief Notes.md": "Brief.\n",
+        "shared/Unrelated.md": "Never linked.\n",
+        "project/Market.md": "A different Market note, not linked from plan.\n",
+    })
+    converted = convert(tmp_path / "vault" / "project" / "plan.md")
+
+    assert set(converted) == {"plan", "market", "sizing", "brief_notes"}
+    assert converted["plan"].depends_on == ["market", "brief_notes"]
+    assert "Plan using {{ ref('market') }} and {{ ref('brief_notes') }}." in converted["plan"].source
+    assert converted["market"].depends_on == ["brief_notes", "sizing"]
+    assert "[site](https://example.com/a.md)" in converted["sizing"].source
+    assert converted["sizing"].unresolved == ["Nowhere"]
+    # Paths are kept relative to the folder holding every reached note.
+    assert converted["plan"].prompt_path == Path("project/plan.prompt")
+    assert converted["brief_notes"].prompt_path == Path("shared/brief_notes.prompt")
+
+    dag = build_dag(build_models_from_dict(load_vault(tmp_path / "vault" / "project" / "plan.md")))
+    assert set(dag.predecessors("plan")) == {"market", "brief_notes"}
+
+
+def test_single_note_does_not_search_by_title(tmp_path: Path) -> None:
+    _vault(tmp_path, {"a/Entry.md": "See [[Other]].\n", "b/Other.md": "other\n"})
+    converted = convert(tmp_path / "vault" / "a" / "Entry.md")
+    assert set(converted) == {"entry"}
+    assert converted["entry"].unresolved == ["Other"]
+    # ...while a vault finds it by title, as Obsidian does.
+    assert convert_vault(tmp_path / "vault")["entry"].depends_on == ["other"]
+
+
+def test_markdown_links_work_in_a_vault_too(tmp_path: Path) -> None:
+    vault = _vault(tmp_path, {"A.md": "Use [b](sub/B.md).\n", "sub/B.md": "b\n"})
+    assert convert_vault(vault)["a"].depends_on == ["b"]
+
+
+def test_cli_run_from_a_single_note(tmp_path: Path) -> None:
+    _vault(tmp_path, {
+        "notes/Article.md": "Write about [topic](Topic.md).\n",
+        "notes/Topic.md": "Pick a topic.\n",
+        "notes/Other.md": "Not linked.\n",
+    })
+    (tmp_path / "client.py").write_text(STUB_CLIENT_PY, encoding="utf-8")
+
+    result = run_pbt("obsidian", "run", "vault/notes/Article.md", cwd=tmp_path, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert sorted(p.name for p in (tmp_path / "outputs").iterdir()) == ["article.md", "topic.md"]

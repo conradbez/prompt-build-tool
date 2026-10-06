@@ -56,8 +56,8 @@ NoteJudge = Callable[[NoteInfo], str]
 
 #: The situation both judges are told about.
 VAULT_CONTEXT = """\
-These notes are texts a user gave us from their notes vault, which runs as an
-AI pipeline. The user writes two sorts of note:
+These notes are texts a user gave us; linked together, they run as an AI
+pipeline. The user writes two sorts of note:
 
 - Reference material they keep so other notes can use it later: facts,
   sources, background, quotes, definitions, data, a style guide or brief.

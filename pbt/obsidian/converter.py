@@ -30,10 +30,13 @@ Conversion rules
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
+from urllib.parse import unquote
 
 import yaml
 
@@ -49,6 +52,8 @@ _FENCE = re.compile(r"(^[ \t]*(```|~~~).*?^[ \t]*\2[^\n]*$)", re.S | re.M)
 _COMMENT = re.compile(r"%%.*?%%", re.S)
 #: [[target#anchor|alias]], optionally prefixed with ! for an embed.
 _LINK = re.compile(r"(!?)\[\[([^\]|#^]*)([#^][^\]|]*)?(?:\|([^\]]*))?\]\]")
+#: [shown](path/to/note.md "title"), optionally prefixed with ! for an embed.
+_MD_LINK = re.compile(r"""(!?)\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+["'][^)]*["'])?\s*\)""")
 
 
 class ObsidianError(Exception):
@@ -71,7 +76,8 @@ class ConvertedNote:
 
 @dataclass
 class _Note:
-    path: Path
+    path: Path      #: relative to the vault, or to the folder holding every note
+    abs: Path       #: resolved absolute path
     slug: str
     name: str
     frontmatter: dict
@@ -97,24 +103,97 @@ def _split_frontmatter(text: str, path: Path) -> tuple[dict, str]:
     return (data if isinstance(data, dict) else {}), text[match.end():]
 
 
-def _read_notes(vault: Path) -> list[_Note]:
+def _make_note(path: Path, root: Path) -> _Note | None:
+    """Read *path*; None when its frontmatter says ``pbt: false``."""
+    rel = path.relative_to(root)
+    frontmatter, body = _split_frontmatter(path.read_text(encoding="utf-8"), rel)
+    if frontmatter.get("pbt") is False:
+        return None
+    slug = slugify(path.stem)
+    return _Note(rel, path.resolve(), slug, _prompt_name(Path(f"{slug}.prompt")), frontmatter, body)
+
+
+def _read_vault(vault: Path) -> list[_Note]:
+    """Every note under *vault*, hidden folders (.obsidian, .trash) aside."""
     notes: list[_Note] = []
     for path in sorted(vault.rglob("*.md")):
-        rel = path.relative_to(vault)
-        if any(part.startswith(".") for part in rel.parts):
+        if any(part.startswith(".") for part in path.relative_to(vault).parts):
             continue
-        frontmatter, body = _split_frontmatter(path.read_text(encoding="utf-8"), rel)
-        if frontmatter.get("pbt") is False:
-            continue
-        slug = slugify(path.stem)
-        notes.append(_Note(rel, slug, _prompt_name(Path(f"{slug}.prompt")), frontmatter, body))
+        note = _make_note(path, vault)
+        if note is not None:
+            notes.append(note)
     return notes
 
 
-class _Resolver:
-    """Maps link targets to model names the way Obsidian maps them to notes."""
+def _md_href(href: str) -> str | None:
+    """The note path a markdown link points to, or None for URLs and non-notes."""
+    href = unquote(href.strip().strip("<>")).split("#", 1)[0]
+    if not href or re.match(r"^[a-z][a-z0-9+.-]*:", href, re.I) or not href.lower().endswith(".md"):
+        return None
+    return href
 
-    def __init__(self, notes: list[_Note]) -> None:
+
+def _relative_note(from_path: Path, target: str) -> Path | None:
+    """*target* (a link written in the note at *from_path*) resolved from that note's folder."""
+    target = target.strip()
+    if not target or target.startswith("/"):
+        return None
+    if not target.lower().endswith(".md"):
+        target += ".md"
+    return (from_path.parent / target).resolve()
+
+
+def _link_targets(text: str) -> list[str]:
+    """Every note link target in *text*, outside code fences and comments."""
+    targets = []
+    for i, part in enumerate(_FENCE.split(text)):
+        if i % 3:
+            continue  # a fence, or its marker
+        part = _COMMENT.sub("", part)
+        targets += [m.group(2) for m in _LINK.finditer(part) if not _is_attachment(m.group(2))]
+        targets += [t for t in (_md_href(m.group(3)) for m in _MD_LINK.finditer(part)) if t]
+    return targets
+
+
+def _read_linked(entry: Path) -> list[_Note]:
+    """*entry* and every note reachable from it through links.
+
+    Each link resolves relative to the folder of the note it is written in, so
+    no vault is needed: plain markdown files that link to each other work.
+    """
+    found: dict[Path, tuple[str, dict]] = {}
+    queue = [entry.resolve()]
+    while queue:
+        path = queue.pop(0)
+        if path in found:
+            continue
+        text = path.read_text(encoding="utf-8")
+        frontmatter, body = _split_frontmatter(text, path)
+        if frontmatter.get("pbt") is False and path != entry.resolve():
+            continue
+        found[path] = (body, frontmatter)
+        config = frontmatter.get("pbt")
+        for target in _link_targets(body + "\n" + (json.dumps(config) if isinstance(config, dict) else "")):
+            linked = _relative_note(path, target)
+            if linked is not None and linked.is_file() and linked not in found:
+                queue.append(linked)
+
+    root = Path(os.path.commonpath([p.parent for p in found]))
+    notes = [_make_note(path, root) for path in found]
+    return [note for note in notes if note is not None]
+
+
+class _Resolver:
+    """Maps link targets to model names.
+
+    A link is first resolved relative to the folder of the note it is written
+    in.  In a vault, it then falls back to Obsidian's rules: a path from the
+    vault root, then a note title or alias anywhere in the vault.
+    """
+
+    def __init__(self, notes: list[_Note], vault_lookup: bool) -> None:
+        self._by_abs = {note.abs: note.name for note in notes}
+        self._vault_lookup = vault_lookup
         self._by_path: dict[str, str] = {}
         self._by_title: dict[str, list[str]] = {}
         for note in notes:
@@ -125,7 +204,16 @@ class _Resolver:
                 if note.name not in names:
                     names.append(note.name)
 
-    def resolve(self, target: str) -> str | None:
+    def for_note(self, note: _Note) -> Callable[[str], str | None]:
+        """Return a resolver for links written in *note*."""
+        return lambda target: self.resolve(target, note)
+
+    def resolve(self, target: str, from_note: _Note) -> str | None:
+        relative = _relative_note(from_note.abs, target)
+        if relative in self._by_abs:
+            return self._by_abs[relative]
+        if not self._vault_lookup:
+            return None
         key = target.strip().removesuffix(".md").lower()
         if key in self._by_path:
             return self._by_path[key]
@@ -151,24 +239,35 @@ def _is_attachment(target: str) -> bool:
     return bool(suffix) and suffix != ".md"
 
 
-def _convert_links(text: str, resolver: _Resolver, as_ref: bool, deps: list[str], unresolved: list[str]) -> str:
-    def replace(match: re.Match) -> str:
-        bang, target, _anchor, alias = match.groups()
-        if not target.strip() or _is_attachment(target):
-            return match.group(0)
-        name = resolver.resolve(target)
+Resolve = Callable[[str], "str | None"]
+
+
+def _convert_links(text: str, resolve: Resolve, as_ref: bool, deps: list[str], unresolved: list[str]) -> str:
+    def link(target: str, shown: str) -> str:
+        name = resolve(target)
         if name is None:
             if target not in unresolved:
                 unresolved.append(target)
-            return alias or target
+            return shown
         if name not in deps:
             deps.append(name)
         return f"{{{{ ref('{name}') }}}}" if as_ref else name
 
-    return _LINK.sub(replace, text)
+    def wikilink(match: re.Match) -> str:
+        _bang, target, _anchor, alias = match.groups()
+        if not target.strip() or _is_attachment(target):
+            return match.group(0)
+        return link(target, alias or target)
+
+    def md_link(match: re.Match) -> str:
+        _bang, shown, href = match.groups()
+        target = _md_href(href)
+        return match.group(0) if target is None else link(target, shown or target)
+
+    return _MD_LINK.sub(md_link, _LINK.sub(wikilink, text))
 
 
-def _convert_body(body: str, resolver: _Resolver, deps: list[str], unresolved: list[str]) -> str:
+def _convert_body(body: str, resolver: Resolve, deps: list[str], unresolved: list[str]) -> str:
     parts = _FENCE.split(body)
     out: list[str] = []
     # re.split with two groups yields [text, fence, fence-marker, text, ...].
@@ -196,7 +295,7 @@ def _jinja_literal(value: object) -> str:
     return json.dumps(str(value))
 
 
-def _config_call(config: dict, resolver: _Resolver, deps: list[str], unresolved: list[str], path: Path) -> str:
+def _config_call(config: dict, resolver: Resolve, deps: list[str], unresolved: list[str], path: Path) -> str:
     def links_to_names(value: object) -> object:
         if isinstance(value, str):
             return _convert_links(value, resolver, False, deps, unresolved)
@@ -212,6 +311,20 @@ def _config_call(config: dict, resolver: _Resolver, deps: list[str], unresolved:
     return "{{ config(" + ", ".join(args) + ") -}}\n" if args else ""
 
 
+def convert(source: str | Path, judge: NoteJudge | None = None) -> dict[str, ConvertedNote]:
+    """Convert a vault folder, or one ``.md`` note and the notes it links to.
+
+    Returns ``{model_name: ConvertedNote}``.  *judge* decides prompt vs data
+    for notes that do not say; without one they are prompts.
+    """
+    source = Path(source)
+    if source.is_dir():
+        return convert_vault(source, judge)
+    if source.is_file() and source.suffix.lower() == ".md":
+        return _convert_notes(_read_linked(source), judge, vault_lookup=False)
+    raise ObsidianError(f"'{source}' is neither a folder nor a .md file.")
+
+
 def convert_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str, ConvertedNote]:
     """Convert every note under *vault*; return ``{model_name: ConvertedNote}``.
 
@@ -222,10 +335,13 @@ def convert_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str
     if not vault.is_dir():
         raise ObsidianError(f"Vault folder '{vault}' not found.")
 
-    notes = _read_notes(vault)
+    notes = _read_vault(vault)
     if not notes:
         raise ObsidianError(f"No *.md notes found in '{vault}'.")
+    return _convert_notes(notes, judge, vault_lookup=True)
 
+
+def _convert_notes(notes: list[_Note], judge: NoteJudge | None, vault_lookup: bool) -> dict[str, ConvertedNote]:
     seen: dict[str, Path] = {}
     for note in notes:
         if note.name in seen:
@@ -235,7 +351,7 @@ def convert_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str
             )
         seen[note.name] = note.path
 
-    resolver = _Resolver(notes)
+    resolver = _Resolver(notes, vault_lookup)
     converted: dict[str, ConvertedNote] = {}
     # First pass: links only, so the judge can see every note's backlinks.
     parsed = {}
@@ -243,8 +359,9 @@ def convert_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str
         deps: list[str] = []
         unresolved: list[str] = []
         config = _note_config(note)
-        config_line = _config_call(config if isinstance(config, dict) else {}, resolver, deps, unresolved, note.path)
-        body = _convert_body(note.body, resolver, deps, unresolved)
+        resolve = resolver.for_note(note)
+        config_line = _config_call(config if isinstance(config, dict) else {}, resolve, deps, unresolved, note.path)
+        body = _convert_body(note.body, resolve, deps, unresolved)
         parsed[note.name] = (config, config_line, body, deps, unresolved)
 
     titles = {note.name: note.path.stem for note in notes}
@@ -260,7 +377,7 @@ def convert_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str
         kind, kind_source = _note_kind(note, config, info, judge)
         mapping = config if isinstance(config, dict) else {}
         if kind == DATA and "model_type" not in mapping:
-            config_line = _config_call({**mapping, "model_type": "template"}, resolver, [], [], note.path)
+            config_line = _config_call({**mapping, "model_type": "template"}, resolver.for_note(note), [], [], note.path)
         header = f"{{# Generated by `pbt obsidian` from {note.path.as_posix()} - edit the note, not this file. -#}}\n"
         converted[note.name] = ConvertedNote(
             name=note.name,
@@ -304,9 +421,12 @@ def _note_kind(note: _Note, config: dict | str, info: NoteInfo, judge: NoteJudge
     return kind, "judge"
 
 
-def load_vault(vault: str | Path, judge: NoteJudge | None = None) -> dict[str, str]:
-    """Return ``{model_name: prompt_source}`` for ``pbt.run(models_from_dict=...)``."""
-    return {name: note.source for name, note in convert_vault(vault, judge).items()}
+def load_vault(source: str | Path, judge: NoteJudge | None = None) -> dict[str, str]:
+    """Return ``{model_name: prompt_source}`` for ``pbt.run(models_from_dict=...)``.
+
+    *source* is a vault folder or a single ``.md`` note (see :func:`convert`).
+    """
+    return {name: note.source for name, note in convert(source, judge).items()}
 
 
 def write_models(converted: dict[str, ConvertedNote], out_dir: str | Path) -> list[Path]:
