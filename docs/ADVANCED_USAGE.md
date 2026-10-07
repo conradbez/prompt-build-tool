@@ -124,8 +124,8 @@ cases:
 ```
 
 `pbt test --case "Reversed flyback diode"` then runs only what sits downstream
-of `board`. A full example, pinning every model up to the board so only QA
-runs, is [`examples/pcb_design/tests/reversed_flyback_diode.yml`](../examples/pcb_design/tests/reversed_flyback_diode.yml).
+of `board`. A full example, pinning only `parts` and `board` while the rest of
+the pipeline runs, is [`examples/pcb_design/tests/reversed_flyback_diode.yml`](../examples/pcb_design/tests/reversed_flyback_diode.yml).
 
 
 ### Checking expected outputs (`expect`)

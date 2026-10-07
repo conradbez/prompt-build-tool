@@ -93,9 +93,11 @@ it re-runs only when the design, parts or layout rules change.
 `tests/reversed_flyback_diode.yml` replays the real reversed SS34
 (`circuit_board_as_code/qaqc/common_issues/diode_error.md`): the circuit
 intent is right, the library mapped the cathode to pin 2, and the built board
-puts the band on the MOSFET drain. It pins every model up to `board` with
-`given`, so only the QA stage runs. `ato build`, assertions and DRC all pass on
-this board, which is the point.
+puts the band on the MOSFET drain. It pins only the two models that carry the
+fault with `given`: `parts` (the library's pin map) and `board` (the copper).
+Everything else runs for real from a one-line `brief`, including the datasheet
+`research` that `polarity` checks against. `ato build`, assertions and DRC all
+pass on this board, which is the point.
 
 ```bash
 pbt test --case "Reversed flyback diode"
@@ -125,5 +127,5 @@ stay outside model inputs. A missing item, missing field, or wrong value fails
 `pbt test` with the field path, and the command exits nonzero for CI.
 
 These are integration tests of QA on saved evidence. They do not rebuild a
-board, validate the research against a live datasheet, or certify the board.
+board or certify it.
 Run `pbt test` for both cases, or select one with `--case`.
