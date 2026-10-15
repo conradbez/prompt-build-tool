@@ -26,8 +26,17 @@ results = pbt.run(
     promptdata={"tone": "formal"},   # optional: variables injected via promptdata()
     validation_dir="validation", # optional: per-model validation functions
     global_instruction="Answer in British English.",  # optional: text added to every prompt
+    secrets={"OPENAI_API_KEY": user_key},  # optional: per-run credentials, never stored
 )
 ```
+
+> **Secrets.** `secrets=` (CLI: `--secret NAME` or `--secret NAME=ENV_VAR`, read
+> from the environment, never typed as a value) passes credentials to the run.
+> Kinds read `call.secrets["NAME"]`; an `llm_call(prompt, secrets)` receives them
+> if it declares the parameter. Kinds can require them with
+> `@pbt.model_kind("x", secrets={"NAME"})` so a missing one fails before the run
+> starts. They are never rendered, cached, stored or shown in a repr, so
+> rotating a key keeps cache hits.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -40,6 +49,7 @@ results = pbt.run(
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
 | `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to models/) |
 | `on_model_start` | `(name: str) -> None \| None` | Called just before each model starts |
+| `secrets` | `dict[str, str] \| None` | Per-run credentials for kinds (`call.secrets`) and `llm_call(prompt, secrets)`. Never rendered, cached or stored |
 | `on_model_done` | `(result: ModelRunResult) -> None \| None` | Called when each model finishes; `result.status` is `"success"`, `"error"` or `"skipped"` |
 
 Returns a `dict` keyed by model name. Each value is the model's output string —
