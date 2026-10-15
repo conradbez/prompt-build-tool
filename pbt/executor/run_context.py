@@ -58,8 +58,12 @@ from pbt.types import PromptFile
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
-# config(global_instruction=...) values that turn the global instruction off.
+# config(global_instruction=...) / config(cache=...) values that turn it off.
 _OPT_OUT_VALUES = frozenset({"false", "none", "no", "off", "0"})
+
+# config() keys that change how pbt runs a model, not what it sends — left out
+# of the cache key so toggling one does not orphan the cached entry.
+_NON_KEY_CONFIG = frozenset({"cache"})
 
 
 def parse_json_output(raw: str) -> dict | list:
@@ -239,7 +243,10 @@ class RunContext:
         return (
             rendered
             + "\x00"
-            + json.dumps(spec.config, sort_keys=True)
+            + json.dumps(
+                {k: v for k, v in spec.config.items() if k not in _NON_KEY_CONFIG},
+                sort_keys=True,
+            )
             + "\x00"
             + _files_hash(files)
         )
@@ -271,6 +278,9 @@ class RunContext:
         blob store and the cache keeps the encoded manifest; a hit decodes it
         back to the same objects.  A hit whose blobs have since gone missing
         is treated as a miss.
+
+        ``{{ config(cache=False) }}`` skips the lookup: the work always runs,
+        and its fresh result still overwrites the cache entry.
         """
         if state is not None and state.skip_value is not None:
             return state.skip_value
@@ -278,7 +288,8 @@ class RunContext:
         acct = self._acct(spec.name)
         key = self.cache_key(spec, rendered, self.files_for(spec, state))
 
-        hit = self.storage.get_cached_llm_output(key)
+        reads_cache = str(spec.config.get("cache", "")).strip().lower() not in _OPT_OUT_VALUES
+        hit = self.storage.get_cached_llm_output(key) if reads_cache else None
         if hit is not None:
             try:
                 value = decode_output(hit, self.blobs, check_blobs=True)

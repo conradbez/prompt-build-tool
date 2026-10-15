@@ -249,6 +249,7 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `model_type` | `"template"`, `"execute_python"`, `"agent"`, or a type you register; defaults to a plain LLM call |
 | `each` | Path to an upstream list; run this model once per item, any `model_type` — see [Map and reduce](#map-and-reduce-each) |
 | `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
+| `cache` | `False` skips reading the prompt cache, so the model always re-runs; the fresh result still overwrites the cached entry |
 
 Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
 

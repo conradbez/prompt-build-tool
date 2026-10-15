@@ -30,6 +30,7 @@ _BUILTIN_CONFIG_KEYS = frozenset({
     "model_type",
     "global_instruction",
     "each",
+    "cache",
 })
 
 _extra_config_keys: set[str] = set()
