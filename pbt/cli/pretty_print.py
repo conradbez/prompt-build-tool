@@ -129,10 +129,11 @@ def print_gates_header(c: Console, gates: dict, first: list) -> None:
     c.print()
 
 
-def print_gates_done(c: Console, gated) -> None:
+def print_gates_done(c: Console, gated, remaining: int) -> None:
     if gated.gates_passed and not gated.blocked:
+        rest = f" — running the remaining {remaining} model{'s' if remaining != 1 else ''}" if remaining else ""
         c.print()
-        c.print("  [green]Gates passed[/green] — running the rest of the pipeline")
+        c.print(f"  [green]Gates passed[/green]{rest}")
         c.print()
 
 

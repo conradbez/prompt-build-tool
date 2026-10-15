@@ -337,15 +337,17 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
                 sys.exit(1)
             gate_results: list = []
             on_test_start, on_test_done = pretty_print.make_test_callbacks(c, gate_results, total=len(gates))
+            gate_models = gate_upstream(gates, all_models, dag)
+            remaining = sum(1 for m in ordered if m.name not in gate_models)
             gated = asyncio.run(execute_gated_run(
                 run_id=run_id,
                 ordered_models=ordered,
                 gates=gates,
-                gate_models=gate_upstream(gates, all_models, dag),
+                gate_models=gate_models,
                 on_gates_start=lambda first: pretty_print.print_gates_header(c, gates, first),
                 on_test_start=on_test_start,
                 on_test_done=on_test_done,
-                on_gates_done=lambda result: pretty_print.print_gates_done(c, result),
+                on_gates_done=lambda result: pretty_print.print_gates_done(c, result, remaining),
                 judge=judge,
                 classify_call=classify_call,
                 test_promptfiles=promptfile_paths or None,
