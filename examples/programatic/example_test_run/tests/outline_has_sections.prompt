@@ -1,3 +1,5 @@
+{# gate=False: outline is skipped to "" on purpose by model_to_skip; that must not stop the run #}
+{{ config(gate=False) }}
 The following is a generated blog post outline:
 
 {{ ref('outline') }}

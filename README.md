@@ -179,16 +179,17 @@ Use case — classifier tests on a chained pipeline: [`tests/README.md`](tests/R
 
 The judge is chosen per test with `{{ config(judge="llm") }}` / `{{ config(judge="classifier") }}`, otherwise by `pbt test --judge llm|classifier`, otherwise by `test_judge` in `client.py`, otherwise `llm`. There is no fallback: a classifier test without a `---` line, or one that attaches `promptfiles`, is an error. LLM-judged tests are unchanged — the whole file, `---` included, goes to the LLM.
 
-**Gate tests (`gate=True`)** — a test that also guards every `pbt run`:
+**Gate tests** — every test also guards `pbt run` by default. `pbt run` runs the models gate tests read (and everything upstream of them) first, then the gate tests, then the rest of the pipeline — only if every gate passed. A failing or erroring gate stops the run with exit code 1, and the downstream models are never called. With `--select`, a gate applies when all the models it reads are in the selected run, so `pbt run -s article` still checks `outline` before `article`. `pbt test` runs gate tests like any other test.
+
+Opt a test out when it should only run under `pbt test` — for example a subjective quality check that should not block a run, or one whose judge needs a service `pbt run` should not depend on:
 
 ```jinja
-{# tests/outline_has_sections.prompt #}
-{{ config(gate=True) }}
-Does this outline have at least three sections? {{ ref('outline') }}
+{# tests/memo_reads_well.prompt #}
+{# gate=False: style judgement; a borderline verdict should not block the run #}
+{{ config(gate=False) }}
+Is this memo clear and concise? {{ ref('memo') }}
 Respond {"results": "pass"} or {"results": "fail"}.
 ```
-
-`pbt run` runs the models gate tests read (and everything upstream of them) first, then the gate tests, then the rest of the pipeline — only if every gate passed. A failing or erroring gate stops the run with exit code 1, and the downstream models are never called. With `--select`, a gate applies when all the models it reads are in the selected run, so `pbt run -s article` still checks `outline` before `article`. `pbt test` runs gate tests like any other test.
 
 ### `pbt docs`
 

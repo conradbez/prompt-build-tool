@@ -1,3 +1,5 @@
+{# gate=False: article is the only model; nothing downstream for a gate to protect #}
+{{ config(gate=False) }}
 Is the following text an erticle about transformers?
 
 {{ ref('article') }}

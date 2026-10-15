@@ -1,5 +1,5 @@
 """
-Gate tests — ``{{ config(gate=True) }}`` tests guard ``pbt run``.
+Gate tests — every test guards ``pbt run`` unless it sets ``gate=False``.
 
 The stub client logs every call, so each test checks the order things ran in:
 the gate's upstream models, then the gate, then the rest — or, when the gate
@@ -34,7 +34,7 @@ MODELS = {
     "other": "MODEL other",
 }
 
-GATE = "{{ config(gate=True) }}\nTEST outline_ok\n{{ ref('outline') }}"
+GATE = "TEST outline_ok\n{{ ref('outline') }}"  # a gate by default
 
 
 @pytest.fixture()
@@ -77,8 +77,8 @@ def test_failing_gate_stops_the_pipeline(proj: Path) -> None:
     assert not (proj / "outputs" / "article.md").exists()
 
 
-def test_tests_without_gate_do_not_run_with_pbt_run(proj: Path) -> None:
-    (proj / "tests" / "outline_ok.prompt").write_text(GATE.replace("gate=True", "gate=False"), encoding="utf-8")
+def test_gate_false_opts_a_test_out_of_pbt_run(proj: Path) -> None:
+    (proj / "tests" / "outline_ok.prompt").write_text("{{ config(gate=False) }}\n" + GATE, encoding="utf-8")
 
     result = run_pbt("run", cwd=proj, check=False)
 
@@ -116,7 +116,7 @@ def test_skip_downstream_carries_past_the_gate(proj: Path) -> None:
         'MODEL topic\n{{ skip_this_and_downstream("no topic") }}', encoding="utf-8"
     )
     (proj / "tests" / "outline_ok.prompt").write_text(
-        "{{ config(gate=True) }}\nTEST topic_ok\n{{ ref('topic') }}", encoding="utf-8"
+        "TEST topic_ok\n{{ ref('topic') }}", encoding="utf-8"
     )
 
     result = run_pbt("run", cwd=proj, check=False)

@@ -1,8 +1,8 @@
 """
 Gate tests — tests that guard every ``pbt run``.
 
-A test in ``tests/`` opts in with ``{{ config(gate=True) }}``.  ``pbt run``
-then splits the run in two:
+Every test in ``tests/`` is a gate unless it opts out with
+``{{ config(gate=False) }}``.  ``pbt run`` splits the run in two:
 
   1. Run the models the gate tests read, and everything upstream of them.
   2. Judge the gate tests against those outputs.
@@ -34,8 +34,8 @@ from pbt.tester import TestResult, execute_tests, load_tests
 
 
 def is_gate(source: str) -> bool:
-    """True when a test declares ``{{ config(gate=True) }}``."""
-    return parse_model_config(source).get("gate", "").strip().lower() in ("true", "1", "yes")
+    """True unless a test opts out with ``{{ config(gate=False) }}``."""
+    return parse_model_config(source).get("gate", "true").strip().lower() not in ("false", "0", "no")
 
 
 def load_gates(tests_dir: str | Path = "tests") -> dict[str, str]:

@@ -1,3 +1,5 @@
+{# gate=False: a judgement on reasoning quality; a borderline verdict should not block the memo #}
+{{ config(gate=False) }}
 {% set names = ref('issue_tree.branches[*].name') %}
 Does the recommendation follow from the branch verdicts? For example, a "go"
 with a refuted economics branch, or a "no-go" with every branch supported,

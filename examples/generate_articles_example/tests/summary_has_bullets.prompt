@@ -1,3 +1,5 @@
+{# gate=False: summary is the last model; nothing downstream for a gate to protect #}
+{{ config(gate=False) }}
 Does the following text contain at least 3 bullet points (lines starting with - or • or *)?
 
 {{ ref('summary') }}

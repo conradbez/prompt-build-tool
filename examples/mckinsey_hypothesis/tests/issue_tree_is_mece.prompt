@@ -1,3 +1,5 @@
+{# gate=False: MECE is a judgement call; a borderline verdict should not block the analysis #}
+{{ config(gate=False) }}
 Are these three hypotheses mutually exclusive (no two cover the same ground)
 and, together, collectively exhaustive for answering the key question?
 

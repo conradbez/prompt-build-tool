@@ -1,4 +1,5 @@
-{{ config(threshold=0.8) }}
+{# gate=False: the classifier judge needs a local Ollaya; pbt run should not depend on it #}
+{{ config(gate=False, threshold=0.8) }}
 Is this poem about autumn?
 ---
 {{ ref('haiku') }}

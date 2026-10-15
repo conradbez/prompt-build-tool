@@ -1,3 +1,5 @@
+{# gate=False: a judgement on reasoning quality; a borderline verdict should not block the memo #}
+{{ config(gate=False) }}
 {% set names = ref('issue_tree.branches[*].name') %}
 For each branch below, check that "disproven_if" names a concrete, observable
 result that would actually contradict the hypothesis (not a vague "if the

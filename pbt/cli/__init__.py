@@ -159,15 +159,17 @@ def main() -> None:
     default="tests",
     show_default=True,
     help=(
-        "Directory holding gate tests: tests with {{ config(gate=True) }} run "
-        "right after the models they read, and a failing gate stops the run."
+        "Directory holding gate tests: every test there runs right after the "
+        "models it reads, and a failing one stops the run. Opt a test out "
+        "with {{ config(gate=False) }}."
     ),
 )
 def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
     """Execute all prompt models in dependency order.
 
-    Gate tests ({{ config(gate=True) }} in the tests dir) run first, after
-    only the models they read; the rest of the pipeline runs if they all pass.
+    Tests in the tests dir are gates unless they set {{ config(gate=False) }}:
+    they run first, after only the models they read, and the rest of the
+    pipeline runs if they all pass.
     """
     c = Console(highlight=not no_color)
 

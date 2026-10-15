@@ -1,3 +1,5 @@
+{# gate=False: article is the last model; nothing downstream for a gate to protect #}
+{{ config(gate=False) }}
 The following is a generated blog post article:
 
 {{ ref('article') }}

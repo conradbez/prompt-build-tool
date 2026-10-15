@@ -236,7 +236,10 @@ def classifier_proj(tmp_path: Path) -> Path:
     (proj / "models").mkdir(parents=True)
     (proj / "tests").mkdir()
     (proj / "models" / "haiku.prompt").write_text("Write a haiku.", encoding="utf-8")
-    (proj / "tests" / "three_lines.prompt").write_text(CLASSIFIER_TEST, encoding="utf-8")
+    # gate=False: the stub LLM fails this test, and pbt run would judge it with the LLM.
+    (proj / "tests" / "three_lines.prompt").write_text(
+        "{{ config(gate=False) }}\n" + CLASSIFIER_TEST, encoding="utf-8"
+    )
     (proj / "client.py").write_text(CLIENT_PY, encoding="utf-8")
     run_pbt("run", cwd=proj)
     return proj
