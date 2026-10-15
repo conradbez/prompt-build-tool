@@ -59,6 +59,10 @@ The prompt should reference model outputs via `{{ ref('model_name') }}` and retu
   - Pass: `{"results": "pass"}`
   - Fail: `{"results": "fail"}`
 
+Tests are also gates: `pbt run` judges each one right after the models it
+reads, and stops the run if it fails. Add `{{ config(gate=False) }}` to a
+test that should only run under `pbt test`.
+
 Example `tests/summary_has_bullets.prompt`:
 
     Does the following text contain at least 3 bullet points (lines starting with - or •)?
@@ -144,6 +148,8 @@ Return only valid JSON in this exact format:
 }
 """,
     "tests/summary_has_bullets.prompt": """\
+{# gate=False: summaries is the last model; nothing downstream for a gate to protect #}
+{{ config(gate=False) }}
 Does the following JSON summaries object contain at least 3 key points in the first summary entry?
 
 {{ ref('summaries') }}
