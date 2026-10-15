@@ -121,6 +121,29 @@ def print_run_summary(
     c.print(summary)
 
 
+def print_gates_header(c: Console, gates: dict, first: list) -> None:
+    c.print(
+        f"  Gates    : {', '.join(sorted(gates))} "
+        f"[dim](run first, after {len(first)} upstream model{'s' if len(first) != 1 else ''})[/dim]"
+    )
+    c.print()
+
+
+def print_gates_done(c: Console, gated) -> None:
+    if gated.gates_passed and not gated.blocked:
+        c.print()
+        c.print("  [green]Gates passed[/green] — running the rest of the pipeline")
+        c.print()
+
+
+def print_gate_failure(c: Console, gated) -> None:
+    failed = [r.test_name for r in gated.gate_results if r.status != "pass"]
+    reason = f"gate failed: {', '.join(failed)}" if failed else "a model the gates read errored"
+    c.print(f"  [red]Pipeline stopped[/red] — {_escape(reason)}")
+    if gated.blocked:
+        c.print(f"  [dim]Not run: {', '.join(sorted(gated.blocked))}[/dim]")
+
+
 # ---------------------------------------------------------------------------
 # pbt test — header, progress callbacks, summary
 # ---------------------------------------------------------------------------

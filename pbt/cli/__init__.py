@@ -32,7 +32,14 @@ from pbt.executor.graph import (
     UnknownModelError,
 )
 from pbt.executor.executor import execute_run
-from pbt.llm import resolve_blob_store, resolve_llm_call, try_load_client_module
+from pbt.gates import execute_gated_run, gate_reads, gate_upstream, load_gates
+from pbt.llm import (
+    resolve_blob_store,
+    resolve_classify_call,
+    resolve_llm_call,
+    resolve_test_judge,
+    try_load_client_module,
+)
 from pbt.rag import resolve_rag_call
 from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
@@ -147,8 +154,21 @@ def main() -> None:
         "Overrides the global.prompt discovered alongside --models-dir."
     ),
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None) -> None:
-    """Execute all prompt models in dependency order."""
+@click.option(
+    "--tests-dir",
+    default="tests",
+    show_default=True,
+    help=(
+        "Directory holding gate tests: tests with {{ config(gate=True) }} run "
+        "right after the models they read, and a failing gate stops the run."
+    ),
+)
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
+    """Execute all prompt models in dependency order.
+
+    Gate tests ({{ config(gate=True) }} in the tests dir) run first, after
+    only the models they read; the rest of the pipeline runs if they all pass.
+    """
     c = Console(highlight=not no_color)
 
     if clear_cache:
@@ -167,11 +187,13 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 
     # Parse --promptfile NAME=PATH pairs into a dict of open file objects.
     promptfiles_dict: dict = {}
+    promptfile_paths: dict[str, str] = {}  # gate tests open their own copies
     for f in promptfiles:
         if "=" not in f:
             err_console.print(f"[red]Error:[/red] --promptfile must be NAME=PATH, got: {f!r}")
             sys.exit(1)
         k, _, val = f.partition("=")
+        promptfile_paths[k] = val
         try:
             promptfiles_dict[k] = open(val, "rb")  # noqa: WPS515  – closed by llm_call consumer
         except OSError as exc:
@@ -190,6 +212,11 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
     use_client_blob_store(models_dir)
+    try:
+        dag = build_dag(all_models)
+    except (CyclicDependencyError, UnknownModelError) as exc:
+        err_console.print(f"[red]Dependency error:[/red] {exc}")
+        sys.exit(1)
     # ------------------------------------------------------------------
     # --select: run chosen models AND their full upstream dependency chain.
     # ------------------------------------------------------------------
@@ -198,22 +225,26 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
             if name not in all_models:
                 err_console.print(f"[red]Unknown model:[/red] '{name}'")
                 sys.exit(1)
-        try:
-            dag = build_dag(all_models)
-        except (CyclicDependencyError, UnknownModelError) as exc:
-            err_console.print(f"[red]Dependency error:[/red] {exc}")
-            sys.exit(1)
         to_run: set[str] = set(select)
         for name in select:
             to_run.update(nx.ancestors(dag, name))
         ordered = [all_models[name] for name in to_run]
     else:
-        try:
-            build_dag(all_models)  # validate only
-        except (CyclicDependencyError, UnknownModelError) as exc:
-            err_console.print(f"[red]Dependency error:[/red] {exc}")
-            sys.exit(1)
         ordered = list(all_models.values())
+
+    # ------------------------------------------------------------------
+    # Gate tests: the ones whose models are all part of this run.
+    # ------------------------------------------------------------------
+    run_names = {m.name for m in ordered}
+    try:
+        gates = {
+            name: source
+            for name, source in load_gates(tests_dir).items()
+            if set(gate_reads(name, source, all_models)) <= run_names
+        }
+    except UnknownModelError as exc:
+        err_console.print(f"[red]Dependency error:[/red] {exc}")
+        sys.exit(1)
 
     # ------------------------------------------------------------------
     # Print run header
@@ -281,20 +312,46 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     if dag_promptdata or promptdata_vars:
         c.print()
 
+    run_kwargs = dict(
+        storage_backend=db,
+        on_model_start=on_start,
+        on_model_done=on_done,
+        llm_call=llm_call,
+        rag_call=rag_call,
+        promptdata=promptdata_vars or None,
+        promptfiles=promptfiles_dict or None,
+        validators=validators or None,
+        global_instruction=global_instruction,
+    )
+    gated = None
     try:
-        all_results = asyncio.run(execute_run(
-            run_id=run_id,
-            ordered_models=ordered,
-            storage_backend=db,
-            on_model_start=on_start,
-            on_model_done=on_done,
-            llm_call=llm_call,
-            rag_call=rag_call,
-            promptdata=promptdata_vars or None,
-            promptfiles=promptfiles_dict or None,
-            validators=validators or None,
-            global_instruction=global_instruction,
-        ))
+        if gates:
+            try:
+                judge = resolve_test_judge(models_dir)
+                classify_call = resolve_classify_call(models_dir)
+            except Exception as exc:
+                err_console.print(f"[red]Backend resolution error:[/red] {exc}")
+                db.finish_run(run_id, "error")
+                sys.exit(1)
+            gate_results: list = []
+            on_test_start, on_test_done = pretty_print.make_test_callbacks(c, gate_results, total=len(gates))
+            gated = asyncio.run(execute_gated_run(
+                run_id=run_id,
+                ordered_models=ordered,
+                gates=gates,
+                gate_models=gate_upstream(gates, all_models, dag),
+                on_gates_start=lambda first: pretty_print.print_gates_header(c, gates, first),
+                on_test_start=on_test_start,
+                on_test_done=on_test_done,
+                on_gates_done=lambda result: pretty_print.print_gates_done(c, result),
+                judge=judge,
+                classify_call=classify_call,
+                test_promptfiles=promptfile_paths or None,
+                **run_kwargs,
+            ))
+            all_results = gated.model_results
+        else:
+            all_results = asyncio.run(execute_run(run_id=run_id, ordered_models=ordered, **run_kwargs))
     except EnvironmentError as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")
         db.finish_run(run_id, "error")
@@ -307,6 +364,9 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     successes = sum(1 for r in all_results if r.status == "success")
 
     final_status = "success" if errors == 0 else ("partial" if successes > 0 else "error")
+    gate_failed = gated is not None and bool(gated.blocked or not gated.gates_passed)
+    if gate_failed:
+        final_status = "error"
     db.finish_run(run_id, final_status)
 
     # Write outputs/ directory — one file per successful model.
@@ -335,6 +395,9 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 
     pretty_print.print_run_summary(c, all_results, outputs_dir, written, run_id)
 
+    if gate_failed:
+        pretty_print.print_gate_failure(c, gated)
+        sys.exit(1)
     if errors:
         sys.exit(1)
 

@@ -320,6 +320,8 @@ async def execute_run(
     validators: dict | None = None,
     global_instruction: str | None = None,
     blob_store: BlobStore | None = None,
+    skipped: set[str] | None = None,
+    skip_downstream: set[str] | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in dependency order.
@@ -349,6 +351,10 @@ async def execute_run(
     blob_store:
         Where file outputs' bytes are kept.  Defaults to the storage
         backend's own blob store (see :mod:`pbt.files`).
+    skipped / skip_downstream:
+        Skip state shared with an earlier phase of the same run, so a run
+        split in two (see :mod:`pbt.gates`) skips and reports ``was_skipped()``
+        exactly as one would.  The sets are updated in place.
 
     Returns
     -------
@@ -371,6 +377,10 @@ async def execute_run(
         global_instruction=global_instruction,
         blobs=blob_store,
     )
+    if skipped is not None:
+        ctx.skipped = skipped
+    if skip_downstream is not None:
+        ctx.skip_downstream = skip_downstream
     for name, raw in (preloaded_outputs or {}).items():
         ctx.outputs[name] = decode_output(raw, ctx.blobs) if isinstance(raw, str) else raw
 
@@ -387,7 +397,8 @@ async def execute_run(
 
     results: list[ModelRunResult] = []
     failed_upstream: set[str] = set()
-    completed: set[str] = set(ctx.outputs)  # preloaded outputs count as completed
+    # Preloaded outputs count as completed, as do models an earlier phase skipped.
+    completed: set[str] = set(ctx.outputs) | ctx.skip_downstream
 
     pending = list(ordered_models)
     while pending:
