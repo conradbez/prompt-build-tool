@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# Installed pbt plugins would add model kinds the registry tests don't expect.
+os.environ.setdefault("PBT_DISABLE_PLUGINS", "1")
 
 # ---------------------------------------------------------------------------
 # Stub LLM — covers all model types used in MODELS

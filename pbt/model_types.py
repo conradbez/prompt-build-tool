@@ -36,10 +36,26 @@ Where to register
 Anywhere that runs before the models are loaded.  ``client.py`` is the natural
 home for a project-local kind: pbt imports it before building the DAG precisely
 so that kinds registered there are available.
+
+Installed packages
+------------------
+A package that ships kinds declares them under the ``pbt.model_kinds`` entry
+point group, and ``pip install`` is then enough — nothing has to import it::
+
+    [project.entry-points."pbt.model_kinds"]
+    shout = "my_pkg.shout"            # a module that registers on import
+    other = "my_pkg:register"         # or a function pbt calls once
+
+pbt loads that group lazily, on the first registry lookup, not at import time:
+every plugin does ``import pbt``, so loading plugins from inside pbt's own
+import would hand them a half-initialised module.  Set ``PBT_DISABLE_PLUGINS=1``
+to skip discovery (useful in tests).
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -109,6 +125,34 @@ DEFAULT_MODEL_TYPE = ""
 
 _REGISTRY: dict[str, ModelKind] = {}
 
+#: Entry point group installed packages register their kinds under.
+ENTRY_POINT_GROUP = "pbt.model_kinds"
+
+_plugins_loaded = False
+
+
+def load_plugins() -> None:
+    """Import every installed package that registers pbt model kinds.
+
+    Runs once; later calls are no-ops.  A plugin that fails to load is logged
+    and skipped so one broken package cannot take down every run.
+    """
+    global _plugins_loaded
+    if _plugins_loaded or os.environ.get("PBT_DISABLE_PLUGINS"):
+        return
+    # Set before loading: a plugin's own registry lookups must not recurse.
+    _plugins_loaded = True
+
+    from importlib.metadata import entry_points
+
+    for ep in entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            obj = ep.load()  # importing runs the @pbt.model_kind decorators
+            if callable(obj):
+                obj()  # optional explicit register() hook
+        except Exception:
+            logging.getLogger("pbt").exception("pbt plugin %r failed to load", ep.name)
+
 
 def register_model_kind(kind: ModelKind) -> ModelKind:
     """Register *kind* under its own ``name``, replacing any kind of that name."""
@@ -147,16 +191,19 @@ def model_kind(
 
 def get_model_kind(name: str) -> ModelKind | None:
     """Return the kind registered under *name*, or None if there is none."""
+    load_plugins()
     return _REGISTRY.get(name)
 
 
 def known_model_kinds() -> set[str]:
     """Return every registered model_type value, excluding the unnamed default."""
+    load_plugins()
     return {name for name in _REGISTRY if name != DEFAULT_MODEL_TYPE}
 
 
 def registered_config_keys() -> set[str]:
     """Return every config() key declared by a registered model kind."""
+    load_plugins()
     keys: set[str] = set()
     for kind in _REGISTRY.values():
         keys.update(kind.config_keys)

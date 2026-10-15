@@ -382,6 +382,24 @@ file as trusted code.
 
 ---
 
+## Model kinds from installed packages
+
+A package can ship its own `model_type` values. Declare them under the
+`pbt.model_kinds` entry point group and `pip install` is all a user needs —
+no import in `client.py`:
+
+```toml
+# the plugin's pyproject.toml
+[project.entry-points."pbt.model_kinds"]
+my_kind = "my_pkg.my_kind"        # a module that calls @pbt.model_kind on import
+other   = "my_pkg:register"       # or a function pbt calls once
+```
+
+pbt loads them on the first `model_type` lookup. A plugin that fails to import
+is logged and skipped. Set `PBT_DISABLE_PLUGINS=1` to turn discovery off.
+
+---
+
 ## Validation (`validation/`)
 
 Create a `validation/` directory with Python files matching model names. Each file must define `validate(prompt, result) -> bool`. If it returns `False`, the model is marked as an error and stops it use in downstream models.
