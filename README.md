@@ -250,6 +250,27 @@ def llm_call(prompt: str) -> str:
 
 pbt will automatically discover and use this file. Run `pbt init --provider <gemini|openai|anthropic|deepseek|qwen|kimi|xiaomi>` to scaffold a starter `client.py` for your chosen provider; add `--classifier` to also scaffold a jev-like `classify_call` for classifier-judged tests (P(yes) from one-token logprobs where the provider returns them — OpenAI, DeepSeek, Qwen — otherwise a hard yes/no). If the file exists but does not define `llm_call`, pbt raises an error at startup.
 
+### Per-run credentials (`secrets`)
+
+Declare a `secrets` parameter and `llm_call` receives the run's credentials — so a server with one key per user does not rebuild `llm_call` per request:
+
+```python
+def llm_call(prompt: str, secrets) -> str:
+    client = openai.OpenAI(api_key=secrets["OPENAI_API_KEY"])
+    ...
+```
+
+```python
+pbt.run("models", secrets={"OPENAI_API_KEY": user_key})
+```
+
+```bash
+pbt run --secret OPENAI_API_KEY             # read from $OPENAI_API_KEY
+pbt run --secret OPENAI_API_KEY=MY_KEY_VAR  # read from $MY_KEY_VAR
+```
+
+`--secret` only names an environment variable — a key typed on the command line would land in shell history. A model kind reads them as `call.secrets["NAME"]` and can declare what it needs with `@pbt.model_kind("x", secrets={"NAME"})`, so a run missing one fails before any model starts. Secrets are never rendered into templates, part of the cache key, stored, or shown in a repr — rotating a key keeps your cache hits.
+
 ---
 
 ## RAG inside prompts (`rag.py`)

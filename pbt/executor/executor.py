@@ -28,14 +28,15 @@ import json
 import re
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 from pbt import jsonpath
 from pbt.executor.parser_model import _RenderState
 from pbt.executor.run_context import RunContext, parse_json_output
 from pbt.files import BlobStore, contains_files, decode_output, encode_output, persist_files
 from pbt.model_spec import ModelSpec
-from pbt.model_types import ModelCall, ModelKind, get_model_kind
+from pbt.model_types import ModelCall, ModelKind, get_model_kind, missing_secrets
+from pbt.secrets import MissingSecretsError, Secrets
 from pbt.storage.base import StorageBackend
 from pbt.types import PromptFile
 
@@ -163,6 +164,7 @@ async def _produce_one(
         outputs={**ctx.outputs, **overlay} if overlay else ctx.outputs,
         llm=partial(ctx.call_llm, spec=spec, state=state),
         compute=partial(ctx.cached, spec=spec, state=state),
+        secrets=ctx.secrets,
     )
     return await kind.exec_fn(rendered, call)
 
@@ -322,6 +324,7 @@ async def execute_run(
     blob_store: BlobStore | None = None,
     skipped: set[str] | None = None,
     skip_downstream: set[str] | None = None,
+    secrets: Mapping[str, str] | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in dependency order.
@@ -355,6 +358,11 @@ async def execute_run(
         Skip state shared with an earlier phase of the same run, so a run
         split in two (see :mod:`pbt.gates`) skips and reports ``was_skipped()``
         exactly as one would.  The sets are updated in place.
+    secrets:
+        Run-scoped credentials, read by kinds as ``call.secrets["NAME"]`` and
+        passed to an ``llm_call`` that declares a ``secrets`` parameter.  Never
+        rendered, cached or stored.  Every secret the selected models' kinds
+        declare is checked before any model runs.
 
     Returns
     -------
@@ -364,6 +372,18 @@ async def execute_run(
         raise ValueError(
             "llm_call must be provided to execute_run(). "
             "Use pbt.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
+        )
+
+    secrets = secrets if isinstance(secrets, Secrets) else Secrets(secrets)
+    missing = missing_secrets(ordered_models, secrets)
+    if missing:
+        raise MissingSecretsError(
+            "Missing secrets for this run: "
+            + ", ".join(
+                f"{name} (model_type {', '.join(sorted(kinds))})"
+                for name, kinds in sorted(missing.items())
+            )
+            + ". Pass them with secrets={...} or --secret NAME."
         )
 
     ctx = RunContext(
@@ -376,6 +396,7 @@ async def execute_run(
         validators=validators,
         global_instruction=global_instruction,
         blobs=blob_store,
+        secrets=secrets,
     )
     if skipped is not None:
         ctx.skipped = skipped

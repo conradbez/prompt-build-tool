@@ -6,7 +6,7 @@ import re
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Mapping
 
 from pbt.executor.parser_initial import (
     UnknownConfigKeyWarning,
@@ -31,6 +31,7 @@ from pbt.files import (
     Output,
     SQLiteBlobStore,
 )
+from pbt.secrets import Secrets
 from pbt.storage.base import StorageBackend
 from pbt.tokens import LLMResult
 from pbt.executor.executor import ModelRunResult
@@ -60,6 +61,7 @@ __all__ = [
     "PromptModelsDict",
     "PromptFile",
     "StorageBackend",
+    "Secrets",
     "File",
     "Dir",
     "Output",
@@ -125,6 +127,7 @@ async def async_run(
     blob_store: BlobStore | None = None,
     on_model_start: Callable[[str], None] | None = None,
     on_model_done: Callable[[ModelRunResult], None] | None = None,
+    secrets: Mapping[str, str] | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -182,6 +185,13 @@ async def async_run(
         Optional callback ``(result: ModelRunResult) -> None`` fired when a
         model finishes, whether it succeeded, errored or was skipped.
         ``result.status`` is ``"success"``, ``"error"`` or ``"skipped"``.
+    secrets:
+        Optional dict of run-scoped credentials (API keys, tokens).  Model
+        kinds read them as ``call.secrets["NAME"]``; an ``llm_call`` that
+        declares a ``secrets`` parameter receives them as well, so one
+        ``llm_call`` can serve a different key per run.  They are never
+        rendered into templates, part of the cache key, stored, or shown in a
+        repr — changing a key's value still gets cache hits.
 
     Returns
     -------
@@ -349,6 +359,7 @@ async def async_run(
         validators=validators or None,
         global_instruction=global_instruction,
         blob_store=blob_store,
+        secrets=secrets,
     )
 
     errors = sum(1 for r in results if r.status == "error")
@@ -400,6 +411,7 @@ def run(
     blob_store: "BlobStore | None" = None,
     on_model_start: "Callable[[str], None] | None" = None,
     on_model_done: "Callable[[ModelRunResult], None] | None" = None,
+    secrets: "Mapping[str, str] | None" = None,
 ):
     """Run prompt models synchronously.
 
@@ -423,4 +435,5 @@ def run(
         blob_store=blob_store,
         on_model_start=on_model_start,
         on_model_done=on_model_done,
+        secrets=secrets,
     ))

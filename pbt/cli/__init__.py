@@ -41,6 +41,7 @@ from pbt.llm import (
     try_load_client_module,
 )
 from pbt.rag import resolve_rag_call
+from pbt.secrets import MissingSecretsError
 from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
 from pbt.files import FileOutputError, contains_files, decode_output, display_text, export_files, iter_files
@@ -122,6 +123,18 @@ def main() -> None:
     ),
 )
 @click.option(
+    "--secret",
+    "secret_flags",
+    multiple=True,
+    metavar="NAME[=ENV_VAR]",
+    help=(
+        "Pass a credential to model kinds (call.secrets) and llm_call, read from "
+        "the environment variable NAME, or ENV_VAR when given. Never rendered, "
+        "cached or stored; values are never accepted on the command line. "
+        "Repeatable: --secret OPENAI_API_KEY --secret MODAL_TOKEN_ID=MY_VAR"
+    ),
+)
+@click.option(
     "--promptfile",
     "promptfiles",
     multiple=True,
@@ -164,7 +177,7 @@ def main() -> None:
         "with {{ config(gate=False) }}."
     ),
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
+def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], secret_flags: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
     """Execute all prompt models in dependency order.
 
     Tests in the tests dir are gates unless they set {{ config(gate=False) }}:
@@ -186,6 +199,8 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
             sys.exit(1)
         k, _, val = v.partition("=")
         promptdata_vars[k] = val
+
+    secrets = _secrets_or_exit(secret_flags)
 
     # Parse --promptfile NAME=PATH pairs into a dict of open file objects.
     promptfiles_dict: dict = {}
@@ -324,6 +339,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         promptfiles=promptfiles_dict or None,
         validators=validators or None,
         global_instruction=global_instruction,
+        secrets=secrets,
     )
     gated = None
     try:
@@ -356,7 +372,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
             all_results = gated.model_results
         else:
             all_results = asyncio.run(execute_run(run_id=run_id, ordered_models=ordered, **run_kwargs))
-    except EnvironmentError as exc:
+    except (EnvironmentError, MissingSecretsError) as exc:
         err_console.print(f"\n[red]Configuration error:[/red] {exc}")
         db.finish_run(run_id, "error")
         sys.exit(1)
@@ -617,7 +633,9 @@ _register_type_hints(main)
 @click.option("--port", default=8000, show_default=True)
 @click.option("--docs-output", default=".pbt/docs/index.html", show_default=True,
               help="Path to the pre-generated pbt docs HTML file.")
-def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_output: str) -> None:
+@click.option("--secret", "secret_flags", multiple=True, metavar="NAME[=ENV_VAR]",
+              help="Credential every run receives, read from the environment. Repeatable.")
+def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_output: str, secret_flags: tuple[str, ...]) -> None:
     """Start the pbt HTTP server and open the docs page in the browser."""
     import threading
     import time
@@ -637,7 +655,8 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
 
-    app = create_app(models_dir=models_dir, validation_dir=validation_dir)
+    secrets = _secrets_or_exit(secret_flags)
+    app = create_app(models_dir=models_dir, validation_dir=validation_dir, secrets=secrets)
 
     test_url = f"http://{host}:{port}/run"
     docs_path = Path(docs_output)
@@ -674,6 +693,20 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _secrets_or_exit(flags: tuple[str, ...]):
+    """Read --secret flags from the environment, or exit naming the unset one."""
+    from dotenv import load_dotenv
+
+    from pbt.secrets import secrets_from_env
+
+    load_dotenv()  # a .env file is the usual home for the keys --secret names
+    try:
+        return secrets_from_env(flags)
+    except ValueError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        sys.exit(1)
+
 
 def _serve_docs_files(app, files_dir: Path) -> None:
     """Serve the report's exported files without letting them act as pages.

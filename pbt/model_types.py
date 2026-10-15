@@ -59,7 +59,11 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from pbt.secrets import Secrets
+
 if TYPE_CHECKING:
+    from typing import Iterable, Mapping
+
     from pbt.model_spec import ModelSpec
 
 
@@ -89,6 +93,11 @@ class ModelCall:
     #: against this prompt, for a kind that produces its output some other way.
     compute: Callable[..., Awaitable[Any]]
 
+    #: Run-scoped credentials from ``run(secrets=...)``.  Read with
+    #: ``call.secrets["NAME"]``.  Kept out of the repr so a printed call or a
+    #: traceback never shows them.
+    secrets: Secrets = field(default_factory=Secrets, repr=False)
+
 
 #: ``async def exec_fn(rendered: str, call: ModelCall) -> Any``
 ExecFn = Callable[[str, ModelCall], Any]
@@ -113,6 +122,9 @@ class ModelKind:
     #: (Python source, a pass-through value) and so would be corrupted by it.
     accepts_global_instruction: bool = True
 
+    #: Secret names this kind reads from ``call.secrets``.  A run checks them
+    #: before any model starts, so a missing key fails at once, not mid-run.
+    required_secrets: frozenset[str] = field(default_factory=frozenset)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +177,7 @@ def model_kind(
     *,
     config_keys: "frozenset[str] | set[str] | None" = None,
     accepts_global_instruction: bool = True,
+    secrets: "frozenset[str] | set[str] | None" = None,
 ):
     """Decorator form of :func:`register_model_kind`, wrapping an ``exec_fn``.
 
@@ -173,6 +186,9 @@ def model_kind(
         @pbt.model_kind("shout", config_keys={"suffix"})
         async def shout(rendered, call):
             return (await call.llm(rendered)).upper()
+
+    *secrets* names the credentials the kind reads from ``call.secrets``; a
+    run that selects the kind but lacks one fails before any model starts.
 
     The function is returned unchanged, so it stays directly callable and
     testable on its own.
@@ -183,6 +199,7 @@ def model_kind(
             exec_fn=fn,
             config_keys=frozenset(config_keys or ()),
             accepts_global_instruction=accepts_global_instruction,
+            required_secrets=frozenset(secrets or ()),
         ))
         return fn
 
@@ -199,6 +216,17 @@ def known_model_kinds() -> set[str]:
     """Return every registered model_type value, excluding the unnamed default."""
     load_plugins()
     return {name for name in _REGISTRY if name != DEFAULT_MODEL_TYPE}
+
+
+def missing_secrets(specs: "Iterable[ModelSpec]", secrets: "Mapping[str, str]") -> dict[str, set[str]]:
+    """Map each secret the *specs*' kinds require but *secrets* lacks → kinds needing it."""
+    missing: dict[str, set[str]] = {}
+    for spec in specs:
+        kind = get_model_kind(spec.model_type)
+        for name in kind.required_secrets if kind is not None else ():
+            if name not in secrets:
+                missing.setdefault(name, set()).add(spec.model_type)
+    return missing
 
 
 def registered_config_keys() -> set[str]:

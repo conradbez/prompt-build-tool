@@ -15,7 +15,7 @@ already applied:
 ``ctx.call_llm(rendered, spec, state)`` → ``call.llm(rendered)``
     Send a rendered prompt.  This is the *only* place that builds a cache key,
     consults the prompt cache, inspects ``llm_call``'s signature for optional
-    ``files``/``config`` parameters, times the call, and copes with the callable
+    ``files``/``config``/``secrets`` parameters, times the call, and copes with the callable
     being sync or async.
 
 ``ctx.cached(rendered, spec, state, compute=...)`` → ``call.compute(rendered, compute=...)``
@@ -52,6 +52,7 @@ from pbt.files import (
     split_model_path,
 )
 from pbt.model_spec import ModelSpec
+from pbt.secrets import Secrets
 from pbt.storage.base import StorageBackend
 from pbt.tokens import add_tokens, split_usage
 from pbt.types import PromptFile
@@ -153,6 +154,11 @@ class RunContext:
     validators: dict | None = None
     global_instruction: str | None = None
 
+    #: Run-scoped credentials.  Handed to kinds as ``call.secrets`` and to an
+    #: ``llm_call`` that declares a ``secrets`` parameter — never to templates,
+    #: the cache key or storage.
+    secrets: Secrets = field(default_factory=Secrets, repr=False)
+
     #: Where file outputs' bytes live.  Defaults to the storage backend's own
     #: blob store, or an in-memory one for a backend that has none.
     blobs: BlobStore | None = None
@@ -239,7 +245,11 @@ class RunContext:
     # -- the LLM call -------------------------------------------------------
 
     def cache_key(self, spec: ModelSpec, rendered: str, files: list | None) -> str:
-        """The prompt cache key: rendered prompt, config, and attached files."""
+        """The prompt cache key: rendered prompt, config, and attached files.
+
+        Secrets are deliberately absent: rotating a key must not invalidate
+        the cache, and a key derived from one would be a fingerprint of it.
+        """
         return (
             rendered
             + "\x00"
@@ -335,7 +345,7 @@ class RunContext:
     ) -> str:
         """Send *rendered* to the LLM backend, or serve it from the prompt cache.
 
-        Optional ``files`` and ``config`` parameters are passed only when the
+        Optional ``files``, ``config`` and ``secrets`` parameters are passed only when the
         backend's signature declares them, so a two-line ``llm_call`` stays
         valid.  A synchronous backend runs in a worker thread, which is what
         lets a fan-out model issue its calls concurrently.
@@ -354,6 +364,8 @@ class RunContext:
             kwargs["files"] = files
         if "config" in params:
             kwargs["config"] = spec.config
+        if "secrets" in params:
+            kwargs["secrets"] = self.secrets
 
         if inspect.iscoroutinefunction(self.llm_call):
             return await self.llm_call(rendered, **kwargs)

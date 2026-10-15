@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:
     from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -76,8 +76,12 @@ def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
 def create_app(
     models_dir: str = "models",
     validation_dir: str = "validation",
+    secrets: "Mapping[str, str] | None" = None,
 ) -> FastAPI:
-    """Create and return a FastAPI app that exposes pbt over HTTP."""
+    """Create and return a FastAPI app that exposes pbt over HTTP.
+
+    *secrets* go to every run the app starts (``pbt serve --secret NAME``).
+    """
 
     # Detect DAG shape at startup for the test UI
     try:
@@ -176,6 +180,7 @@ def create_app(
                 promptfiles=promptfiles,
                 validation_dir=validation_dir,
                 verbose=False,
+                secrets=secrets,
             )
         except Exception as exc:
             return RunResponse(outputs={}, errors=[str(exc)])
@@ -225,6 +230,7 @@ def create_app(
                 promptfiles=promptfiles or None,
                 validation_dir=validation_dir,
                 verbose=False,
+                secrets=secrets,
             )
         except Exception as exc:
             return f'<article><p><mark>&#9888; {_html.escape(str(exc))}</mark></p></article>'
