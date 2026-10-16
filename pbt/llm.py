@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from pathlib import Path
 from types import ModuleType
 from typing import Callable
 
@@ -37,7 +38,10 @@ def load_client_module(models_dir: str) -> ModuleType | None:
     candidate = client_path(models_dir)
     if not os.path.isfile(candidate):
         return None
+    return _load_client_file(candidate)
 
+
+def _load_client_file(candidate: str) -> ModuleType:
     resolved = os.path.realpath(candidate)
     if resolved in _module_cache:
         return _module_cache[resolved]
@@ -47,6 +51,22 @@ def load_client_module(models_dir: str) -> ModuleType | None:
     spec.loader.exec_module(module)
     _module_cache[resolved] = module
     return module
+
+
+def client_module_for(model_path: Path) -> ModuleType | None:
+    """The client.py governing the .prompt file at *model_path*, or None.
+
+    The nearest client.py in a directory above the file — the project root
+    for ``models/x.prompt`` and for models in subfolders alike.  For a kind
+    that needs a project setting but is handed only its model.
+    """
+    if not model_path.is_file():
+        return None  # an inline model has no project
+    for parent in model_path.resolve().parents:
+        candidate = parent / CLIENT_FILENAME
+        if candidate.is_file():
+            return _load_client_file(str(candidate))
+    return None
 
 
 def try_load_client_module(models_dir: str) -> ModuleType | None:

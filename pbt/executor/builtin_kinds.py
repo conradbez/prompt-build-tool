@@ -150,8 +150,9 @@ async def run_agent(rendered: str, call: ModelCall) -> dict:
 
     ``agent_dir``         working directory (required)
     ``agent_backend``     ``mini-swe-agent`` (default) or ``opencode``
-    ``agent_model``       model name; defaults to ``MSWEA_MODEL_NAME`` for
-                          mini-swe-agent, to opencode's own config otherwise
+    ``agent_model``       model name; for mini-swe-agent defaults to
+                          client.py's ``agent_model``, then ``MSWEA_MODEL_NAME``;
+                          opencode's own config otherwise
     ``agent_step_limit``  max LLM calls, 0 for none (default 0)
     ``agent_cost_limit``  max spend in dollars, 0 for none (default 3)
     ``agent_mcp``         opencode only: MCP servers the agent may use, as a
@@ -251,7 +252,7 @@ def _exec_mini_swe_agent(task: str, call: ModelCall, workdir: Path) -> tuple[str
         "cost_limit": float(config.get("agent_cost_limit", 3.0)),
     }
     agent = DefaultAgent(
-        _agent_model(config.get("agent_model") or os.getenv("MSWEA_MODEL_NAME"), defaults["model"]),
+        _agent_model(_agent_model_name(call.spec), defaults["model"]),
         LocalEnvironment(cwd=str(workdir), **defaults["environment"]),
         **agent_cfg,
     )
@@ -414,6 +415,17 @@ def _last_error(events: list) -> str:
         if event.get("type") == "error":
             return str(event.get("error") or (event.get("part") or {}).get("error"))
     return "no error reported"
+
+
+def _agent_model_name(spec) -> str | None:
+    """config(agent_model=...), else client.py's ``agent_model``, else MSWEA_MODEL_NAME."""
+    if spec.config.get("agent_model"):
+        return str(spec.config["agent_model"])
+    from pbt.llm import client_module_for
+
+    module = client_module_for(spec.path)
+    name = getattr(module, "agent_model", None) if module is not None else None
+    return str(name) if name else os.getenv("MSWEA_MODEL_NAME")
 
 
 def _agent_model(name: str | None, model_cfg: dict):

@@ -120,3 +120,50 @@ def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
     _, _, again = run_models(models, storage=storage)
     assert len(calls) == 1, "second run is served from cache"
     assert {f.name for f in again["research"].value["files"]} == {"SS34.md", "crops"}
+
+
+# ---------------------------------------------------------------------------
+# Which model drives the agent: config > client.py agent_model > MSWEA_MODEL_NAME
+# ---------------------------------------------------------------------------
+
+def _agent_project(root, client_py: str | None, config: str = ""):
+    from pbt.executor.graph import load_models
+
+    (root / "models" / "sub").mkdir(parents=True)
+    if client_py is not None:
+        (root / "client.py").write_text(client_py)
+    (root / "models" / "sub" / "fix.prompt").write_text(
+        f'{{{{ config(model_type="agent", agent_dir="{root / "work"}"{config}) }}}}\ndo it'
+    )
+    return list(load_models(str(root / "models")).values())
+
+
+def _run_specs(specs):
+    import asyncio
+
+    from pbt.executor.executor import execute_run
+    from pbt.storage.memory import MemoryStorageBackend
+
+    storage = MemoryStorageBackend()
+    storage.init_db()
+    run_id = storage.create_run(model_count=len(specs))
+    return asyncio.run(execute_run(
+        run_id=run_id, ordered_models=specs, storage_backend=storage, llm_call=lambda p: "",
+    ))
+
+
+def test_client_py_agent_model_is_the_default(tmp_path, monkeypatch, scripted_agent):
+    monkeypatch.setenv("MSWEA_MODEL_NAME", "from-env")
+    _run_specs(_agent_project(tmp_path, 'agent_model = "from-client"\n'))
+    assert scripted_agent["name"] == "from-client"
+
+
+def test_config_agent_model_beats_client_py(tmp_path, scripted_agent):
+    _run_specs(_agent_project(tmp_path, 'agent_model = "from-client"\n', ', agent_model="from-config"'))
+    assert scripted_agent["name"] == "from-config"
+
+
+def test_env_var_is_the_fallback(tmp_path, monkeypatch, scripted_agent):
+    monkeypatch.setenv("MSWEA_MODEL_NAME", "from-env")
+    _run_specs(_agent_project(tmp_path, "x = 1\n"))
+    assert scripted_agent["name"] == "from-env"
