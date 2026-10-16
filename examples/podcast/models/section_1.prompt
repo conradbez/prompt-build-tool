@@ -1,0 +1,8 @@
+Write the 1st section of this podcast episode.
+
+[outline]
+{{ ref('outline') }}
+[/outline]
+
+Assume a single host. Respond with only the script text, ready to read out,
+and nothing else.

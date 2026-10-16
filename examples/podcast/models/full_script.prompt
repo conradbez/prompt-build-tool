@@ -1,0 +1,17 @@
+Write the full podcast episode from this outline. Use the first two sections
+below as written, then write the rest.
+
+[outline]
+{{ ref('outline') }}
+[/outline]
+
+[section 1]
+{{ ref('section_1') }}
+[/section 1]
+
+[section 2]
+{{ ref('section_2') }}
+[/section 2]
+
+Assume a single host. Respond with only the full script text (including the
+first two sections) and nothing else.

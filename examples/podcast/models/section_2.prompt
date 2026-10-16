@@ -1,0 +1,13 @@
+Write the 2nd section of this podcast episode. It follows straight on from
+section 1.
+
+[outline]
+{{ ref('outline') }}
+[/outline]
+
+[section 1]
+{{ ref('section_1') }}
+[/section 1]
+
+Assume a single host. Respond with only the script text, ready to read out,
+and nothing else.

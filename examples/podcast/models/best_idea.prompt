@@ -1,0 +1,10 @@
+Assess the podcast ideas below against the audience research and pick the one
+most likely to succeed. Say why.
+
+[ideas]
+{{ ref('podcast_ideas') }}
+[/ideas]
+
+[audience research]
+{{ ref('audience_research') }}
+[/audience research]
