@@ -22,3 +22,6 @@ venv/
 .dolt/
 *.db
 examples/running_with_files/.DS_Store
+
+# Files models produce (produces_files=True) land in outputs/<model>/
+examples/*/outputs/*/
