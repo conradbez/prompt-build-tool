@@ -1,134 +1,85 @@
 # pbt — prompt-build-tool
 
-A **data-enineering-inspired** prompt orchestration tool for LLMs.
+A **data-engineering-inspired** prompt orchestration tool for LLMs (think `dbt` for prompts).
 
-LLMs lack human intuition and grounded reality checks, so pbt structures prompt engineering into a DAG of interconnected hypotheses (pbt models) paired with predictive reality checks (pbt tests) to keep development oriented without losing context or rewriting from scratch.
+Write modular prompts in Jinja2, chain them into a DAG with `ref()`, and validate outputs against reality with `pbt test`—so you can iterate on complex LLM workflows without losing context or rewriting from scratch. *(Read more on the philosophy in [motivation.md](motivation.md)).*
 
-Write modular prompts in Jinja2, reference the output of other prompts with
-`ref()`, and let **pbt** resolve dependencies. 
+![Drag-and-drop DAG editor](motivation/dnd.png)
 
 ---
 
-
 ## Quick start
 
-```bash
-uv tool install prompt-build-tool --with anthropic && pbt init --provider anthropic
-# pip install prompt-build-tool anthropic && pbt init --provider anthropic   # or --provider openai | gemini
-export ANTHROPIC_API_KEY=your_key_here   # or OPENAI_API_KEY / GEMINI_API_KEY
-```
-
-Edit the `.prompt` files in `models/`, then:
+Install with `uv` (or `pip install prompt-build-tool anthropic`):
 
 ```bash
-pbt run
+uv tool install prompt-build-tool --with anthropic
+pbt init --provider anthropic   # or: openai | gemini
+export ANTHROPIC_API_KEY=your_key_here
+
 ```
 
-Optional extra model kinds (`python_modal`, `agent_modal`, `agent37`): `pip install "prompt-build-tool[extras]"`.
+Edit your `.prompt` files in `models/`, then run the pipeline, test expectations, and inspect the run:
 
-## Writing models
+```bash
+pbt run     # Execute the prompt DAG
+pbt test    # Validate outputs against tests/
+pbt docs    # Generate & open an HTML report of the run
+pbt serve   # Launch the interactive local UI / HTTP server
 
-Use `ref('model_name')` to inject the output of another model:
+```
+
+---
+
+## Core concepts
+
+### 1. Models (`models/*.prompt`)
+
+Each `.prompt` file is a node in your DAG. Use `ref('model_name')` to inject the output of an upstream model:
 
 ```jinja
 {# models/outline.prompt #}
 Based on this topic, create a detailed outline:
 
 {{ ref('topic') }}
+
 ```
+
+### 2. Model types (`config(model_type=...)`)
+
+Not every node in your pipeline needs to be a standard LLM call. Override `model_type` at the top of a `.prompt` file for deterministic steps, formatting, or coding agents:
+
+| Model Type | What it does | Declaration |
+| --- | --- | --- |
+| **LLM** *(default)* | Sends the rendered Jinja prompt to your configured LLM. | Standard `.prompt` file |
+| **`template`** | Renders Jinja directly with no LLM call (for reshaping upstream outputs). | `{{ config(model_type="template") }}` |
+| **`execute_python`** | Runs rendered template as Python; captures `stdout` or `output` variable. | `{{ config(model_type="execute_python") }}` |
+| **`agent`** | Hands the rendered prompt as a task to a coding agent (`mini-swe-agent`). | `{{ config(model_type="agent", agent_dir="./repo") }}` |
+
+*(Optional extra model kinds like `python_modal`, `agent_modal`, and `agent37` are available via `pip install "prompt-build-tool[extras]"`).*
+
+### 3. Tests (`tests/*.prompt`)
+
+Run `pbt test` to validate the latest run's outputs against your expectations:
+
+* **LLM-as-a-judge:** Prompt tests in `tests/*.prompt` pass when the LLM returns `{"results": "pass"}`.
+* **Deterministic checks:** Compare output fields directly in YAML using `expect` (no LLM judge needed).
+
+### 4. Visualizing & serving (`pbt docs` & `pbt serve`)
+
+Instead of digging through terminal logs, inspect and interact with your prompt graph visually:
+
+* **`pbt docs`** generates a self-contained HTML report of every run—showing rendered prompts, model outputs, token usage, and test results across the DAG.
+* **`pbt serve`** starts a local server to interactively explore the DAG, edit nodes, and trigger runs via HTTP or the visual UI.
 
 ---
 
-## Tests (`pbt test`)
+## Documentation
 
-Run `tests/*.prompt` files against the latest run's outputs. Each test passes when the LLM returns `{"results": "pass"}`. YAML cases can instead use `expect` to compare selected output fields directly, without a judge or test prompt files; see [YAML expectations](docs/ADVANCED_USAGE.md#checking-expected-outputs-expect).
-
-```bash
-pbt test
-```
-
-## Passing files to models (`promptfiles`)
-
-Models can receive files (PDFs, images, ...) alongside the prompt: declare them with `{{ config(promptfiles=["doc"]) }}`, then pass them with `pbt run --promptfile doc=report.pdf` or `pbt.run(..., promptfiles={"doc": "report.pdf"})`.
-Your `llm_call` gets them as a `files` parameter when its signature declares one.
-See [Passing files to models](docs/INTERMEDIATE_USAGE.md#passing-files-to-models-promptfiles) for multiple files, `config` and per-item files with `each=`.
-
----
-
-## Template models (`model_type="template"`)
-
-A `template` model renders its Jinja and uses the result as its output, with no
-LLM call — for nodes that only reshape what upstream models already produced.
-
-```jinja
-{# models/report.prompt #}
-{{ config(model_type="template") }}
-
-# {{ ref('title') }}
-
-{{ ref('summary') }}
-```
-
----
-
-## Python and agent models
-
-Not every node needs an LLM call. `execute_python` runs the rendered template as Python, for deterministic steps like counting, parsing or reshaping:
-
-```jinja
-{# models/length.prompt #}
-{{ config(model_type="execute_python") }}
-output = len(ref('article').split())
-```
-
-The output is what the code prints, or else the `output` variable (`dict`/`list` become JSON). `ref()` works in the code and builds dependency edges as usual. The code runs in-process with no sandbox, so treat `.prompt` files as trusted.
-
-`agent` hands the rendered template to a coding agent ([mini-swe-agent](https://mini-swe-agent.com), installed with pbt) as a task. The agent runs shell commands in `agent_dir` until it submits:
-
-```jinja
-{# models/fix_tests.prompt #}
-{{ config(model_type="agent", agent_dir="./repo") }}
-Make the failing test in tests/test_math.py pass.
-```
-
-- **Which LLM drives the agent:** set `agent_model = "anthropic/claude-sonnet-5"` (a [litellm](https://docs.litellm.ai/docs/providers) model name) in `client.py`.
-- **Reading the result:** the output is a dict, so downstream use `{{ ref('fix_tests')['output'] }}` for what the agent submitted.
-- **Caching:** an unchanged task is not re-run, same as Python models.
-
-More (step and cost limits, files the agent writes, the opencode backend with MCP): [Agent models](docs/ADVANCED_USAGE.md#agent-models-model_typeagent).
-
----
-
-## Intermediate usage
-
-[docs/INTERMEDIATE_USAGE.md](docs/INTERMEDIATE_USAGE.md) covers:
-
-- [Grouping models in folders](docs/INTERMEDIATE_USAGE.md#grouping-models-in-folders)
-- [`pbt docs`](docs/INTERMEDIATE_USAGE.md#pbt-docs) — HTML report of every run
-- [Passing variables with `promptdata()`](docs/INTERMEDIATE_USAGE.md#passing-variables-to-templates-promptdata)
-- [Customising the LLM backend (`client.py`)](docs/INTERMEDIATE_USAGE.md#customising-the-llm-backend-clientpy)
-- [Passing files to models](docs/INTERMEDIATE_USAGE.md#passing-files-to-models-promptfiles)
-- [RAG inside prompts](docs/INTERMEDIATE_USAGE.md#rag-inside-prompts-ragpy)
-- [Model kinds from installed packages](docs/INTERMEDIATE_USAGE.md#model-kinds-from-installed-packages)
-- [Dynamically skipping a model](docs/INTERMEDIATE_USAGE.md#how-to-dynamically-skip-a-model)
-- [Tests](docs/INTERMEDIATE_USAGE.md#pbt-tests) and [validation](docs/INTERMEDIATE_USAGE.md#validation-validation)
-
----
-
-## Advanced usage
-
-[docs/ADVANCED_USAGE.md](docs/ADVANCED_USAGE.md) covers:
-
-- [Python API](docs/ADVANCED_USAGE.md#python-api), including live progress callbacks and per-run `secrets`
-- [Token usage](docs/ADVANCED_USAGE.md#token-usage-pbtllmresult)
-- [Bulk testing with YAML cases](docs/ADVANCED_USAGE.md#bulk-testing-with-yaml-cases-pbt-test)
-- [`pbt ls`](docs/ADVANCED_USAGE.md#pbt-ls)
-- [`pbt serve`](docs/ADVANCED_USAGE.md#pbt-serve) and the [HTTP server](docs/ADVANCED_USAGE.md#http-server-utilsserver)
-- [Output format and `config()` keys](docs/ADVANCED_USAGE.md#output-format-config-config)
-- [Global instructions](docs/ADVANCED_USAGE.md#global-instructions-globalprompt)
-- [Map and reduce with `each=`](docs/ADVANCED_USAGE.md#map-and-reduce-each)
-- [Models that produce files](docs/ADVANCED_USAGE.md#models-that-produce-files-pbtfile-pbtdir-pbtoutput)
-- [Agent models](docs/ADVANCED_USAGE.md#agent-models-model_typeagent)
-- [Writing your own model kind](docs/ADVANCED_USAGE.md#writing-your-own-model-kind-model_type)
-
-Internals and design decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+| Category | Guides |
+| --- | --- |
+| **Inputs & Data** | [Passing variables (`promptdata`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23passing-variables-to-templates-promptdata) · [Passing files (`promptfiles`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23passing-files-to-models-promptfiles) · [RAG inside prompts](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23rag-inside-prompts-ragpy) · [Global instructions](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23global-instructions-globalprompt) |
+| **Workflow & DAG** | [Grouping models in folders](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23grouping-models-in-folders) · [Map & reduce (`each=`)](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23map-and-reduce-each) · [Dynamically skipping models](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23how-to-dynamically-skip-a-model) · [Models that produce files](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23models-that-produce-files-pbtfile-pbtdir-pbtoutput) |
+| **Testing & Eval** | [Writing tests](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23pbt-tests) · [Validation](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23validation-validation) · [Bulk YAML testing & `expect](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23bulk-testing-with-yaml-cases-pbt-test)` |
+| **CLI, UI & API** | [`pbt docs` (HTML report)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23pbt-docs) · [`pbt serve` & HTTP server](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23pbt-serve) · [`pbt ls`](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23pbt-ls) · [Python API & callbacks](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23python-api) · [Token usage](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23token-usage-pbtllmresult) |
+| **Customization** | [Custom LLM backend (`client.py`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23customising-the-llm-backend-clientpy) · [Output format & `config()](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23output-format-config-config)` · [Agent models](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23agent-models-model_typeagent) · [Custom model kinds](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23writing-your-own-model-kind-model_type) · [Architecture](https://www.google.com/search?q=docs/ARCHITECTURE.md) |

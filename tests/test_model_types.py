@@ -90,10 +90,9 @@ def test_registering_a_kind_declares_its_config_keys():
         )
 
 
-def test_unknown_model_type_warns_and_falls_back():
-    with pytest.warns(pbt.UnknownConfigKeyWarning, match="unknown model_type 'nope'"):
-        models = build_models_from_dict({"a": '{{ config(model_type="nope") }}\nHi'})
-    assert models["a"].model_type == ""
+def test_unknown_model_type_fails():
+    with pytest.raises(pbt.UnknownModelTypeError, match="unknown model_type 'nope'"):
+        build_models_from_dict({"a": '{{ config(model_type="nope") }}\nHi'})
 
 
 # ---------------------------------------------------------------------------

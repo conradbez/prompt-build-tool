@@ -14,6 +14,7 @@ from pbt.executor.parser_initial import (
     register_config_keys,
 )
 from pbt.classifier import systemone_classifier
+from pbt.executor.graph import UnknownModelTypeError
 from pbt.model_spec import ModelSpec
 from pbt.model_types import (
     ModelCall,
@@ -55,6 +56,7 @@ __all__ = [
     "register_config_keys",
     "known_config_keys",
     "UnknownConfigKeyWarning",
+    "UnknownModelTypeError",
     "systemone_classifier",
     "ModelStatus",
     "ModelError",

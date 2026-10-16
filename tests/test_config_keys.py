@@ -70,13 +70,17 @@ def test_register_config_keys_silences_warning(recwarn):
 
 
 # ---------------------------------------------------------------------------
-# Unknown model_type warns rather than silently running a plain LLM call
+# Unknown model_type fails rather than silently running a plain LLM call
 # ---------------------------------------------------------------------------
 
-def test_unknown_model_type_warns():
-    with pytest.warns(pbt.UnknownConfigKeyWarning, match="unknown model_type 'lop'"):
-        models = build_models_from_dict({"a": '{{ config(model_type="lop") }}\nHi'})
-    assert models["a"].model_type == ""  # fell back to the plain handler
+def test_unknown_model_type_fails():
+    with pytest.raises(pbt.UnknownModelTypeError, match="unknown model_type 'lop'"):
+        build_models_from_dict({"a": '{{ config(model_type="lop") }}\nHi'})
+
+
+def test_missing_extras_kind_says_what_to_install():
+    with pytest.raises(pbt.UnknownModelTypeError, match=r"prompt-build-tool\[extras\]"):
+        build_models_from_dict({"a": '{{ config(model_type="agent37") }}\nHi'})
 
 
 @pytest.mark.parametrize("model_type", ["template", "execute_python"])

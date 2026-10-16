@@ -28,9 +28,11 @@ tts_library ──────────────────────�
 
 ```bash
 cd examples/podcast
-pip install "prompt-build-tool[extras]" anthropic   # extras provides agent37
-export ANTHROPIC_API_KEY=...
-export AGENT37_API_KEY=...                           # for the audio model
+pip install "prompt-build-tool[extras]" openai python-dotenv  # extras provides agent37
+# put these in .env (client.py loads it) or export them:
+#   OPENROUTER_API_KEY=...
+#   AGENT37_API_KEY=...        # for the audio model
+#   OPENROUTER_MODEL=...       # optional, default anthropic/claude-sonnet-5.5
 pbt run                                              # writes outputs/full_script.md + audio
 pbt test                                             # is the opening gripping?
 ```

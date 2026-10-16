@@ -53,24 +53,32 @@ def _prompt_name(p: Path) -> str:
     return _SEQUENCE_PREFIX.sub("", name)
 
 
-def _resolve_model_type(config: dict, name: str, path: object = None) -> str:
-    """Return the model_type to use, warning and falling back on an unknown one.
+# Kinds shipped by pbt-extra-model-kinds, so the error can say what to install.
+_EXTRAS_KINDS = {"python_modal", "agent_modal", "agent37"}
 
-    An unknown model_type would otherwise run as a plain LLM call with no
-    indication that the requested behaviour never happened.
+
+class UnknownModelTypeError(Exception):
+    """A model asks for a model_type no installed kind provides."""
+
+
+def _resolve_model_type(config: dict, name: str, path: object = None) -> str:
+    """Return the model_type to use, raising on an unknown one.
+
+    Running an unknown model_type as a plain LLM call would report success
+    while the requested behaviour (an agent, a sandbox, files) never happened.
     """
     model_type = config.get("model_type", "")
     if model_type and get_model_kind(model_type) is None:
         where = f"'{name}'" + (f" ({path})" if path else "")
-        warnings.warn(
-            f"Model {where}: unknown model_type '{model_type}' — running it as a "
-            f"normal LLM call. Known model types: "
-            f"{', '.join(sorted(known_model_kinds()))}. Register your own with "
-            f"pbt.register_model_kind(pbt.ModelKind('{model_type}', your_exec_fn)).",
-            UnknownConfigKeyWarning,
-            stacklevel=3,
+        hint = (
+            f'Install it with: pip install "prompt-build-tool[extras]".'
+            if model_type in _EXTRAS_KINDS
+            else f"Register it with pbt.register_model_kind(pbt.ModelKind('{model_type}', your_exec_fn))."
         )
-        return ""
+        raise UnknownModelTypeError(
+            f"Model {where}: unknown model_type '{model_type}'. Known model types: "
+            f"{', '.join(sorted(known_model_kinds()))}. {hint}"
+        )
     return model_type
 
 
