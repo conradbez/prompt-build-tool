@@ -2,9 +2,10 @@
 
 A **data-engineering-inspired** prompt orchestration tool for LLMs (think `dbt` for prompts).
 
-Write modular prompts in Jinja2, chain them into a DAG with `ref()`, and validate outputs against reality with `pbt test`—so you can iterate on complex LLM workflows without losing context or rewriting from scratch. *(Read more on the philosophy in [motivation.md](motivation.md)).*
+**Why `pbt`?** Treating complex LLM workflows as giant one-shot prompts is like navigating a city by staring at your feet—one wrong turn and you're lost. `pbt` turns your prompts into a visual map of connected hypotheses (`models`) and reality-check landmarks (`tests`), with built-in tools to inspect runs (`pbt docs`) and interactively edit the DAG (`pbt serve`).
 
-![Drag-and-drop DAG editor](motivation/dnd.png)
+**Mechanically, this means you:** write modular prompts in Jinja2, chain them into a DAG with `ref()`, and validate outputs against reality with `pbt test`. Iterate on complex LLM workflows without losing context or rewriting from scratch. *(Read more on the philosophy in [motivation.md](motivation.md)).*
+![DAG visual](pbt_docs.png)
 
 ---
 
