@@ -10,6 +10,25 @@ pbt docs --open    # and opens it
 
 ---
 
+## Grouping models in folders
+
+Group models in folders as the project grows. A leading `<number>_<letter>_`
+only sorts files in reading order and is not part of the model name, so
+`2_build/2_a_parts.prompt` is still `ref('parts')`:
+
+```
+models/
+  1_design/
+    1_a_brief.prompt
+    1_b_requirements.prompt
+  2_build/
+    2_a_parts.prompt
+  3_qa/
+    3_a_bom_line.prompt
+```
+
+---
+
 ## Passing variables to templates (`promptdata()`)
 
 Inject runtime variables into templates using the `promptdata("name")` function — similar to how dbt's `source()` and `ref()` work.

@@ -2,6 +2,8 @@
 
 A **data-enineering-inspired** prompt orchestration tool for LLMs.
 
+LLMs lack human intuition and grounded reality checks, so pbt structures prompt engineering into a DAG of interconnected hypotheses (pbt models) paired with predictive reality checks (pbt tests) to keep development oriented without losing context or rewriting from scratch.
+
 Write modular prompts in Jinja2, reference the output of other prompts with
 `ref()`, and let **pbt** resolve dependencies. 
 
@@ -33,21 +35,6 @@ Use `ref('model_name')` to inject the output of another model:
 Based on this topic, create a detailed outline:
 
 {{ ref('topic') }}
-```
-
-Group models in folders as the project grows. A leading `<number>_<letter>_`
-only sorts files in reading order and is not part of the model name, so
-`2_build/2_a_parts.prompt` is still `ref('parts')`:
-
-```
-models/
-  1_design/
-    1_a_brief.prompt
-    1_b_requirements.prompt
-  2_build/
-    2_a_parts.prompt
-  3_qa/
-    3_a_bom_line.prompt
 ```
 
 ---
@@ -128,6 +115,7 @@ More (step and cost limits, files the agent writes, the opencode backend with MC
 
 [docs/INTERMEDIATE_USAGE.md](docs/INTERMEDIATE_USAGE.md) covers:
 
+- [Grouping models in folders](docs/INTERMEDIATE_USAGE.md#grouping-models-in-folders)
 - [`pbt docs`](docs/INTERMEDIATE_USAGE.md#pbt-docs) — HTML report of every run
 - [Passing variables with `promptdata()`](docs/INTERMEDIATE_USAGE.md#passing-variables-to-templates-promptdata)
 - [Customising the LLM backend (`client.py`)](docs/INTERMEDIATE_USAGE.md#customising-the-llm-backend-clientpy)
