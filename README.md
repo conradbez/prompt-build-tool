@@ -2,32 +2,31 @@
 
 A **data-engineering-inspired** prompt orchestration tool for LLMs (think `dbt` for prompts).
 
-**Why `pbt`?** Treating complex LLM workflows as giant one-shot prompts is like navigating a city by staring at your feet—one wrong turn and you're lost. `pbt` turns your prompts into a visual map of connected hypotheses (`models`) and reality-check landmarks (`tests`), with built-in tools to inspect runs (`pbt docs`) and interactively edit the DAG (`pbt serve`).
+**Why `pbt`?** Treating complex LLM workflows as giant one-shot prompts is like navigating a city by staring at your feet, one wrong turn and you're lost. `pbt` turns your prompts into a visual map of connected hypotheses (`models`) and reality-check landmarks (`tests`), with built-in tools to inspect runs (`pbt docs`).
 
-**Mechanically, this means you:** write modular prompts in Jinja2, chain them into a DAG with `ref()`, and validate outputs against reality with `pbt test`. Iterate on complex LLM workflows without losing context or rewriting from scratch. *(Read more on the philosophy in [motivation.md](motivation.md)).*
+**Mechanically, this means you:** write modular prompts in Jinja2, chain them into a dependency graph with `ref()`, and validate outputs against reality with `pbt test`. Iterate on complex LLM workflows without losing context or rewriting from scratch. *(Read more on the philosophy in [motivation.md](motivation.md)).*
+
 ![DAG visual](pbt_docs.png)
 
 ---
 
 ## Quick start
 
-Install with `uv` (or `pip install prompt-build-tool anthropic`):
-
 ```bash
-uv tool install prompt-build-tool --with anthropic
+uv tool install prompt-build-tool --with anthropic  # or: openai | gemini
 pbt init --provider anthropic   # or: openai | gemini
-export ANTHROPIC_API_KEY=your_key_here
 
 ```
 
 Edit your `.prompt` files in `models/`, then run the pipeline, test expectations, and inspect the run:
 
 ```bash
+export ANTHROPIC_API_KEY=your_key_here
+
 pbt run     # Execute the prompt DAG
 pbt test    # Validate outputs against tests/
-pbt docs    # Generate & open an HTML report of the run
+pbt docs    # Generate HTML report of the run and run history
 pbt serve   # Launch the interactive local UI / HTTP server
-
 ```
 
 ---
@@ -68,10 +67,10 @@ Run `pbt test` to validate the latest run's outputs against your expectations:
 
 ### 4. Visualizing & serving (`pbt docs` & `pbt serve`)
 
-Instead of digging through terminal logs, inspect and interact with your prompt graph visually:
+Inspect prompt graph visually:
 
 * **`pbt docs`** generates a self-contained HTML report of every run—showing rendered prompts, model outputs, token usage, and test results across the DAG.
-* **`pbt serve`** starts a local server to interactively explore the DAG, edit nodes, and trigger runs via HTTP or the visual UI.
+* **`pbt serve`** starts a local server to interactively explore the DAG, trigger runs or inspect previous results.
 
 ---
 
@@ -79,8 +78,8 @@ Instead of digging through terminal logs, inspect and interact with your prompt 
 
 | Category | Guides |
 | --- | --- |
-| **Inputs & Data** | [Passing variables (`promptdata`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23passing-variables-to-templates-promptdata) · [Passing files (`promptfiles`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23passing-files-to-models-promptfiles) · [RAG inside prompts](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23rag-inside-prompts-ragpy) · [Global instructions](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23global-instructions-globalprompt) |
-| **Workflow & DAG** | [Grouping models in folders](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23grouping-models-in-folders) · [Map & reduce (`each=`)](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23map-and-reduce-each) · [Dynamically skipping models](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23how-to-dynamically-skip-a-model) · [Models that produce files](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23models-that-produce-files-pbtfile-pbtdir-pbtoutput) |
-| **Testing & Eval** | [Writing tests](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23pbt-tests) · [Validation](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23validation-validation) · [Bulk YAML testing & `expect](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23bulk-testing-with-yaml-cases-pbt-test)` |
-| **CLI, UI & API** | [`pbt docs` (HTML report)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23pbt-docs) · [`pbt serve` & HTTP server](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23pbt-serve) · [`pbt ls`](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23pbt-ls) · [Python API & callbacks](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23python-api) · [Token usage](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23token-usage-pbtllmresult) |
-| **Customization** | [Custom LLM backend (`client.py`)](https://www.google.com/search?q=docs/INTERMEDIATE_USAGE.md%23customising-the-llm-backend-clientpy) · [Output format & `config()](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23output-format-config-config)` · [Agent models](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23agent-models-model_typeagent) · [Custom model kinds](https://www.google.com/search?q=docs/ADVANCED_USAGE.md%23writing-your-own-model-kind-model_type) · [Architecture](https://www.google.com/search?q=docs/ARCHITECTURE.md) |
+| **Inputs & Data** | [Passing variables (`promptdata`)](docs/INTERMEDIATE_USAGE.md#passing-variables-to-templates-promptdata) · [Passing files (`promptfiles`)](docs/INTERMEDIATE_USAGE.md#passing-files-to-models-promptfiles) · [RAG inside prompts](docs/INTERMEDIATE_USAGE.md#rag-inside-prompts-ragpy) · [Global instructions](docs/ADVANCED_USAGE.md#global-instructions-globalprompt) |
+| **Workflow & DAG** | [Grouping models in folders](docs/INTERMEDIATE_USAGE.md#grouping-models-in-folders) · [Map & reduce (`each=`)](docs/ADVANCED_USAGE.md#map-and-reduce-each) · [Dynamically skipping models](docs/INTERMEDIATE_USAGE.md#how-to-dynamically-skip-a-model) · [Models that produce files](docs/ADVANCED_USAGE.md#models-that-produce-files-pbtfile-pbtdir-pbtoutput) |
+| **Testing & Eval** | [Writing tests](docs/INTERMEDIATE_USAGE.md#pbt-tests) · [Validation](docs/INTERMEDIATE_USAGE.md#validation-validation) · [Bulk YAML testing & `expect`](docs/ADVANCED_USAGE.md#bulk-testing-with-yaml-cases-pbt-test) |
+| **CLI, UI & API** | [`pbt docs` (HTML report)](docs/INTERMEDIATE_USAGE.md#pbt-docs) · [`pbt serve` & HTTP server](docs/ADVANCED_USAGE.md#pbt-serve) · [`pbt ls`](docs/ADVANCED_USAGE.md#pbt-ls) · [Python API & callbacks](docs/ADVANCED_USAGE.md#python-api) · [Token usage](docs/ADVANCED_USAGE.md#token-usage-pbtllmresult) |
+| **Customization** | [Custom LLM backend (`client.py`)](docs/INTERMEDIATE_USAGE.md#customising-the-llm-backend-clientpy) · [Output format & `config()`](docs/ADVANCED_USAGE.md#output-format-config-config) · [Agent models](docs/ADVANCED_USAGE.md#agent-models-model_typeagent) · [Custom model kinds](docs/ADVANCED_USAGE.md#writing-your-own-model-kind-model_type) · [Architecture](docs/ARCHITECTURE.md) |
