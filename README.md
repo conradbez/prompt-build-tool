@@ -10,53 +10,21 @@ Write modular prompts in Jinja2, reference the output of other prompts with
 
 ## Quick start
 
-### 1. Install
-
 ```bash
-pip install prompt-build-tool
-
-# Also install the SDK for your LLM provider:
-# pip install google-genai      # Gemini
-# pip install openai            # OpenAI
-# pip install anthropic         # Anthropic
-
-# Optional: coding agents for model_type="agent"
-# pip install "prompt-build-tool[agent]"   # mini-swe-agent
-# npm i -g opencode-ai                     # opencode, with MCP servers
+uv tool install prompt-build-tool --with anthropic && pbt init --provider anthropic
+# pip install prompt-build-tool anthropic && pbt init --provider anthropic   # or --provider openai | gemini
+export ANTHROPIC_API_KEY=your_key_here   # or OPENAI_API_KEY / GEMINI_API_KEY
 ```
 
-### 2. Generate example
-
-```bash
-pbt init --provider anthropic
-# pbt init --provider openai
-# pbt init --provider gemini
-```
-
-### 3. Set your API key
-
-```bash
-export ANTHROPIC_API_KEY=your_key_here
-# export OPENAI_API_KEY=your_key_here
-# export GEMINI_API_KEY=your_key_here
-```
-
-### 4. Run
+Edit the `.prompt` files in `models/`, then:
 
 ```bash
 pbt run
 ```
 
-### 5. Extend prompt models
+Optional extra model kinds (`python_modal`, `agent_modal`, `agent37`): `pip install "prompt-build-tool[extras]"`.
 
-In the `models/` directory write `.prompt` files:
-
-```
-models/
-  topic.prompt
-  outline.prompt
-  article.prompt
-```
+## Writing models
 
 Use `ref('model_name')` to inject the output of another model:
 
@@ -81,8 +49,6 @@ models/
   3_qa/
     3_a_bom_line.prompt
 ```
-
-Model names must be unique across all folders.
 
 All standard Jinja2 syntax works too:
 

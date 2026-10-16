@@ -505,11 +505,10 @@ agent runs shell commands in `agent_dir` until it submits. Two backends:
 
 | `agent_backend`  | what it is | install |
 |------------------|------------|---------|
-| `mini-swe-agent` (default) | [mini-swe-agent](https://mini-swe-agent.com): a minimal bash-only agent | `pip install "prompt-build-tool[agent]"` |
+| `mini-swe-agent` (default) | [mini-swe-agent](https://mini-swe-agent.com): a minimal bash-only agent | included with pbt |
 | `opencode`       | [opencode](https://opencode.ai): a full coding agent with file tools and **MCP servers** | `npm i -g opencode-ai` (or `curl -fsSL https://opencode.ai/install \| bash`) |
 
 ```bash
-pip install "prompt-build-tool[agent]"              # mini-swe-agent
 export MSWEA_MODEL_NAME=anthropic/claude-sonnet-5   # any litellm model name
 
 npm i -g opencode-ai                                # opencode (npm, not pip)
