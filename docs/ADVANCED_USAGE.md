@@ -200,6 +200,16 @@ YAML cases, including their expectations.
 
 ---
 
+## `pbt ls`
+
+List discovered models and their dependency graph.
+
+```bash
+pbt ls
+```
+
+---
+
 ## `pbt serve`
 
 Start the pbt HTTP server and open the docs page in the browser.
@@ -509,11 +519,14 @@ agent runs shell commands in `agent_dir` until it submits. Two backends:
 | `opencode`       | [opencode](https://opencode.ai): a full coding agent with file tools and **MCP servers** | `npm i -g opencode-ai` (or `curl -fsSL https://opencode.ai/install \| bash`) |
 
 ```bash
-export MSWEA_MODEL_NAME=anthropic/claude-sonnet-5   # any litellm model name
-
 npm i -g opencode-ai                                # opencode (npm, not pip)
 opencode providers login                            # or export OPENAI_API_KEY etc.
 ```
+
+mini-swe-agent picks its LLM from, in order: `config(agent_model="...")` on the
+model, `agent_model = "..."` in `client.py`, then the `MSWEA_MODEL_NAME` env var.
+Each is a [litellm](https://docs.litellm.ai/docs/providers) model name such as
+`anthropic/claude-sonnet-5`. It does not use your `llm_call`.
 
 ```jinja
 {# models/fix_tests.prompt #}
@@ -697,7 +710,7 @@ the models it references — reading `call.outputs` directly does not create tha
 edge.
 
 For a *one-off* calculation, you do not need a kind at all:
-[`execute_python`](../README.md#python-models-model_typeexecute_python) already runs a
+[`execute_python`](../README.md#python-and-agent-models) already runs a
 model's template as Python. Write a kind when the behaviour is worth reusing
 across models and configuring per model, the way `truncate` takes `max_words`.
 
