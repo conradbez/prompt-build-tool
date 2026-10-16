@@ -7,6 +7,21 @@ from openai import OpenAI
 # the nearest .env above where you run pbt.
 load_dotenv(find_dotenv(usecwd=True))
 
+MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-5.5")
+
+# The agent37 model (audio) takes its LLM from the run settings, which default
+# to Gemini. Point it at OpenRouter too.
+try:
+    from pbt_extra_model_kinds import agent_exec
+
+    agent_exec.use_run(agent_exec.RunSettings(
+        provider="openrouter",
+        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        model=MODEL,
+    ))
+except ImportError:
+    pass  # no extras: pbt stops on the agent37 model and says what to install
+
 
 def llm_call(prompt: str) -> str:
     client = OpenAI(
@@ -14,7 +29,7 @@ def llm_call(prompt: str) -> str:
         api_key=os.environ["OPENROUTER_API_KEY"],
     )
     resp = client.chat.completions.create(
-        model=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-5.5"),
+        model=MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content

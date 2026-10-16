@@ -147,6 +147,23 @@ Return only valid JSON in this exact format:
   ]
 }
 """,
+    "models/README.md": """\
+# pbt models (The Map)
+
+Rather than treating prompts as isolated pass/fail one-shots — or saving an
+unorganized mess of every prompt ever tried — pbt models structures prompts as
+a Directed Acyclic Graph (DAG) of lower- and higher-order hypotheses. Like
+keeping failed working in physics, it externalizes your mental map so you can
+tweak underlying assumptions rather than doing blind, one-shot rewrites.
+""",
+    "tests/README.md": """\
+# pbt tests (The Landmarks)
+
+Tests preserve hard-earned domain lessons across iterations (such as catching
+a reversed diode where logical pin names matched, but physical pad connections
+were backward). They act as smoke tests to verify that a change actually moved
+the project toward the destination.
+""",
     "tests/summary_has_bullets.prompt": """\
 {# gate=False: summaries is the last model; nothing downstream for a gate to protect #}
 {{ config(gate=False) }}

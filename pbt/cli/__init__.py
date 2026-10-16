@@ -21,6 +21,7 @@ from pathlib import Path
 import click
 import networkx as nx
 from rich.console import Console
+from rich.markup import escape
 
 from pbt import db
 from pbt.storage.sqlite import StaleDatabaseError
@@ -226,7 +227,7 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         try_load_client_module(models_dir)  # registers any project-local model types
         all_models = load_models(models_dir)
     except (FileNotFoundError, UnknownModelTypeError) as exc:
-        err_console.print(f"[red]Error:[/red] {exc}")
+        err_console.print(f"[red]Error:[/red] {escape(str(exc))}")
         sys.exit(1)
     use_client_blob_store(models_dir)
     try:
@@ -446,7 +447,7 @@ def list_models(models_dir: str) -> None:
         try_load_client_module(models_dir)  # registers any project-local model types
         models = load_models(models_dir)
     except (FileNotFoundError, CyclicDependencyError, UnknownModelError, UnknownModelTypeError) as exc:
-        err_console.print(str(exc))
+        err_console.print(escape(str(exc)))
         sys.exit(1)
 
     console.print(pretty_print.models_table(list(models.values())))
