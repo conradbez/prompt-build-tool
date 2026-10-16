@@ -64,11 +64,12 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from pbt.executor.parser_initial import parse_model_config
 from pbt.executor.parser_model import render_prompt
 from pbt.promptparams import TestCase
+from pbt.secrets import Secrets
 from pbt.storage.base import StorageBackend
 
 
@@ -212,16 +213,22 @@ def _parsed_json(value):
     return value
 
 
-def _invoke_llm(rendered: str, llm_call: Callable, files: list | None = None) -> str:
+def _invoke_llm(
+    rendered: str, llm_call: Callable, files: list | None = None, secrets: Secrets | None = None
+) -> str:
     """
-    Call *llm_call* with *rendered*, passing *files* when the callable
-    accepts a ``files`` parameter — the same contract as model calls.
+    Call *llm_call* with *rendered*, passing *files* and *secrets* when the
+    callable declares those parameters — the same contract as model calls.
     """
     from pbt.tokens import split_usage
 
-    if files and "files" in inspect.signature(llm_call).parameters:
-        return split_usage(llm_call(rendered, files=files))[0]
-    return split_usage(llm_call(rendered))[0]
+    kwargs: dict = {}
+    params = inspect.signature(llm_call).parameters
+    if files and "files" in params:
+        kwargs["files"] = files
+    if "secrets" in params:
+        kwargs["secrets"] = secrets if secrets is not None else Secrets()
+    return split_usage(llm_call(rendered, **kwargs))[0]
 
 
 def _run_classifier_test(
@@ -289,6 +296,7 @@ def execute_tests(
     judge: str = "llm",
     classify_call: Callable[[str, str], float] | None = None,
     expect: dict | None = None,
+    secrets: Mapping[str, str] | None = None,
 ) -> list[TestResult]:
     """
     Execute each test prompt against the given model outputs.
@@ -328,10 +336,14 @@ def execute_tests(
     classify_call:
         Classifier backend ``(state, question) -> P(yes)``.  Required only
         when a test is classifier-judged.
+    secrets:
+        The run's credentials, passed to an LLM judge whose ``llm_call``
+        declares a ``secrets`` parameter.  Not part of the verdict cache key.
     """
     from pbt.classifier import parse_judge
 
     parse_judge(judge, "execute_tests")
+    secrets = secrets if isinstance(secrets, Secrets) else Secrets(secrets)
     if tests and llm_call is None and judge == "llm":
         raise ValueError(
             "llm_call must be provided to execute_tests(). "
@@ -432,7 +444,7 @@ def execute_tests(
                     elapsed_ms = 0
                 else:
                     t0 = time.monotonic()
-                    llm_output = _invoke_llm(rendered, llm_call, files)
+                    llm_output = _invoke_llm(rendered, llm_call, files, secrets)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     _store_verdict(storage_backend, run_id, display_name, source, rendered, llm_output, cache_key)
 

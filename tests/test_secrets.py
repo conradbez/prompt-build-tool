@@ -14,7 +14,7 @@ from pbt.executor.executor import execute_run
 from pbt.executor.graph import build_models_from_dict
 from pbt.executor.run_context import RunContext
 from pbt.model_types import ModelCall, _REGISTRY
-from pbt.secrets import MissingSecretsError, Secrets, secrets_from_env
+from pbt.secrets import MissingSecretsError, Secrets, parse_secret_flags
 from pbt.storage.memory import MemoryStorageBackend
 from pbt.storage.sqlite import SQLiteStorageBackend
 
@@ -192,20 +192,17 @@ def test_kind_declared_secrets_fail_before_any_model_runs():
 # CLI: names, never values
 # ---------------------------------------------------------------------------
 
-def test_secret_flag_reads_named_env_var():
-    assert dict(secrets_from_env(["API_KEY"], {"API_KEY": KEY})) == {"API_KEY": KEY}
-    assert dict(secrets_from_env(["API_KEY=MY_VAR"], {"MY_VAR": KEY})) == {"API_KEY": KEY}
+def test_secret_flag_takes_a_literal_value():
+    assert dict(parse_secret_flags([f"API_KEY={KEY}"], {})) == {"API_KEY": KEY}
 
 
-def test_secret_flag_rejects_unset_env_var():
-    with pytest.raises(ValueError, match="MY_VAR is not set"):
-        secrets_from_env(["API_KEY=MY_VAR"], {})
+def test_bare_secret_flag_reads_env_var_of_that_name():
+    assert dict(parse_secret_flags(["API_KEY"], {"API_KEY": KEY})) == {"API_KEY": KEY}
 
 
-def test_secret_flag_rejects_a_literal_value_without_echoing_it():
-    with pytest.raises(ValueError) as info:
-        secrets_from_env([f"API_KEY={KEY}"], {})
-    assert KEY not in str(info.value)
+def test_bare_secret_flag_rejects_unset_env_var():
+    with pytest.raises(ValueError, match="API_KEY is not set"):
+        parse_secret_flags(["API_KEY"], {})
 
 
 def test_cli_run_exits_when_secret_env_var_unset(tmp_path, monkeypatch):
@@ -214,3 +211,50 @@ def test_cli_run_exits_when_secret_env_var_unset(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["run", "--secret", "PBT_TEST_UNSET_KEY"])
     assert result.exit_code == 1
     assert "PBT_TEST_UNSET_KEY is not set" in " ".join(result.output.split())
+
+
+# ---------------------------------------------------------------------------
+# pbt test: --secret reaches the per-case runs and the LLM judge
+# ---------------------------------------------------------------------------
+
+SECRET_CLIENT_PY = """\
+import pbt
+
+@pbt.model_kind("needs_secret_cli_test", secrets={"PBT_CLI_TEST_KEY"})
+async def needs_secret(rendered, call):
+    return "value-from-kind"
+
+def llm_call(prompt, secrets):
+    assert secrets["PBT_CLI_TEST_KEY"]
+    return '{"results": "pass"}'
+"""
+
+
+def _secret_project(root):
+    (root / "models").mkdir()
+    (root / "tests").mkdir()
+    (root / "client.py").write_text(SECRET_CLIENT_PY)
+    (root / "models" / "m.prompt").write_text(
+        '{{ config(model_type="needs_secret_cli_test") }}\nhi'
+    )
+    (root / "tests" / "t.prompt").write_text("Is {{ ref('m') }} fine?")
+    (root / "tests" / "cases.yml").write_text("cases:\n  - name: one\n")
+
+
+def test_pbt_test_passes_secrets_to_runs_and_judge(tmp_path, monkeypatch):
+    _secret_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["test", "--secret", f"PBT_CLI_TEST_KEY={KEY}"])
+    assert result.exit_code == 0, result.output
+    assert KEY not in result.output
+    _REGISTRY.pop("needs_secret_cli_test", None)
+
+
+def test_pbt_test_without_secret_fails_cleanly(tmp_path, monkeypatch):
+    _secret_project(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["test"])
+    assert result.exit_code == 1
+    assert "PBT_CLI_TEST_KEY" in result.output
+    assert not isinstance(result.exception, MissingSecretsError)  # exited, no traceback
+    _REGISTRY.pop("needs_secret_cli_test", None)

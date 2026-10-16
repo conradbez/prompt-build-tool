@@ -1,7 +1,7 @@
 """
 :class:`Secrets` — run-scoped credentials that never leak into what pbt keeps.
 
-Pass them with ``pbt.run(secrets={...})`` or ``pbt run --secret NAME``.  A
+Pass them with ``pbt.run(secrets={...})`` or ``pbt run --secret NAME=VALUE``.  A
 model kind reads them as ``call.secrets["NAME"]``; an ``llm_call`` that
 declares a ``secrets`` parameter receives them too.
 
@@ -52,26 +52,28 @@ class Secrets(Mapping[str, str]):
         raise TypeError("Secrets cannot be pickled")
 
 
-def secrets_from_env(specs: Iterable[str], environ: Mapping[str, str] | None = None) -> Secrets:
-    """Build :class:`Secrets` from ``--secret`` flags, reading values from the env.
+def parse_secret_flags(specs: Iterable[str], environ: Mapping[str, str] | None = None) -> Secrets:
+    """Build :class:`Secrets` from ``--secret`` flags.
 
-    ``NAME`` reads env var ``NAME``; ``NAME=VAR`` reads env var ``VAR``.  The
-    flag only ever names a variable — a key typed on the command line would end
-    up in shell history and ``ps``.  Raises ValueError for an unset variable.
+    ``NAME=VALUE`` sets the value directly, like ``--promptdata``.  A bare
+    ``NAME`` reads environment variable ``NAME`` — handy for keys already in
+    the environment or a ``.env`` file, and it keeps them out of shell history.
+    Raises ValueError for a bare name whose variable is unset.  Errors never
+    echo a value.
     """
     environ = os.environ if environ is None else environ
     values: dict[str, str] = {}
     for spec in specs:
-        name, _, var = spec.partition("=")
-        name, var = name.strip(), (var or name).strip()
-        if not name or not var.isidentifier():
-            # Not echoed back: what follows '=' may be the key itself.
-            raise ValueError(
-                f"--secret {name or '?'}=...: takes NAME or NAME=ENV_VAR, where ENV_VAR "
-                "names an environment variable. Never pass the value on the command line."
-            )
-        value = environ.get(var)
-        if not value:
-            raise ValueError(f"--secret {name}: environment variable {var} is not set")
+        name, sep, value = spec.partition("=")
+        name = name.strip()
+        if not name:
+            raise ValueError("--secret takes NAME=VALUE or NAME, got an empty name")
+        if not sep:
+            value = environ.get(name, "")
+            if not value:
+                raise ValueError(
+                    f"--secret {name}: environment variable {name} is not set "
+                    f"(pass --secret {name}=VALUE, or set it)"
+                )
         values[name] = value
     return Secrets(values)

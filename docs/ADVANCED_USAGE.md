@@ -30,8 +30,8 @@ results = pbt.run(
 )
 ```
 
-> **Secrets.** `secrets=` (CLI: `--secret NAME` or `--secret NAME=ENV_VAR`, read
-> from the environment, never typed as a value) passes credentials to the run.
+> **Secrets.** `secrets=` (CLI: `--secret NAME=VALUE`, or a bare `--secret NAME`
+> to read env var `NAME`) passes credentials to the run.
 > Kinds read `call.secrets["NAME"]`; an `llm_call(prompt, secrets)` receives them
 > if it declares the parameter. Kinds can require them with
 > `@pbt.model_kind("x", secrets={"NAME"})` so a missing one fails before the run

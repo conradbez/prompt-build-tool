@@ -44,6 +44,7 @@ from pbt.llm import (
     try_load_client_module,
 )
 from pbt.rag import resolve_rag_call
+from pbt.secrets import MissingSecretsError
 from pbt.tester import load_tests, execute_tests
 from pbt.promptparams import (
     EXAMPLE_PATH,
@@ -149,6 +150,16 @@ def register_command(main) -> None:
         ),
     )
     @click.option(
+        "--secret",
+        "secret_flags",
+        multiple=True,
+        metavar="NAME=VALUE",
+        help=(
+            "Credential for model kinds and llm_call; a bare NAME reads that "
+            "environment variable. Same as pbt run --secret. Repeatable."
+        ),
+    )
+    @click.option(
         "--judge",
         type=click.Choice(["llm", "classifier"]),
         default=None,
@@ -170,6 +181,7 @@ def register_command(main) -> None:
         extends: tuple[str, ...],
         save_case_name: str | None,
         judge: str | None,
+        secret_flags: tuple[str, ...],
     ) -> None:
         """
         Run test prompts from the tests/ directory against model outputs.
@@ -181,9 +193,10 @@ def register_command(main) -> None:
         case and tests are reported for each named case individually.
         Without promptparams, tests run against the latest (or specified) run.
         """
-        from pbt.cli import _git_sha, init_db_or_exit
+        from pbt.cli import _git_sha, _secrets_or_exit, init_db_or_exit
 
         c = Console(highlight=not no_color)
+        secrets = _secrets_or_exit(secret_flags)
         init_db_or_exit()
 
         # ------------------------------------------------------------------
@@ -357,19 +370,25 @@ def register_command(main) -> None:
                 row_run_id = db.create_run(model_count=len(case_models), git_sha=git_sha)
                 model_run_results: list = []
                 on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(case_models))
-                run_results = asyncio.run(execute_run(
-                    run_id=row_run_id,
-                    ordered_models=case_models,
-                    preloaded_outputs=case.given or None,
-                    storage_backend=db,
-                    on_model_start=on_model_start,
-                    on_model_done=on_model_done,
-                    llm_call=llm_call,
-                    rag_call=rag_call,
-                    promptdata=row_promptdata or None,
-                    promptfiles=row_promptfiles or None,
-                    global_instruction=global_instruction,
-                ))
+                try:
+                    run_results = asyncio.run(execute_run(
+                        run_id=row_run_id,
+                        ordered_models=case_models,
+                        preloaded_outputs=case.given or None,
+                        storage_backend=db,
+                        on_model_start=on_model_start,
+                        on_model_done=on_model_done,
+                        llm_call=llm_call,
+                        rag_call=rag_call,
+                        promptdata=row_promptdata or None,
+                        promptfiles=row_promptfiles or None,
+                        global_instruction=global_instruction,
+                        secrets=secrets,
+                    ))
+                except MissingSecretsError as exc:
+                    err_console.print(f"[red]Configuration error:[/red] {exc}")
+                    db.finish_run(row_run_id, "error")
+                    sys.exit(1)
                 run_errors = sum(1 for r in run_results if r.status == "error")
                 any_run_errors = any_run_errors or bool(run_errors)
                 db.finish_run(row_run_id, "success" if not run_errors else "partial")
@@ -398,6 +417,7 @@ def register_command(main) -> None:
                     promptfiles=row_promptfiles or None,
                     param_label=case.name,
                     expect=case.expect,
+                    secrets=secrets,
                     judge=judge,
                     classify_call=classify_call,
                 )
@@ -475,6 +495,7 @@ def register_command(main) -> None:
                 llm_call=llm_call,
                 judge=judge,
                 classify_call=classify_call,
+                secrets=secrets,
             )
 
             pretty_print.print_test_summary(c, test_results, target_run)

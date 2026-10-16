@@ -136,6 +136,7 @@ async def execute_gated_run(
         promptfiles=test_promptfiles,
         judge=judge,
         classify_call=classify_call,
+        secrets=run_kwargs.get("secrets"),
     )
     if not result.gates_passed or any(r.status == "error" for r in first_results):
         result.blocked = [m.name for m in rest]

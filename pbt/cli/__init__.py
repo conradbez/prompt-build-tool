@@ -126,12 +126,11 @@ def main() -> None:
     "--secret",
     "secret_flags",
     multiple=True,
-    metavar="NAME[=ENV_VAR]",
+    metavar="NAME=VALUE",
     help=(
-        "Pass a credential to model kinds (call.secrets) and llm_call, read from "
-        "the environment variable NAME, or ENV_VAR when given. Never rendered, "
-        "cached or stored; values are never accepted on the command line. "
-        "Repeatable: --secret OPENAI_API_KEY --secret MODAL_TOKEN_ID=MY_VAR"
+        "Pass a credential to model kinds (call.secrets) and llm_call. A bare "
+        "NAME reads the environment variable NAME. Never rendered, cached or "
+        "stored. Repeatable: --secret OPENAI_API_KEY=sk-... --secret MODAL_TOKEN_ID"
     ),
 )
 @click.option(
@@ -633,8 +632,8 @@ _register_type_hints(main)
 @click.option("--port", default=8000, show_default=True)
 @click.option("--docs-output", default=".pbt/docs/index.html", show_default=True,
               help="Path to the pre-generated pbt docs HTML file.")
-@click.option("--secret", "secret_flags", multiple=True, metavar="NAME[=ENV_VAR]",
-              help="Credential every run receives, read from the environment. Repeatable.")
+@click.option("--secret", "secret_flags", multiple=True, metavar="NAME=VALUE",
+              help="Credential every run receives; a bare NAME reads that env var. Repeatable.")
 def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_output: str, secret_flags: tuple[str, ...]) -> None:
     """Start the pbt HTTP server and open the docs page in the browser."""
     import threading
@@ -695,14 +694,14 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 # ---------------------------------------------------------------------------
 
 def _secrets_or_exit(flags: tuple[str, ...]):
-    """Read --secret flags from the environment, or exit naming the unset one."""
+    """Parse --secret flags, or exit naming the one that has no value."""
     from dotenv import load_dotenv
 
-    from pbt.secrets import secrets_from_env
+    from pbt.secrets import parse_secret_flags
 
-    load_dotenv()  # a .env file is the usual home for the keys --secret names
+    load_dotenv()  # a bare --secret NAME may be defined in .env
     try:
-        return secrets_from_env(flags)
+        return parse_secret_flags(flags)
     except ValueError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
