@@ -17,7 +17,7 @@ only sorts files in reading order and is not part of the model name, so
 `2_build/2_a_parts.prompt` is still `ref('parts')`:
 
 ```
-models/
+map/
   1_design/
     1_a_brief.prompt
     1_b_requirements.prompt
@@ -38,7 +38,7 @@ promptmap run --promptdata tone=formal --promptdata audience=engineers
 ```
 
 ```python
-promptmap.run("models", promptdata={"tone": "formal", "audience": "engineers"})
+promptmap.run("map", promptdata={"tone": "formal", "audience": "engineers"})
 ```
 
 Access them in any `.prompt` file:
@@ -85,7 +85,7 @@ Re-running keeps existing values and appends any new keys (`--force` rewrites th
 
 ## Customising the LLM backend (`client.py`)
 
-promptmap is unopinionated about which LLM you use. Create `client.py` at the project root (alongside your `models/` directory) and define an `llm_call` function — usually 5 lines:
+promptmap is unopinionated about which LLM you use. Create `client.py` at the project root (alongside your `map/` directory) and define an `llm_call` function — usually 5 lines:
 
 ```python
 # client.py (Anthropic example)
@@ -130,8 +130,8 @@ promptmap run --promptfile report=annual.pdf --promptfile chart_image=q4.png
 ```
 
 ```python
-promptmap.run("models", promptfiles={"my_document": "report.pdf"})
-promptmap.run("models", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"})
+promptmap.run("map", promptfiles={"my_document": "report.pdf"})
+promptmap.run("map", promptfiles={"report": "annual.pdf", "chart_image": "q4.png"})
 ```
 
 **3. Custom `llm_call` with file and config support:**
@@ -157,7 +157,7 @@ A model with `{{ config(each="imgs") }}` can iterate over a list of files, or ov
 
 `promptmap` has very little to say about RAG and leaves that up to you - you do this through the
 `return_list_RAG_results(*args)` function `promptmap` give you access to in the .prompt template. `promptmap` will pass this call to
-the `do_RAG` function you define in `rag.py` (at the project root, alongside your `models/` directory):
+the `do_RAG` function you define in `rag.py` (at the project root, alongside your `map/` directory):
 
 ```python
 # rag.py
@@ -279,7 +279,7 @@ Respond {"results": "pass"} or {"results": "fail"}.
 All standard Jinja2 syntax works too:
 
 ```jinja
-{# models/comparison.prompt #}
+{# map/comparison.prompt #}
 {% set languages = ['Python', 'Go', 'Rust'] %}
 Compare these languages for building CLI tools:
 {% for lang in languages %}

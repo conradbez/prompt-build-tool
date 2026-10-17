@@ -38,7 +38,7 @@ Two things about that order are easy to get backwards:
 **The registry comes before parsing, not before execution.** `graph.build_spec()`
 calls `_resolve_model_type()`, which warns and falls back to a plain LLM call for
 any `model_type` it does not recognise. So `client.py` must be imported before
-`models/` is read, or a project-local kind looks like a typo and its models
+`map/` is read, or a project-local kind looks like a typo and its models
 silently run as ordinary prompts.
 
 **There are two parsers, at two different times.** `parser_initial.py` is static
@@ -74,7 +74,7 @@ than being sent to the LLM with a missing input.
 
 **Model data, model behaviour, and run inputs are three separate things.** A `ModelSpec` (`promptmap/model_spec.py`) is inert parsed data: source, deps, config, `model_type`. A `ModelKind` (`promptmap/model_types.py`) is a frozen record describing how that data becomes an output — at most one function, `async exec_fn(rendered, call)`, plus two declarative fields. A `RunContext` (`promptmap/executor/run_context.py`) carries every run-wide input — the backends, promptdata, promptfiles, validators, the global instruction, accumulated outputs — plus the shared mechanisms `render()`, `call_llm()` and `cached()`. Keeping them apart is why a new run-wide input is one field on `RunContext` rather than a new parameter on six functions, and why a new model kind is one function rather than an edit in the parser, the graph, and the executor.
 
-**A kind is data, not a class.** A kind holds no per-model state, so there is nothing for an instance to carry and nothing for a base class to supply. `ModelKind` is a frozen dataclass; the registry is `dict[str, ModelKind]`. The built-ins are the plain LLM call (`""`), `template` (`exec_fn=None`, so it contributes no execution code at all), `execute_python` and `agent`. promptmap has no DAG-rewriting hook, so the graph you read in `models/` is the graph that runs; a node is one render and one `exec_fn` call, except an `each=` node, which is one per item.
+**A kind is data, not a class.** A kind holds no per-model state, so there is nothing for an instance to carry and nothing for a base class to supply. `ModelKind` is a frozen dataclass; the registry is `dict[str, ModelKind]`. The built-ins are the plain LLM call (`""`), `template` (`exec_fn=None`, so it contributes no execution code at all), `execute_python` and `agent`. promptmap has no DAG-rewriting hook, so the graph you read in `map/` is the graph that runs; a node is one render and one `exec_fn` call, except an `each=` node, which is one per item.
 
 **Fan-out is the executor's job, not a kind's.** `config(each="path")` on any model tells `execute_model()` to resolve that path (`promptmap/jsonpath.py`: `.key`, `[n]`, `[*]`, strict) to a list, render once per item with `ref()` on the iterated model yielding that item (`primary=False`, so one skipped item does not mark the whole model skipped), run `exec_fn` on each concurrently via `asyncio.gather`, and collect the results in input order. `jsonpath.resolve_each` returns one row per item (value, index, indices, path, parent, like SQL's `json_each`), and each render gets that row as the `each` template variable and as the `call.outputs` overlay, so Python `ref()` sees the item too. `each` adds its model as a DAG edge in `graph.build_spec`. Map over map is two wildcards in one path, reduce is any downstream model; there is no recursion in the DAG, so the graph you read is still the graph that runs.
 
@@ -110,7 +110,7 @@ async def shout(rendered, call):
 ```
 
 ```jinja
-{# models/loud.prompt #}
+{# map/loud.prompt #}
 {{ config(model_type="shout", suffix="!") }}
 Summarise {{ ref('article') }}.
 ```
@@ -294,7 +294,7 @@ def my_rag(*args) -> list[str]:
     # your vector search here
     return ["Relevant doc 1", "Relevant doc 2"]
 
-results = promptmap.run("models", llm_call=my_llm, rag_call=my_rag)
+results = promptmap.run("map", llm_call=my_llm, rag_call=my_rag)
 ```
 
 ---
@@ -308,7 +308,7 @@ my-project/
 ├── client.py            # optional: llm_call(prompt) + custom model kinds
 ├── rag.py               # optional: do_RAG(...)
 ├── global.prompt        # optional: instruction prepended to every prompt
-├── models/
+├── map/
 │   ├── topic.prompt     # no dependencies
 │   ├── outline.prompt   # depends on topic
 │   └── article.prompt   # depends on topic + outline

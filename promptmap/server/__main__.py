@@ -1,7 +1,7 @@
 """
 Run the promptmap server from the command line:
 
-    python -m promptmap.server --models-dir models --port 8000
+    python -m promptmap.server --map-dir models --port 8000
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import argparse
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="promptmap HTTP server")
-    parser.add_argument("--models-dir", default="models", help="Directory with *.prompt files")
+    parser.add_argument("--map-dir", default="map", help="Directory with *.prompt files")
     parser.add_argument("--validation-dir", default="validation", help="Directory with validation *.py files")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
@@ -26,7 +26,7 @@ def main() -> None:
     from promptmap.server.app import create_app
 
     app = create_app(
-        models_dir=args.models_dir,
+        map_dir=args.map_dir,
         validation_dir=args.validation_dir,
     )
     uvicorn.run(app, host=args.host, port=args.port)

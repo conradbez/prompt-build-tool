@@ -515,7 +515,7 @@ def test_server_serves_blobs_as_downloads(tmp_path, monkeypatch):
     file = File(b"<script>alert(1)</script>", name="x.html")
     persist_files(file, store)
 
-    client = TestClient(create_app(models_dir=str(tmp_path / "models")))
+    client = TestClient(create_app(map_dir=str(tmp_path / "map")))
     resp = client.get(f"/blobs/{file.sha256}", params={"name": "x.html"})
     assert resp.status_code == 200
     assert resp.content == b"<script>alert(1)</script>"

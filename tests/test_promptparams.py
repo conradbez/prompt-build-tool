@@ -469,10 +469,10 @@ cases:
 @pytest.fixture()
 def promptparams_proj(tmp_path: Path) -> Path:
     proj = tmp_path / "pp_proj"
-    (proj / "models").mkdir(parents=True)
+    (proj / "map").mkdir(parents=True)
     (proj / "tests").mkdir()
 
-    (proj / "models" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
+    (proj / "map" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
     (proj / "tests" / "tone_test.prompt").write_text(SIMPLE_TEST_PROMPT_WITH_PROMPTDATA, encoding="utf-8")
     (proj / "client.py").write_text(SIMPLE_PROMPTPARAMS_CLIENT_PY, encoding="utf-8")
     write(proj / "tests" / "tone.yml", PROJECT_CASES)
@@ -603,8 +603,8 @@ def llm_call(prompt: str) -> str:
 
 def test_cli_given_pins_a_model_and_reaches_downstream_and_tests(tmp_path: Path) -> None:
     proj = tmp_path / "given_proj"
-    write(proj / "models" / "board.prompt", "Design the board.")
-    write(proj / "models" / "review.prompt",
+    write(proj / "map" / "board.prompt", "Design the board.")
+    write(proj / "map" / "review.prompt",
           "{{ config(model_type='template') }}D1 pad 1: {{ ref('board').pads[0] }}")
     write(proj / "tests" / "review_flags.prompt",
           "Review: {{ ref('review') }} / board: {{ ref('board').pads | join(',') }}")
@@ -626,7 +626,7 @@ cases:
 
 def test_cli_given_unknown_model_errors(tmp_path: Path) -> None:
     proj = tmp_path / "given_bad"
-    write(proj / "models" / "a.prompt", "A")
+    write(proj / "map" / "a.prompt", "A")
     write(proj / "tests" / "t.prompt", "{{ ref('a') }}")
     write(proj / "client.py", GIVEN_CLIENT_PY)
     write(proj / "tests" / "cases.yml", "cases:\n  - name: X\n    given: {nope: 1}\n")
@@ -659,8 +659,8 @@ def test_expect_without_judge_records_missing_output():
 @pytest.mark.parametrize('expected, exit_code', [('false', 0), ('true', 1)])
 def test_cli_yaml_expect_without_prompt_tests(tmp_path, expected, exit_code):
     proj = tmp_path / 'expect_proj'
-    write(proj / 'models' / 'board.prompt', 'Design the board.')
-    write(proj / 'models' / 'polarity.prompt', '''{{ config(model_type='template') }}
+    write(proj / 'map' / 'board.prompt', 'Design the board.')
+    write(proj / 'map' / 'polarity.prompt', '''{{ config(model_type='template') }}
 [{"ref": "D1", "built_pads_agree": {{ ref('board').correct | tojson }}},
  {"ref": "Q2", "built_pads_agree": true}]
 ''')
@@ -707,7 +707,7 @@ def test_expect_can_run_alongside_prompt_tests():
 ])
 def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
     proj = tmp_path / 'invalid_expect'
-    write(proj / 'models' / 'a.prompt', "{{ config(model_type='template') }}ok")
+    write(proj / 'map' / 'a.prompt', "{{ config(model_type='template') }}ok")
     write(proj / 'client.py', GIVEN_CLIENT_PY)
     write(proj / 'tests' / 'cases.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
     result = run_promptmap('test', cwd=proj, check=False)
@@ -717,8 +717,8 @@ def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
 
 def test_cli_model_failure_fails_even_when_expectations_pass(tmp_path):
     proj = tmp_path / 'failed_run'
-    write(proj / 'models' / 'good.prompt', "{{ config(model_type='template') }}ok")
-    write(proj / 'models' / 'bad.prompt', 'Fail this model')
+    write(proj / 'map' / 'good.prompt', "{{ config(model_type='template') }}ok")
+    write(proj / 'map' / 'bad.prompt', 'Fail this model')
     write(proj / 'client.py', 'def llm_call(prompt):\n    raise RuntimeError("model unavailable")\n')
     write(proj / 'tests' / 'cases.yml', 'cases:\n  - name: Failure\n    expect: {good: ok}\n')
     result = run_promptmap('test', cwd=proj, check=False)

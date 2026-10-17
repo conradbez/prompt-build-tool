@@ -40,7 +40,7 @@ Both tests should pass:
 
 | File | What it does |
 |---|---|
-| `models/haiku.prompt` | A fixed haiku (`model_type="template"`, no LLM call) |
+| `map/haiku.prompt` | A fixed haiku (`model_type="template"`, no LLM call) |
 | `tests/haiku_has_three_lines.prompt` | Passes when P(yes) ≥ 0.5 |
 | `tests/haiku_is_about_autumn.prompt` | Passes when P(yes) ≥ 0.8, set with `config(threshold=0.8)` |
 | `client.py` | `classify_call` pointing at Ollaya, and `test_judge = "classifier"` |

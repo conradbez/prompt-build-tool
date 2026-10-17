@@ -18,7 +18,7 @@ Adding a model kind therefore means writing step 3 only, as one function — see
 
 LLM configuration
 -----------------
-Use ``promptmap.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
+Use ``promptmap.llm.resolve_llm_call(map_dir)`` to auto-discover from client.py.
 """
 
 from __future__ import annotations
@@ -341,7 +341,7 @@ async def execute_run(
         ``--select`` so upstream models don't need to be re-executed.
     llm_call:
         LLM backend callable ``(prompt: str) -> str``. Required.
-        Use ``promptmap.llm.resolve_llm_call(models_dir)`` to auto-discover from client.py.
+        Use ``promptmap.llm.resolve_llm_call(map_dir)`` to auto-discover from client.py.
     rag_call:
         RAG backend callable or None.
     on_model_start / on_model_done:
@@ -371,7 +371,7 @@ async def execute_run(
     if llm_call is None:
         raise ValueError(
             "llm_call must be provided to execute_run(). "
-            "Use promptmap.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
+            "Use promptmap.llm.resolve_llm_call(map_dir) to auto-discover from client.py."
         )
 
     secrets = secrets if isinstance(secrets, Secrets) else Secrets(secrets)

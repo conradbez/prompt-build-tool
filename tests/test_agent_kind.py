@@ -129,13 +129,13 @@ def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
 def _agent_project(root, client_py: str | None, config: str = ""):
     from promptmap.executor.graph import load_models
 
-    (root / "models" / "sub").mkdir(parents=True)
+    (root / "map" / "sub").mkdir(parents=True)
     if client_py is not None:
         (root / "client.py").write_text(client_py)
-    (root / "models" / "sub" / "fix.prompt").write_text(
+    (root / "map" / "sub" / "fix.prompt").write_text(
         f'{{{{ config(model_type="agent", agent_dir="{root / "work"}"{config}) }}}}\ndo it'
     )
-    return list(load_models(str(root / "models")).values())
+    return list(load_models(str(root / "map")).values())
 
 
 def _run_specs(specs):

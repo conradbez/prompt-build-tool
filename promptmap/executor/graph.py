@@ -1,7 +1,7 @@
 """
 Dependency graph for prompt models.
 
-Loads every *.prompt file under the models/ directory, extracts ref()
+Loads every *.prompt file under the map/ directory, extracts ref()
 dependencies, and validates the graph (cycle detection, unknown refs).
 
 Parsing produces plain :class:`~promptmap.model_spec.ModelSpec` data.  The kind that
@@ -141,26 +141,26 @@ class UnknownModelError(Exception):
     pass
 
 
-def load_models(models_dir: str | Path = "models") -> dict[str, ModelSpec]:
+def load_models(map_dir: str | Path = "map") -> dict[str, ModelSpec]:
     """
-    Discover every *.prompt file in *models_dir* (recursing into subdirectories,
+    Discover every *.prompt file in *map_dir* (recursing into subdirectories,
     like dbt) and return a mapping of model_name → ModelSpec.
 
     The model name is the file stem (e.g. ``article`` for ``sub/article.prompt``).
     Names must be unique across all subdirectories — a clear error is raised
     if two files share the same stem.
     """
-    models_dir = Path(models_dir)
-    if not models_dir.exists():
+    map_dir = Path(map_dir)
+    if not map_dir.exists():
         raise FileNotFoundError(
-            f"Models directory '{models_dir}' not found. "
+            f"Map directory '{map_dir}' not found. "
             "Create it and add *.prompt files."
         )
 
     specs: dict[str, ModelSpec] = {}
 
     prompt_files = sorted(
-        {*models_dir.rglob("*.prompt"), *models_dir.rglob("*.prompt.jinja")}
+        {*map_dir.rglob("*.prompt"), *map_dir.rglob("*.prompt.jinja")}
     )
     for prompt_file in prompt_files:
         name = _prompt_name(prompt_file)
@@ -175,7 +175,7 @@ def load_models(models_dir: str | Path = "models") -> dict[str, ModelSpec]:
 
     if not specs:
         raise FileNotFoundError(
-            f"No *.prompt / *.prompt.jinja files found in '{models_dir}'."
+            f"No *.prompt / *.prompt.jinja files found in '{map_dir}'."
         )
 
     return _link_promptfile_deps(specs)
@@ -207,7 +207,7 @@ def build_dag(models: dict[str, ModelSpec]) -> nx.DiGraph:
             if dep not in models:
                 raise UnknownModelError(
                     f"Model '{name}' references ref('{dep}'), "
-                    f"but '{dep}.prompt' / '{dep}.prompt.jinja' does not exist in the models directory."
+                    f"but '{dep}.prompt' / '{dep}.prompt.jinja' does not exist in the map directory."
                 )
             # Edge: dep → model  (dep must execute first)
             dag.add_edge(dep, name)

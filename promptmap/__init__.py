@@ -115,7 +115,7 @@ class ModelError:
 
 
 async def async_run(
-    models_dir: str = "models",
+    map_dir: str = "map",
     models_from_dict: PromptModelsDict | dict[str, str] | None = None,
     select: list[str] | None = None,
     llm_call: Callable[[str], str | Awaitable[str]] | None = None,
@@ -136,19 +136,19 @@ async def async_run(
 
     Parameters
     ----------
-    models_dir:
+    map_dir:
         Path to the directory containing *.prompt files.
     select:
         Optional list of model names to run. All upstream dependencies are
         also executed fresh; the prompt cache makes unchanged nodes instant.
     llm_call:
         Optional function ``(prompt: str) -> str`` to use as the LLM backend.
-        Falls back to ``llm_call`` in client.py alongside *models_dir*; with
+        Falls back to ``llm_call`` in client.py alongside *map_dir*; with
         neither, the run fails with a FileNotFoundError naming the fix.
     rag_call:
         Optional function ``(*args) -> list | str`` to back
         ``return_list_RAG_results()`` in templates.
-        Falls back to ``models/rag.py::do_RAG`` if present.
+        Falls back to ``map/rag.py::do_RAG`` if present.
     verbose:
         Print a dbt-style progress log to stdout (default: True).
     promptdata:
@@ -165,7 +165,7 @@ async def async_run(
         Optional prompt text rendered into **every** model prompt — promptmap's
         analogue of dbt's query-comment.  Either a string or a zero-argument
         callable returning one.  Falls back to a ``global.prompt`` file
-        alongside ``models_dir`` when not given (file-based runs only).
+        alongside ``map_dir`` when not given (file-based runs only).
 
         The text is itself a Jinja template rendered with each model's own
         context, so ``promptdata()``, ``model.name`` and ``was_skipped()``
@@ -239,10 +239,10 @@ async def async_run(
     if models_from_dict is None:
         from promptmap.llm import try_load_client_module
 
-        try_load_client_module(models_dir)
+        try_load_client_module(map_dir)
 
     raw = models_from_dict.models if isinstance(models_from_dict, PromptModelsDict) else models_from_dict
-    all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(models_dir)
+    all_models = build_models_from_dict(raw) if models_from_dict is not None else load_models(map_dir)
 
     if select:
         import networkx as nx
@@ -272,13 +272,13 @@ async def async_run(
                 "Inline runs do not auto-load client.py from disk."
             )
         from promptmap.llm import resolve_llm_call
-        llm_call = resolve_llm_call(models_dir)
+        llm_call = resolve_llm_call(map_dir)
     if rag_call is None and models_from_dict is None:
         from promptmap.rag import resolve_rag_call
-        rag_call = resolve_rag_call(models_dir)
+        rag_call = resolve_rag_call(map_dir)
     if blob_store is None and models_from_dict is None:
         from promptmap.llm import resolve_blob_store
-        blob_store = resolve_blob_store(models_dir)
+        blob_store = resolve_blob_store(map_dir)
 
     # Global instruction: explicit argument wins, else global.prompt on disk.
     from promptmap.global_instruction import (
@@ -287,7 +287,7 @@ async def async_run(
     )
     global_instruction = coerce_global_instruction(global_instruction)
     if global_instruction is None and models_from_dict is None:
-        global_instruction = resolve_global_instruction(models_dir)
+        global_instruction = resolve_global_instruction(map_dir)
 
     # Load per-model validators from validation_dir (optional)
     validators = None
@@ -399,7 +399,7 @@ async def async_run(
 
 
 def run(
-    models_dir: str = "models",
+    map_dir: str = "map",
     models_from_dict: "PromptModelsDict | dict[str, str] | None" = None,
     select: "list[str] | None" = None,
     llm_call: "Callable[[str], str | Awaitable[str]] | None" = None,
@@ -423,7 +423,7 @@ def run(
     import asyncio
 
     return asyncio.run(async_run(
-        models_dir=models_dir,
+        map_dir=map_dir,
         models_from_dict=models_from_dict,
         select=select,
         llm_call=llm_call,

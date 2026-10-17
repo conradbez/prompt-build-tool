@@ -27,13 +27,13 @@ def llm_call(prompt, files=None, secrets=None):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    (tmp_path / "models").mkdir()
+    (tmp_path / "map").mkdir()
     (tmp_path / "client.py").write_text(CLIENT_PY)
-    (tmp_path / "models" / "greet.prompt").write_text(
+    (tmp_path / "map" / "greet.prompt").write_text(
         '{{ config(promptfiles=["doc"]) }}\n'
         'topic={{ promptdata("topic") }} tone={{ promptdata("tone") }}'
     )
-    (tmp_path / "models" / "kind.prompt").write_text('{{ config(model_type="needs_yml_secret_test") }}\nhi')
+    (tmp_path / "map" / "kind.prompt").write_text('{{ config(model_type="needs_yml_secret_test") }}\nhi')
     (tmp_path / "a.txt").write_text("A")
     (tmp_path / "b.txt").write_text("B")
     monkeypatch.chdir(tmp_path)
@@ -135,7 +135,7 @@ def test_init_project_has_no_values_files_by_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert CliRunner().invoke(main, ["init", "proj"]).exit_code == 0
     proj = tmp_path / "proj"
-    assert (proj / "models").is_dir()
+    assert (proj / "map").is_dir()
     for name in ("secrets.yml", "secrets-template.yml", "promptdata.yml", "promptfiles.yml", ".gitignore"):
         assert not (proj / name).exists(), name
 

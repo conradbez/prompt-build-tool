@@ -23,7 +23,7 @@ import promptmap
 from promptmap.storage import MemoryStorageBackend
 
 HERE = os.path.dirname(__file__)
-MODELS_DIR = os.path.join(HERE, "example_test_run", "models")
+MAP_DIR = os.path.join(HERE, "example_test_run", "map")
 PROMPTFILES = {"style_guide": os.path.join(HERE, "example_test_run", "example_article.md")}
 
 
@@ -55,7 +55,7 @@ def example_status_board():
         print_board()
 
     promptmap.run(
-        models_dir=MODELS_DIR,
+        map_dir=MAP_DIR,
         llm_call=slow_llm,
         promptfiles=PROMPTFILES,
         verbose=False,  # our board replaces promptmap's own log
@@ -89,7 +89,7 @@ async def example_event_stream():
     consumer_task = asyncio.create_task(consumer())
 
     results = await promptmap.async_run(
-        models_dir=MODELS_DIR,
+        map_dir=MAP_DIR,
         llm_call=async_slow_llm,
         promptfiles=PROMPTFILES,
         verbose=False,

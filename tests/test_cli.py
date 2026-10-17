@@ -15,10 +15,10 @@ import pytest
 from tests.conftest import MODELS, STUB_CLIENT_PY, run_promptmap
 
 
-def _write_models(models_dir: Path, models: dict[str, str]) -> None:
-    models_dir.mkdir(exist_ok=True)
+def _write_models(map_dir: Path, models: dict[str, str]) -> None:
+    map_dir.mkdir(exist_ok=True)
     for name, source in models.items():
-        (models_dir / f"{name}.prompt").write_text(source, encoding="utf-8")
+        (map_dir / f"{name}.prompt").write_text(source, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -29,10 +29,10 @@ def test_cli_run_all_model_types(tmp_path: Path) -> None:
     run_promptmap("init", "proj", "--provider", "openai", cwd=tmp_path)
     proj = tmp_path / "proj"
 
-    for folder in ("models", "validation", "tests"):
+    for folder in ("map", "validation", "tests"):
         shutil.rmtree(proj / folder, ignore_errors=True)
 
-    _write_models(proj / "models", MODELS)
+    _write_models(proj / "map", MODELS)
     (proj / "client.py").write_text(STUB_CLIENT_PY, encoding="utf-8")
 
     result = run_promptmap("run", cwd=proj, check=False)
@@ -75,11 +75,11 @@ Respond ONLY with valid JSON: {"results": "pass"} if yes, {"results": "fail"} if
 @pytest.fixture()
 def simple_proj(tmp_path: Path) -> Path:
     proj = tmp_path / "simple"
-    (proj / "models").mkdir(parents=True)
+    (proj / "map").mkdir(parents=True)
     (proj / "validation").mkdir()
     (proj / "tests").mkdir()
 
-    (proj / "models" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
+    (proj / "map" / "greet.prompt").write_text("Say hello in one word.", encoding="utf-8")
     (proj / "validation" / "greet.py").write_text(SIMPLE_VALIDATION_PY, encoding="utf-8")
     (proj / "tests" / "greet_is_greeting.prompt").write_text(SIMPLE_TEST_PROMPT, encoding="utf-8")
     (proj / "client.py").write_text(SIMPLE_CLIENT_PY, encoding="utf-8")

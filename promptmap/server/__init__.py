@@ -6,12 +6,12 @@ Usage
     from promptmap.server import create_app
     import uvicorn
 
-    app = create_app(models_dir="models")
+    app = create_app(map_dir="map")
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 Or from the command line::
 
-    python -m promptmap.server --models-dir models --port 8000
+    python -m promptmap.server --map-dir models --port 8000
 
 API
 ---

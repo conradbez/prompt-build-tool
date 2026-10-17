@@ -25,7 +25,7 @@ Usage
 Called automatically by the ``promptmap type-hints`` CLI command:
 
     promptmap type-hints
-    promptmap type-hints --models-dir models --validation-dir validation
+    promptmap type-hints --map-dir models --validation-dir validation
 
 Or imported directly:
 

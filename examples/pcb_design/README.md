@@ -47,7 +47,7 @@ Models are grouped by stage, in reading order. The `1_a_` prefixes only sort
 the files; `ref('parts')` still names `2_build/2_a_parts.prompt`.
 
 ```
-models/
+map/
   1_design/  1_a_brief  1_b_requirements  1_c_architecture  1_d_electrical_check
   2_build/   2_a_parts  2_b_research  2_c_layout_rules  2_d_board
   3_qa/      3_a_bom_line  3_b_polarity  3_c_bringup  3_d_review

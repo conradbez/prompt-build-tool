@@ -39,10 +39,10 @@ GATE = "TEST outline_ok\n{{ ref('outline') }}"  # a gate by default
 
 @pytest.fixture()
 def proj(tmp_path: Path) -> Path:
-    (tmp_path / "models").mkdir()
+    (tmp_path / "map").mkdir()
     (tmp_path / "tests").mkdir()
     for name, source in MODELS.items():
-        (tmp_path / "models" / f"{name}.prompt").write_text(source, encoding="utf-8")
+        (tmp_path / "map" / f"{name}.prompt").write_text(source, encoding="utf-8")
     (tmp_path / "tests" / "outline_ok.prompt").write_text(GATE, encoding="utf-8")
     (tmp_path / "client.py").write_text(CLIENT_PY, encoding="utf-8")
     (tmp_path / "verdict.txt").write_text("pass", encoding="utf-8")
@@ -112,7 +112,7 @@ def test_gate_referencing_unknown_model_is_a_dependency_error(proj: Path) -> Non
 
 
 def test_skip_downstream_carries_past_the_gate(proj: Path) -> None:
-    (proj / "models" / "topic.prompt").write_text(
+    (proj / "map" / "topic.prompt").write_text(
         'MODEL topic\n{{ skip_this_and_downstream("no topic") }}', encoding="utf-8"
     )
     (proj / "tests" / "outline_ok.prompt").write_text(

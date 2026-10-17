@@ -233,9 +233,9 @@ def classify_call(state: str, question: str) -> float:
 @pytest.fixture()
 def classifier_proj(tmp_path: Path) -> Path:
     proj = tmp_path / "proj"
-    (proj / "models").mkdir(parents=True)
+    (proj / "map").mkdir(parents=True)
     (proj / "tests").mkdir()
-    (proj / "models" / "haiku.prompt").write_text("Write a haiku.", encoding="utf-8")
+    (proj / "map" / "haiku.prompt").write_text("Write a haiku.", encoding="utf-8")
     # gate=False: the stub LLM fails this test, and promptmap run would judge it with the LLM.
     (proj / "tests" / "three_lines.prompt").write_text(
         "{{ config(gate=False) }}\n" + CLASSIFIER_TEST, encoding="utf-8"

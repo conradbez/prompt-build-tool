@@ -231,10 +231,10 @@ def llm_call(prompt, secrets):
 
 
 def _secret_project(root):
-    (root / "models").mkdir()
+    (root / "map").mkdir()
     (root / "tests").mkdir()
     (root / "client.py").write_text(SECRET_CLIENT_PY)
-    (root / "models" / "m.prompt").write_text(
+    (root / "map" / "m.prompt").write_text(
         '{{ config(model_type="needs_secret_cli_test") }}\nhi'
     )
     (root / "tests" / "t.prompt").write_text("Is {{ ref('m') }} fine?")

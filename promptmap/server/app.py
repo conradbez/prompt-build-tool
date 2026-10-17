@@ -74,7 +74,7 @@ def _serialise(outputs: dict) -> tuple[dict[str, Any], list[str]]:
 
 
 def create_app(
-    models_dir: str = "models",
+    map_dir: str = "map",
     validation_dir: str = "validation",
     secrets: "Mapping[str, str] | None" = None,
 ) -> FastAPI:
@@ -90,8 +90,8 @@ def create_app(
 
         # client.py registers any project-local model types; it has to be
         # imported before the models are parsed or those types look unknown.
-        try_load_client_module(models_dir)
-        _models = load_models(models_dir)
+        try_load_client_module(map_dir)
+        _models = load_models(map_dir)
         dag_promptdata: list[str] = get_dag_promptdata(_models)
         dag_promptfiles: list[str] = get_dag_promptfiles(_models)
         model_names: list[str] = list(_models.keys())
@@ -110,7 +110,7 @@ def create_app(
         from promptmap.llm import resolve_blob_store
         from promptmap.storage.sqlite import SQLiteStorageBackend
 
-        return resolve_blob_store(models_dir) or SQLiteStorageBackend().blob_store()
+        return resolve_blob_store(map_dir) or SQLiteStorageBackend().blob_store()
 
     # ------------------------------------------------------------------
     # GET /blobs/{sha256} — the bytes of a file a model produced
@@ -174,7 +174,7 @@ def create_app(
 
         try:
             outputs = await promptmap.async_run(
-                models_dir=models_dir,
+                map_dir=map_dir,
                 select=parsed_select,
                 promptdata=parsed_promptdata,
                 promptfiles=promptfiles,
@@ -224,7 +224,7 @@ def create_app(
 
         try:
             outputs = await promptmap.async_run(
-                models_dir=models_dir,
+                map_dir=map_dir,
                 select=selected,
                 promptdata=promptdata or None,
                 promptfiles=promptfiles or None,

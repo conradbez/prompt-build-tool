@@ -10,7 +10,7 @@ Two sources, in precedence order:
 1. The ``global_instruction=`` argument to :func:`promptmap.run` — a string, or a
    zero-argument callable returning a string (build it from your own config,
    environment, or registry at import time).
-2. A ``global.prompt`` file alongside the models directory, discovered the same
+2. A ``global.prompt`` file alongside the map directory, discovered the same
    way ``client.py`` and ``rag.py`` are.
 
 Models opt out individually with ``{{ config(global_instruction=False) }}``.
@@ -25,14 +25,14 @@ from typing import Callable
 GLOBAL_INSTRUCTION_FILENAME = "global.prompt"
 
 
-def resolve_global_instruction(models_dir: str) -> str | None:
+def resolve_global_instruction(map_dir: str) -> str | None:
     """
-    Search for global.prompt alongside *models_dir* (i.e. in its parent).
+    Search for global.prompt alongside *map_dir* (i.e. in its parent).
 
     Returns its source text, or None when the file does not exist — an absent
     global.prompt is the normal case, not an error.
     """
-    candidate = os.path.join(os.path.dirname(models_dir), GLOBAL_INSTRUCTION_FILENAME)
+    candidate = os.path.join(os.path.dirname(map_dir), GLOBAL_INSTRUCTION_FILENAME)
     if os.path.isfile(candidate):
         return Path(candidate).read_text(encoding="utf-8")
     return None

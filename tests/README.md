@@ -21,7 +21,7 @@ Vending machine business
 **The same map in promptmap.** Step (1) is a model, the check under it is a classifier test:
 
 ```jinja
-{# models/cad_box.prompt #}
+{# map/cad_box.prompt #}
 Write a programmatic CAD script (CadQuery) for a 60cm cubed box
 made from sheet metal.
 Client description: {{ promptdata("client_description") }}

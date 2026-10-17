@@ -2,8 +2,8 @@
 Demonstrates running promptmap programmatically from Python.
 
 Shows four usage patterns:
-  1. Default run — uses client.py (next to models/) or built-in Gemini + rag.py
-  2. Inline llm_call — swap in any LLM without touching the models directory
+  1. Default run — uses client.py (next to map/) or built-in Gemini + rag.py
+  2. Inline llm_call — swap in any LLM without touching the map directory
   3. Inline rag_call — provide a custom RAG function at call time
   4. Files — pass a file to a model that declares it in its config block
 """
@@ -15,16 +15,16 @@ load_dotenv()
 
 import promptmap
 
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "example_test_run", "models")
+MAP_DIR = os.path.join(os.path.dirname(__file__), "example_test_run", "map")
 
 
 # ---------------------------------------------------------------------------
-# Example 1 — default: picks up rag.py (next to models/) and GEMINI_API_KEY
+# Example 1 — default: picks up rag.py (next to map/) and GEMINI_API_KEY
 # ---------------------------------------------------------------------------
 
 def example_default():
     print("=== Example 1: default run ===")
-    results = promptmap.run(models_dir=MODELS_DIR)
+    results = promptmap.run(map_dir=MAP_DIR)
     for name, output in results.items():
         preview = output[:80].replace("\n", " ") if output else "(no output)"
         print(f"  {name:20s}  {preview}")
@@ -41,7 +41,7 @@ def my_llm(prompt: str) -> str:
 
 def example_inline_llm():
     print("\n=== Example 2: inline llm_call ===")
-    results = promptmap.run(models_dir=MODELS_DIR, llm_call=my_llm)
+    results = promptmap.run(map_dir=MAP_DIR, llm_call=my_llm)
     for name, output in results.items():
         preview = str(output)[:80].replace("\n", " ") if output else "(no output)"
         print(f"  {name:20s}  {preview}")
@@ -70,7 +70,7 @@ def my_rag(*args) -> list[str]:
 
 def example_inline_rag():
     print("\n=== Example 3: inline rag_call + inline llm_call ===")
-    results = promptmap.run(models_dir=MODELS_DIR, llm_call=my_llm, rag_call=my_rag)
+    results = promptmap.run(map_dir=MAP_DIR, llm_call=my_llm, rag_call=my_rag)
     for name, output in results.items():
         preview = str(output)[:80].replace("\n", " ") if output else "(no output)"
         print(f"  {name:20s}  {preview}")
@@ -92,7 +92,7 @@ def my_llm_with_files(prompt: str, files: list[str] | None = None) -> str:
 def example_files():
     print("\n=== Example 4: passing a file to a model ===")
     results = promptmap.run(
-        models_dir=MODELS_DIR,
+        map_dir=MAP_DIR,
         llm_call=my_llm_with_files,
         promptfiles={"style_guide": STYLE_GUIDE_PATH},
     )

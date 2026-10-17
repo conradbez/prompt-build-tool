@@ -17,7 +17,7 @@ INIT_FILES = {
 | File / Directory | Purpose |
 |-----------------|---------|
 | `client.py` | LLM backend (which model/API to call) |
-| `models/` | START HERE: Prompt files |
+| `map/` | START HERE: Prompt files |
 | `tests/` | LLM-as-judge tests |
 | `validation/` | Pre-pass quality gates |
 | `outputs/` | Generated outputs from `promptmap run` (auto-created) |
@@ -26,7 +26,7 @@ Run: `promptmap run` or `promptmap run --promptdata topic="your topic"`
 
 ---
 
-## models/
+## map/
 
 Write your prompts here. Each `.prompt` file defines one step in your pipeline.
 
@@ -35,7 +35,7 @@ You can:
 - Access passed-in data:           `{{ promptdata("key") }}`
 - Configure model behaviour:       `{{ config(output_format="json") }}`
 
-Example chain — `models/topic.prompt` → `models/article.prompt` → `models/summary.prompt`:
+Example chain — `map/topic.prompt` → `map/article.prompt` → `map/summary.prompt`:
 
     # topic.prompt
     Generate a catchy blog post topic about AI.
@@ -110,7 +110,7 @@ The `client.py` at the project root configures which LLM to call. It must expose
 Scaffolded with `promptmap init --classifier`, it also has `classifier_for_test_feedback`,
 which judges `{{ config(judge="classifier") }}` tests with a one-token yes/no call.
 """,
-    "models/articles.prompt": """\
+    "map/articles.prompt": """\
 {{ config(output_format="json") }}
 {# Generate an article on a topic. Pass --promptdata topic=... or leave blank for a generic article. #}
 {% if promptdata("topic") %}
@@ -129,7 +129,7 @@ Return only valid JSON in this exact format:
   "audience": "<intended audience, e.g. 'general public', 'developers', 'students'>"
 }
 """,
-    "models/summaries.prompt": """\
+    "map/summaries.prompt": """\
 {{ config(output_format="json") }}
 You are given a JSON article object. Produce a concise summary.
 
@@ -147,7 +147,7 @@ Return only valid JSON in this exact format:
   ]
 }
 """,
-    "models/README.md": """\
+    "map/README.md": """\
 # promptmap models (The Map)
 
 Rather than treating prompts as isolated pass/fail one-shots — or saving an
@@ -472,8 +472,8 @@ def register_command(main) -> None:
     @click.option("--data", "with_data", is_flag=True, default=False, help="Also write promptdata.yml.")
     @click.option("--files", "with_files", is_flag=True, default=False, help="Also write promptfiles.yml.")
     @click.option(
-        "--models-dir",
-        default="models",
+        "--map-dir",
+        default="map",
         show_default=True,
         help="Models whose keys --secrets/--data/--files write (relative to the project).",
     )
@@ -490,7 +490,7 @@ def register_command(main) -> None:
     )
     def init(
         project_name: str | None, force: bool, with_secrets: bool, with_data: bool,
-        with_files: bool, models_dir: str, provider: str, classifier: bool,
+        with_files: bool, map_dir: str, provider: str, classifier: bool,
     ) -> None:
         """Scaffold a starter promptmap project inside PROJECT_NAME/.
 
@@ -509,7 +509,7 @@ def register_command(main) -> None:
         kinds = [k for k, on in (("secrets", with_secrets), ("data", with_data), ("files", with_files)) if on]
         if project_name is None and kinds:
             for kind in kinds:
-                init_values_file(console, kind, Path("."), Path(models_dir), force)
+                init_values_file(console, kind, Path("."), Path(map_dir), force)
             return
         project_name = project_name or "generate_articles_example"
         provider = provider.lower()
@@ -565,7 +565,7 @@ def validate(prompt: str, result: str):
             console.print(f"  [dim]skipped[/dim]  {f}  [dim](use --force to overwrite)[/dim]")
 
         for kind in kinds:
-            init_values_file(console, kind, root, root / models_dir, force)
+            init_values_file(console, kind, root, root / map_dir, force)
 
         if created:
             console.print(f"\nRun [bold cyan]cd {project_name} && promptmap run[/bold cyan], or [bold cyan]promptmap run --promptdata topic='your topic'[/bold cyan]")
@@ -600,16 +600,16 @@ _VALUES_HEADERS = {
 }
 
 
-def _values_keys(kind: str, models_dir: Path) -> list[str]:
+def _values_keys(kind: str, map_dir: Path) -> list[str]:
     """Keys the project's models use for *kind*; empty if there are no models."""
     from promptmap.executor.graph import get_dag_promptdata, get_dag_promptfiles, load_models
     from promptmap.llm import try_load_client_module
     from promptmap.model_types import get_model_kind
 
-    if not models_dir.is_dir():
+    if not map_dir.is_dir():
         return []
-    try_load_client_module(str(models_dir))  # registers project-local kinds and their secrets
-    models = load_models(str(models_dir))
+    try_load_client_module(str(map_dir))  # registers project-local kinds and their secrets
+    models = load_models(str(map_dir))
     if kind == "data":
         return get_dag_promptdata(models)
     if kind == "files":
@@ -657,7 +657,7 @@ def _ensure_gitignored(root: Path, name: str) -> bool:
     return True
 
 
-def init_values_file(console, kind: str, root: Path, models_dir: Path, force: bool) -> None:
+def init_values_file(console, kind: str, root: Path, map_dir: Path, force: bool) -> None:
     """Write *root*'s values file for *kind* (`promptmap init --secrets|--data|--files`)."""
     import sys
 
@@ -671,9 +671,9 @@ def init_values_file(console, kind: str, root: Path, models_dir: Path, force: bo
     )
 
     try:
-        keys = _values_keys(kind, models_dir)
+        keys = _values_keys(kind, map_dir)
     except Exception as exc:  # noqa: BLE001 — a broken model shouldn't hide the cause
-        console.print(f"[red]Error:[/red] could not read models in {models_dir}: {escape(str(exc))}")
+        console.print(f"[red]Error:[/red] could not read models in {map_dir}: {escape(str(exc))}")
         sys.exit(1)
 
     if kind == "secrets":
@@ -691,4 +691,4 @@ def init_values_file(console, kind: str, root: Path, models_dir: Path, force: bo
     if kind == "secrets" and _ensure_gitignored(root, SECRETS_FILE):
         console.print(f"  [green]updated[/green]  {escape(str(root / '.gitignore'))} ({SECRETS_FILE})")
     if not keys:
-        console.print(f"  [dim]No {kind} keys found in {models_dir}/ — add name: value lines by hand.[/dim]")
+        console.print(f"  [dim]No {kind} keys found in {map_dir}/ — add name: value lines by hand.[/dim]")

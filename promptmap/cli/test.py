@@ -64,8 +64,8 @@ def register_command(main) -> None:
 
     @main.command("test", short_help="Run test prompts against model outputs.")
     @click.option(
-        "--models-dir",
-        default="models",
+        "--map-dir",
+        default="map",
         show_default=True,
         help="Directory containing *.prompt model files.",
     )
@@ -170,7 +170,7 @@ def register_command(main) -> None:
         ),
     )
     def test(
-        models_dir: str,
+        map_dir: str,
         tests_dir: str,
         run_id: str | None,
         no_color: bool,
@@ -215,27 +215,27 @@ def register_command(main) -> None:
         # Load models
         # ------------------------------------------------------------------
         try:
-            try_load_client_module(models_dir)  # registers any project-local model types
-            all_models = load_models(models_dir)
+            try_load_client_module(map_dir)  # registers any project-local model types
+            all_models = load_models(map_dir)
         except FileNotFoundError as exc:
             err_console.print(f"[red]Error:[/red] {exc}")
             sys.exit(1)
 
         from promptmap.cli import use_client_blob_store
-        use_client_blob_store(models_dir)
+        use_client_blob_store(map_dir)
 
         # ------------------------------------------------------------------
         # Resolve LLM backend (needed for both modes)
         # ------------------------------------------------------------------
         try:
-            llm_call = resolve_llm_call(models_dir)
-            rag_call = resolve_rag_call(models_dir)
-            judge = judge or resolve_test_judge(models_dir)
-            classify_call = resolve_classify_call(models_dir)
+            llm_call = resolve_llm_call(map_dir)
+            rag_call = resolve_rag_call(map_dir)
+            judge = judge or resolve_test_judge(map_dir)
+            classify_call = resolve_classify_call(map_dir)
             # Models under test render exactly as they do in a real run.  The
             # test prompts themselves never get it — a judge given style
             # instructions is a biased judge.
-            global_instruction = resolve_global_instruction(models_dir)
+            global_instruction = resolve_global_instruction(map_dir)
         except Exception as exc:
             err_console.print(f"[red]Backend resolution error:[/red] {exc}")
             sys.exit(1)

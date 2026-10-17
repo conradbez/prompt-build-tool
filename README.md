@@ -18,7 +18,7 @@ promptmap init --provider anthropic   # or: openai | gemini
 
 ```
 
-Edit your `.prompt` files in `models/`, then run the pipeline, test expectations, and inspect the run:
+Edit your `.prompt` files in `map/`, then run the pipeline, test expectations, and inspect the run:
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
@@ -33,12 +33,12 @@ promptmap serve   # Launch the interactive local UI / HTTP server
 
 ## Core concepts
 
-### 1. Models (`models/*.prompt`)
+### 1. Models (`map/*.prompt`)
 
 Each `.prompt` file is a node in your DAG. Use `ref('model_name')` to inject the output of an upstream model:
 
 ```jinja
-{# models/outline.prompt #}
+{# map/outline.prompt #}
 Based on this topic, create a detailed outline:
 
 {{ ref('topic') }}

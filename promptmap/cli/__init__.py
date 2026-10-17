@@ -71,10 +71,10 @@ from promptmap.cli.pretty_print import console, err_console
 # CLI group
 # ---------------------------------------------------------------------------
 
-def use_client_blob_store(models_dir: str) -> None:
+def use_client_blob_store(map_dir: str) -> None:
     """Point the run database at the blob store client.py declares, if any."""
     try:
-        store = resolve_blob_store(models_dir)
+        store = resolve_blob_store(map_dir)
     except TypeError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)
@@ -98,7 +98,7 @@ def init_db_or_exit() -> None:
 def main() -> None:
     """promptmap — dbt-inspired LLM prompt orchestration.
 
-    Models are Jinja2 *.prompt files in models/ that ref() each other; promptmap
+    Models are Jinja2 *.prompt files in map/ that ref() each other; promptmap
     runs them in dependency order, caches LLM calls and stores every run.
 
     \b
@@ -116,8 +116,8 @@ def main() -> None:
 
 @main.command()
 @click.option(
-    "--models-dir",
-    default="models",
+    "--map-dir",
+    default="map",
     show_default=True,
     help="Directory containing *.prompt files.",
 )
@@ -189,7 +189,7 @@ def main() -> None:
     type=click.Path(exists=True, dir_okay=False),
     help=(
         "Prompt file rendered into every model's prompt. "
-        "Overrides the global.prompt discovered alongside --models-dir."
+        "Overrides the global.prompt discovered alongside --map-dir."
     ),
 )
 @click.option(
@@ -202,7 +202,7 @@ def main() -> None:
         "with {{ config(gate=False) }}."
     ),
 )
-def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], secret_flags: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
+def run(map_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple[str, ...], secret_flags: tuple[str, ...], promptfiles: tuple[str, ...], validation_dir: str, clear_cache: bool, global_instruction_path: str | None, tests_dir: str) -> None:
     """Execute all prompt models in dependency order.
 
     Tests in the tests dir are gates unless they set {{ config(gate=False) }}:
@@ -270,12 +270,12 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     # Discover & validate models
     # ------------------------------------------------------------------
     try:
-        try_load_client_module(models_dir)  # registers any project-local model types
-        all_models = load_models(models_dir)
+        try_load_client_module(map_dir)  # registers any project-local model types
+        all_models = load_models(map_dir)
     except (FileNotFoundError, UnknownModelTypeError) as exc:
         err_console.print(f"[red]Error:[/red] {escape(str(exc))}")
         sys.exit(1)
-    use_client_blob_store(models_dir)
+    use_client_blob_store(map_dir)
     try:
         dag = build_dag(all_models)
     except (CyclicDependencyError, UnknownModelError) as exc:
@@ -327,14 +327,14 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     results: list = []
     on_start, on_done = pretty_print.make_run_callbacks(c, results, total=len(ordered))
 
-    # Discover user-provided client.py and rag.py from models_dir
+    # Discover user-provided client.py and rag.py from map_dir
     try:
-        llm_call = resolve_llm_call(models_dir)
-        rag_call = resolve_rag_call(models_dir)
+        llm_call = resolve_llm_call(map_dir)
+        rag_call = resolve_rag_call(map_dir)
         if global_instruction_path:
             global_instruction = Path(global_instruction_path).read_text(encoding="utf-8")
         else:
-            global_instruction = resolve_global_instruction(models_dir)
+            global_instruction = resolve_global_instruction(map_dir)
     except Exception as exc:
         err_console.print(f"[red]Backend resolution error:[/red] {exc}")
         db.finish_run(run_id, "error")
@@ -392,8 +392,8 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     try:
         if gates:
             try:
-                judge = resolve_test_judge(models_dir)
-                classify_call = resolve_classify_call(models_dir)
+                judge = resolve_test_judge(map_dir)
+                classify_call = resolve_classify_call(map_dir)
             except Exception as exc:
                 err_console.print(f"[red]Backend resolution error:[/red] {exc}")
                 db.finish_run(run_id, "error")
@@ -486,12 +486,12 @@ _register_test(main)
 # ---------------------------------------------------------------------------
 
 @main.command("ls", short_help="List models, their dependencies and inputs.")
-@click.option("--models-dir", default="models", show_default=True, help="Directory containing *.prompt files.")
-def list_models(models_dir: str) -> None:
+@click.option("--map-dir", default="map", show_default=True, help="Directory containing *.prompt files.")
+def list_models(map_dir: str) -> None:
     """List all discovered models, their dependencies and promptdata() keys."""
     try:
-        try_load_client_module(models_dir)  # registers any project-local model types
-        models = load_models(models_dir)
+        try_load_client_module(map_dir)  # registers any project-local model types
+        models = load_models(map_dir)
     except (FileNotFoundError, CyclicDependencyError, UnknownModelError, UnknownModelTypeError) as exc:
         err_console.print(escape(str(exc)))
         sys.exit(1)
@@ -531,11 +531,11 @@ def show_runs(limit: int) -> None:
     show_default=True,
     help="output: the (validated) LLM output; prompt: the rendered prompt sent; all: both.",
 )
-@click.option("--models-dir", default="models", show_default=True,
+@click.option("--map-dir", default="map", show_default=True,
               help="Used to find client.py, for a custom blob store.")
 @click.option("--save-files", "save_files", default=None, metavar="DIR",
               help="Write the files this model produced into DIR.")
-def show_result(model_name: str, run_id: str | None, show: str, models_dir: str, save_files: str | None) -> None:
+def show_result(model_name: str, run_id: str | None, show: str, map_dir: str, save_files: str | None) -> None:
     """Print stored output for MODEL_NAME (from the latest run by default).
 
     \b
@@ -544,7 +544,7 @@ def show_result(model_name: str, run_id: str | None, show: str, models_dir: str,
       promptmap show-result summaries --show all --run-id <id from promptmap show-runs>
     """
     init_db_or_exit()
-    use_client_blob_store(models_dir)
+    use_client_blob_store(map_dir)
 
     with db.get_conn() as conn:
         if run_id:
@@ -610,8 +610,8 @@ def show_result(model_name: str, run_id: str | None, show: str, models_dir: str,
 
 @main.command("docs")
 @click.option(
-    "--models-dir",
-    default="models",
+    "--map-dir",
+    default="map",
     show_default=True,
     help="Directory containing *.prompt files (for DAG diagram).",
 )
@@ -628,7 +628,7 @@ def show_result(model_name: str, run_id: str | None, show: str, models_dir: str,
     default=False,
     help="Open the generated file in the default browser.",
 )
-def docs(models_dir: str, output: str, open_browser: bool) -> None:
+def docs(map_dir: str, output: str, open_browser: bool) -> None:
     """Generate a self-contained HTML report of all previous runs."""
     import webbrowser
 
@@ -641,11 +641,11 @@ def docs(models_dir: str, output: str, open_browser: bool) -> None:
 
     models = None
     try:
-        try_load_client_module(models_dir)  # registers any project-local model types
-        models = load_models(models_dir)
+        try_load_client_module(map_dir)  # registers any project-local model types
+        models = load_models(map_dir)
     except (FileNotFoundError, Exception):
         pass
-    use_client_blob_store(models_dir)
+    use_client_blob_store(map_dir)
 
     output_path = Path(output)
     generate_docs(
@@ -681,7 +681,7 @@ _register_type_hints(main)
 # ---------------------------------------------------------------------------
 
 @main.command("serve", short_help="Serve the docs report and a web/HTTP model runner.")
-@click.option("--models-dir", default="models", show_default=True, help="Directory containing *.prompt files.")
+@click.option("--map-dir", default="map", show_default=True, help="Directory containing *.prompt files.")
 @click.option("--validation-dir", default="validation", show_default=True,
               help="Directory containing per-model validation Python files.")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
@@ -691,7 +691,7 @@ _register_type_hints(main)
 @click.option("--secret", "secret_flags", multiple=True, metavar="NAME=VALUE",
               help="Credential every run receives; a bare NAME reads that env var. "
                    "Overrides secrets.yml. Repeatable.")
-def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_output: str, secret_flags: tuple[str, ...]) -> None:
+def serve(map_dir: str, validation_dir: str, host: str, port: int, docs_output: str, secret_flags: tuple[str, ...]) -> None:
     """Start the promptmap HTTP server and open the docs page in the browser.
 
     Serves the report from `promptmap docs` (if generated) and a /run page for
@@ -716,7 +716,7 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
         sys.exit(1)
 
     secrets = _secrets_or_exit(secret_flags)
-    app = create_app(models_dir=models_dir, validation_dir=validation_dir, secrets=secrets)
+    app = create_app(map_dir=map_dir, validation_dir=validation_dir, secrets=secrets)
 
     test_url = f"http://{host}:{port}/run"
     docs_path = Path(docs_output)

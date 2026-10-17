@@ -47,12 +47,12 @@ def test_one_warning_per_unknown_key():
 
 
 def test_warning_names_the_model_and_file(tmp_path, recwarn):
-    models_dir = tmp_path / "models"
-    models_dir.mkdir()
-    (models_dir / "article.prompt").write_text('{{ config(tags="x") }}\nHi', encoding="utf-8")
+    map_dir = tmp_path / "map"
+    map_dir.mkdir()
+    (map_dir / "article.prompt").write_text('{{ config(tags="x") }}\nHi', encoding="utf-8")
 
     with pytest.warns(promptmap.UnknownConfigKeyWarning, match="article") as record:
-        load_models(models_dir)
+        load_models(map_dir)
     assert "article.prompt" in str(record[0].message)
 
 

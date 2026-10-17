@@ -1,6 +1,6 @@
 """LLM backend + a custom model kind for this project.
 
-promptmap imports this file before it reads models/, so any model kind registered
+promptmap imports this file before it reads map/, so any model kind registered
 here is available to every .prompt file.
 """
 

@@ -1,7 +1,7 @@
 """
 promptmap test runner — discovers and executes *.prompt test files.
 
-Test files live in the tests/ directory (sibling to models/).
+Test files live in the tests/ directory (sibling to map/).
 They have full Jinja2 context (ref() works just like in model prompts).
 
 Pass / fail rule
@@ -347,7 +347,7 @@ def execute_tests(
     if tests and llm_call is None and judge == "llm":
         raise ValueError(
             "llm_call must be provided to execute_tests(). "
-            "Use promptmap.llm.resolve_llm_call(models_dir) to auto-discover from client.py."
+            "Use promptmap.llm.resolve_llm_call(map_dir) to auto-discover from client.py."
         )
 
     from promptmap.executor.run_context import _files_hash

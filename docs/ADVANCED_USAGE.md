@@ -19,7 +19,7 @@ for name, output in results.items():
 
 ```python
 results = promptmap.run(
-    models_dir="models",       # path to *.prompt files
+    map_dir="map",       # path to *.prompt files
     select=["article"],        # optional: run only these models
     llm_call=my_llm_fn,        # optional: custom LLM backend
     rag_call=my_rag_fn,        # optional: custom RAG function
@@ -40,14 +40,14 @@ results = promptmap.run(
 
 | Parameter | Type | Description |
 |---|---|---|
-| `models_dir` | `str` | Directory containing `*.prompt` files |
+| `map_dir` | `str` | Directory containing `*.prompt` files |
 | `select` | `list[str] \| None` | Run only these models (upstream outputs loaded from DB) |
-| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `client.py` (next to models/) |
-| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `rag.py` (next to models/) `do_RAG` |
+| `llm_call` | `(prompt: str) -> str \| None` | Override LLM backend. Falls back to `client.py` (next to map/) |
+| `rag_call` | `(*args) -> list \| str \| None` | Override RAG function. Falls back to `rag.py` (next to map/) `do_RAG` |
 | `promptdata` | `dict \| None` | Variables injected into every template, accessed via `{{ promptdata('key') }}` |
 | `promptfiles` | `dict \| None` | File paths by name, provided to models that declare `promptfiles:` in their config block |
 | `validation_dir` | `str` | Directory with per-model `validate(prompt, result) -> bool` files |
-| `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to models/) |
+| `global_instruction` | `str \| () -> str \| None` | Text rendered into every model's prompt. Falls back to `global.prompt` (next to map/) |
 | `on_model_start` | `(name: str) -> None \| None` | Called just before each model starts |
 | `secrets` | `dict[str, str] \| None` | Per-run credentials for kinds (`call.secrets`) and `llm_call(prompt, secrets)`. Never rendered, cached or stored |
 | `on_model_done` | `(result: ModelRunResult) -> None \| None` | Called when each model finishes; `result.status` is `"success"`, `"error"` or `"skipped"` |
@@ -57,7 +57,7 @@ or `ModelStatus.SKIPPED` when an upstream model failed, or a `ModelError`
 carrying the message when that model itself failed.
 
 ```python
-results = promptmap.run("models")
+results = promptmap.run("map")
 
 if isinstance(results["article"], promptmap.ModelError):
     print("failed:", results["article"])
@@ -78,7 +78,7 @@ the run is in progress, e.g. to drive a UI:
 ```python
 statuses = {}
 promptmap.run(
-    "models",
+    "map",
     on_model_start=lambda name: statuses.update({name: "running"}),
     on_model_done=lambda r: statuses.update({r.model_name: r.status}),
 )
@@ -226,7 +226,7 @@ promptmap serve
 Deploy over to run and return LLM response to .prompt pipeline over HTTP. Runs a lightweight FastAPI server and manages pipeline execution and return (requires `pip install fastapi uvicorn`):
 
 ```bash
-python -m utils.server --models-dir models --port 8000
+python -m utils.server --map-dir models --port 8000
 ```
 
 ```
@@ -242,7 +242,7 @@ Or use the factory in Python:
 from utils.server import create_app
 import uvicorn
 
-app = create_app(models_dir="models")
+app = create_app(map_dir="map")
 uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
@@ -287,14 +287,14 @@ Sometimes every prompt in a project needs the same preamble — a house style, a
 persona, an output convention. This is promptmap's analogue of dbt's `query-comment`:
 one snippet, rendered into every prompt promptmap sends.
 
-Create a `global.prompt` next to your `models/` directory (the same place
+Create a `global.prompt` next to your `map/` directory (the same place
 `client.py` and `rag.py` live) and it is picked up automatically:
 
 ```
 my_project/
 ├── client.py
 ├── global.prompt      ← rendered into every model's prompt
-└── models/
+└── map/
     ├── article.prompt
     └── summary.prompt
 ```
@@ -388,7 +388,7 @@ Set `each` in `config()` to run a model once per item of an upstream list, then 
 | `report` | none | `ref('polish')` = `[t1, t2, t3]` | one string |
 
 ```jinja
-{# models/polish.prompt #}
+{# map/polish.prompt #}
 {{ config(each="sections[*][*]") }}
 Polish this section:
 {{ ref('sections') }}
@@ -529,7 +529,7 @@ Each is a [litellm](https://docs.litellm.ai/docs/providers) model name such as
 `anthropic/claude-sonnet-5`. It does not use your `llm_call`.
 
 ```jinja
-{# models/fix_tests.prompt #}
+{# map/fix_tests.prompt #}
 {{ config(model_type="agent", agent_dir="./repo", agent_step_limit="30") }}
 Make the failing test in tests/test_math.py pass. Explain the fix in your final output.
 
@@ -577,7 +577,7 @@ through `OPENCODE_CONFIG_CONTENT`, which opencode merges over its project and
 global config, so an `opencode.json` already in `agent_dir` still applies.
 
 ```jinja
-{# models/research.prompt #}
+{# map/research.prompt #}
 {{ config(
     model_type="agent",
     agent_backend="opencode",
@@ -625,7 +625,7 @@ async def shout(rendered, call):
 Then use it from any model:
 
 ```jinja
-{# models/loud.prompt #}
+{# map/loud.prompt #}
 {{ config(model_type="shout", suffix="!") }}
 Summarise {{ ref('article') }}.
 ```

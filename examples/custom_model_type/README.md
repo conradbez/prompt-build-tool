@@ -13,10 +13,10 @@ promptmap run --promptdata topic="deep sea mining"
 
 | File | Model type | What it does |
 |---|---|---|
-| `models/article.prompt` | *(none)* | An ordinary model — the rendered prompt goes to the LLM |
-| `models/headline.prompt` | `shout` | Custom: calls the LLM, then uppercases the answer and appends `suffix` |
-| `models/length.prompt` | `execute_python` | Built-in: runs the template as Python instead of calling the LLM |
-| `models/report.prompt` | `template` | Built-in: renders Jinja and returns it, no LLM call |
+| `map/article.prompt` | *(none)* | An ordinary model — the rendered prompt goes to the LLM |
+| `map/headline.prompt` | `shout` | Custom: calls the LLM, then uppercases the answer and appends `suffix` |
+| `map/length.prompt` | `execute_python` | Built-in: runs the template as Python instead of calling the LLM |
+| `map/report.prompt` | `template` | Built-in: renders Jinja and returns it, no LLM call |
 | `client.py` | — | Registers the `shout` type, and defines `llm_call` |
 
 Run it and `outputs/report.md` looks like:

@@ -189,8 +189,8 @@ async def test_changing_the_instruction_busts_the_cache() -> None:
 # ---------------------------------------------------------------------------
 
 def test_global_prompt_file_is_discovered(tmp_path) -> None:
-    (tmp_path / "models").mkdir()
-    (tmp_path / "models" / "topic.prompt").write_text("Name one topic.")
+    (tmp_path / "map").mkdir()
+    (tmp_path / "map" / "topic.prompt").write_text("Name one topic.")
     (tmp_path / "client.py").write_text(STUB_CLIENT_PY)
     (tmp_path / "global.prompt").write_text("Always answer in French.")
 
@@ -202,8 +202,8 @@ def test_global_prompt_file_is_discovered(tmp_path) -> None:
 
 
 def test_cli_flag_overrides_the_file(tmp_path) -> None:
-    (tmp_path / "models").mkdir()
-    (tmp_path / "models" / "topic.prompt").write_text("Name one topic.")
+    (tmp_path / "map").mkdir()
+    (tmp_path / "map" / "topic.prompt").write_text("Name one topic.")
     (tmp_path / "client.py").write_text(STUB_CLIENT_PY)
     (tmp_path / "global.prompt").write_text("From the file.")
     (tmp_path / "override.prompt").write_text("From the flag.")
