@@ -69,15 +69,17 @@ Instead of repeating flags on every run, put defaults in flat `name: value` file
 
 CLI flags always win, key by key — so `promptdata.yml` can set `tone` and `topic` while `--promptdata topic=dogs` changes only `topic`. Keys with an empty value are ignored.
 
-Generate a file listing the keys your models use:
+`pbt init` doesn't create these files unless asked. Generate them, listing the keys your models use, in an existing project:
 
 ```bash
-pbt init data      # promptdata.yml — every promptdata("...") key
-pbt init files     # promptfiles.yml — every config(promptfiles=...) name
-pbt init secrets   # secrets.yml + secrets-template.yml — secrets your model kinds require
+pbt init --data      # promptdata.yml — every promptdata("...") key
+pbt init --files     # promptfiles.yml — every config(promptfiles=...) name
+pbt init --secrets   # secrets.yml + secrets-template.yml — secrets your model kinds require
 ```
 
-Re-running keeps existing values and appends any new keys (`--force` rewrites the file). `pbt init secrets` also adds `secrets.yml` to `.gitignore`: commit `secrets-template.yml` (same keys, no values) and keep real credentials out of git. Like `--secret`, values from `secrets.yml` are never rendered, cached or stored.
+or alongside a new project: `pbt init my_project --secrets --data`.
+
+Re-running keeps existing values and appends any new keys (`--force` rewrites the file). `--secrets` also adds `secrets.yml` to `.gitignore`: commit `secrets-template.yml` (same keys, no values) and keep real credentials out of git. Like `--secret`, values from `secrets.yml` are never rendered, cached or stored.
 
 ---
 

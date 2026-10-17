@@ -1,4 +1,4 @@
-"""secrets.yml / promptdata.yml / promptfiles.yml defaults, and `pbt init secrets|data|files`."""
+"""secrets.yml / promptdata.yml / promptfiles.yml defaults, and `pbt init --secrets|--data|--files`."""
 
 from __future__ import annotations
 
@@ -98,11 +98,11 @@ def test_bad_secrets_yml_never_echoes_its_contents(project):
 
 
 # ---------------------------------------------------------------------------
-# pbt init secrets | data | files
+# pbt init --secrets | --data | --files
 # ---------------------------------------------------------------------------
 
 def _init(kind):
-    return CliRunner().invoke(main, ["init", kind])
+    return CliRunner().invoke(main, ["init", f"--{kind}"])
 
 
 def test_init_data_and_files_list_model_keys(project):
@@ -131,8 +131,22 @@ def test_init_keeps_existing_values_and_appends_new_keys(project):
     assert yaml.safe_load(text) == {"topic": "cats", "tone": ""}
 
 
-def test_init_project_scaffold_ships_secrets_template(tmp_path, monkeypatch):
+def test_init_project_has_no_values_files_by_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert CliRunner().invoke(main, ["init", "proj"]).exit_code == 0
-    assert (tmp_path / "proj" / "secrets-template.yml").is_file()
-    assert "secrets.yml" in (tmp_path / "proj" / ".gitignore").read_text().splitlines()
+    proj = tmp_path / "proj"
+    assert (proj / "models").is_dir()
+    for name in ("secrets.yml", "secrets-template.yml", "promptdata.yml", "promptfiles.yml", ".gitignore"):
+        assert not (proj / name).exists(), name
+
+
+def test_init_project_with_flags_scaffolds_values_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["init", "proj", "--secrets", "--data", "--files"])
+    assert result.exit_code == 0, result.output
+    proj = tmp_path / "proj"
+    assert yaml.safe_load((proj / "promptdata.yml").read_text()) == {"topic": ""}
+    assert (proj / "promptfiles.yml").is_file()
+    assert (proj / "secrets.yml").is_file() and (proj / "secrets-template.yml").is_file()
+    assert "secrets.yml" in (proj / ".gitignore").read_text().splitlines()
+    assert not (tmp_path / "promptdata.yml").exists()  # written into the project, not cwd

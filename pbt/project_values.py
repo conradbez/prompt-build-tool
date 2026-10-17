@@ -9,8 +9,8 @@ in.  ``pbt run`` uses them for any value not passed on the command line —
 
 ``secrets.yml`` holds credentials, so it belongs in ``.gitignore``; commit
 ``secrets-template.yml`` (same keys, empty values) instead.  ``pbt init
-secrets`` / ``data`` / ``files`` writes a file with the keys the project's
-models use.
+--secrets`` / ``--data`` / ``--files`` writes a file with the keys the
+project's models use.
 """
 
 from __future__ import annotations
