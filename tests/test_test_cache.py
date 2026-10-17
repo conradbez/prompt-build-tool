@@ -1,4 +1,4 @@
-"""pbt test caches each verdict, on every storage backend."""
+"""promptmap test caches each verdict, on every storage backend."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from pbt.storage import MemoryStorageBackend
-from pbt.storage.sqlite import SQLiteStorageBackend
-from pbt.tester import execute_tests
+from promptmap.storage import MemoryStorageBackend
+from promptmap.storage.sqlite import SQLiteStorageBackend
+from promptmap.tester import execute_tests
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "memory"])
 def test_identical_test_is_judged_once(tmp_path: Path, backend: str) -> None:
-    storage = SQLiteStorageBackend(tmp_path / "pbt.db") if backend == "sqlite" else MemoryStorageBackend()
+    storage = SQLiteStorageBackend(tmp_path / "promptmap.db") if backend == "sqlite" else MemoryStorageBackend()
     storage.init_db()
     calls: list[str] = []
 
@@ -35,9 +35,9 @@ def test_identical_test_is_judged_once(tmp_path: Path, backend: str) -> None:
 
 
 def test_cached_test_rows_are_not_listed_as_models(tmp_path: Path) -> None:
-    from pbt.docs import generate_docs
+    from promptmap.docs import generate_docs
 
-    storage = SQLiteStorageBackend(tmp_path / "pbt.db")
+    storage = SQLiteStorageBackend(tmp_path / "promptmap.db")
     storage.init_db()
     run_id = storage.create_run(model_count=1)
     execute_tests(

@@ -1,5 +1,5 @@
 """
-Gate tests — every test guards ``pbt run`` unless it sets ``gate=False``.
+Gate tests — every test guards ``promptmap run`` unless it sets ``gate=False``.
 
 The stub client logs every call, so each test checks the order things ran in:
 the gate's upstream models, then the gate, then the rest — or, when the gate
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import run_pbt
+from tests.conftest import run_promptmap
 
 CLIENT_PY = """\
 import json
@@ -54,7 +54,7 @@ def calls(proj: Path) -> list[str]:
 
 
 def test_gate_runs_after_its_upstream_and_before_the_rest(proj: Path) -> None:
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     log = calls(proj)
@@ -66,7 +66,7 @@ def test_gate_runs_after_its_upstream_and_before_the_rest(proj: Path) -> None:
 def test_failing_gate_stops_the_pipeline(proj: Path) -> None:
     (proj / "verdict.txt").write_text("fail", encoding="utf-8")
 
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 1
     assert calls(proj) == ["MODEL topic", "MODEL outline", "TEST outline_ok"]
@@ -77,10 +77,10 @@ def test_failing_gate_stops_the_pipeline(proj: Path) -> None:
     assert not (proj / "outputs" / "article.md").exists()
 
 
-def test_gate_false_opts_a_test_out_of_pbt_run(proj: Path) -> None:
+def test_gate_false_opts_a_test_out_of_promptmap_run(proj: Path) -> None:
     (proj / "tests" / "outline_ok.prompt").write_text("{{ config(gate=False) }}\n" + GATE, encoding="utf-8")
 
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not any(line.startswith("TEST") for line in calls(proj))
@@ -89,14 +89,14 @@ def test_gate_false_opts_a_test_out_of_pbt_run(proj: Path) -> None:
 def test_gate_outside_the_selected_models_is_not_applied(proj: Path) -> None:
     (proj / "verdict.txt").write_text("fail", encoding="utf-8")
 
-    result = run_pbt("run", "--select", "other", cwd=proj, check=False)
+    result = run_promptmap("run", "--select", "other", cwd=proj, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls(proj) == ["MODEL other"]
 
 
 def test_selecting_downstream_of_a_gate_runs_the_gate_first(proj: Path) -> None:
-    result = run_pbt("run", "--select", "article", cwd=proj, check=False)
+    result = run_promptmap("run", "--select", "article", cwd=proj, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls(proj) == ["MODEL topic", "MODEL outline", "TEST outline_ok", "MODEL article"]
@@ -105,7 +105,7 @@ def test_selecting_downstream_of_a_gate_runs_the_gate_first(proj: Path) -> None:
 def test_gate_referencing_unknown_model_is_a_dependency_error(proj: Path) -> None:
     (proj / "tests" / "outline_ok.prompt").write_text(GATE.replace("outline')", "nope')"), encoding="utf-8")
 
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 1
     assert "nope" in result.stderr
@@ -119,7 +119,7 @@ def test_skip_downstream_carries_past_the_gate(proj: Path) -> None:
         "TEST topic_ok\n{{ ref('topic') }}", encoding="utf-8"
     )
 
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls(proj) == ["TEST topic_ok", "MODEL other"]

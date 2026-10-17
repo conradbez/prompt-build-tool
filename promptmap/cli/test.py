@@ -1,0 +1,554 @@
+"""
+promptmap test — run test prompts from the tests/ directory against model outputs.
+
+The `promptmap test` Click command lives here and is attached to the main Click
+group via :func:`register_command`, called from ``promptmap/cli/__init__.py``.
+
+Each test prompt has full Jinja2 context (``ref()`` works as in models). A test
+passes when the LLM returns JSON containing ``{"results": "pass"}``.
+
+Two modes:
+
+* **Per-case** — when YAML cases are found (``tests/**/*.yml`` or
+  ``--promptparams``), or inline ``--promptdata`` /
+  ``--promptfile`` params are supplied, ``promptmap run`` is executed once per case
+  and tests are reported for each named case individually.
+* **Single-run** — otherwise tests run against the latest (or ``--run-id``)
+  stored run's outputs.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+
+import click
+from rich.console import Console
+
+from promptmap import db
+from promptmap.executor.graph import (
+    load_models,
+    build_dag,
+    get_dag_promptdata,
+    get_dag_promptfiles,
+    CyclicDependencyError,
+    UnknownModelError,
+)
+from promptmap.executor.executor import execute_run
+from promptmap.global_instruction import resolve_global_instruction
+from promptmap.llm import (
+    resolve_classify_call,
+    resolve_llm_call,
+    resolve_test_judge,
+    try_load_client_module,
+)
+from promptmap.rag import resolve_rag_call
+from promptmap.secrets import MissingSecretsError
+from promptmap.tester import load_tests, execute_tests
+from promptmap.promptparams import (
+    EXAMPLE_PATH,
+    PromptParamsError,
+    build_case,
+    load_baselines,
+    load_cases,
+    save_case,
+    write_example,
+)
+from promptmap.cli import pretty_print
+from promptmap.cli.pretty_print import err_console
+
+
+def register_command(main) -> None:
+    """Attach the `promptmap test` command to *main* Click group."""
+
+    @main.command("test", short_help="Run test prompts against model outputs.")
+    @click.option(
+        "--models-dir",
+        default="models",
+        show_default=True,
+        help="Directory containing *.prompt model files.",
+    )
+    @click.option(
+        "--tests-dir",
+        default="tests",
+        show_default=True,
+        help="Directory containing *.prompt test files and *.yml test cases.",
+    )
+    @click.option(
+        "--run-id",
+        default=None,
+        help="Use outputs from this specific run (default: latest run). Ignored when promptparams cases are found.",
+    )
+    @click.option("--no-color", is_flag=True, default=False, help="Disable rich color output.")
+    @click.option(
+        "--promptparams",
+        "promptparams_paths",
+        multiple=True,
+        metavar="PATH",
+        help=(
+            "YAML file or directory of test cases (repeatable; files are combined). "
+            "Default: every *.yml under the tests dir. "
+            "When cases are found, promptmap run is executed for each case and tests "
+            "are reported per case."
+        ),
+    )
+    @click.option(
+        "--case",
+        "case_filters",
+        multiple=True,
+        metavar="NAME",
+        help="Only run cases whose name matches (exact or glob, case-insensitive). Repeatable.",
+    )
+    @click.option(
+        "--check-latest",
+        is_flag=True,
+        default=False,
+        help="Skip promptparams cases and test against the latest stored run instead.",
+    )
+    @click.option(
+        "--promptdata",
+        "promptdata",
+        multiple=True,
+        metavar="KEY=VALUE",
+        help=(
+            "Inline promptdata for this test run. When provided, promptmap run is executed "
+            "with these params and tests are reported against that run (an inline "
+            "one-case promptparams, which inherits the 'default' baseline like any "
+            "case). Repeatable: --promptdata tone=formal."
+        ),
+    )
+    @click.option(
+        "--promptfile",
+        "promptfiles",
+        multiple=True,
+        metavar="NAME=PATH",
+        help=(
+            "Inline promptfile for this test run, paired with --promptdata. "
+            "Repeatable: --promptfile doc=report.pdf."
+        ),
+    )
+    @click.option(
+        "--extends",
+        "extends",
+        multiple=True,
+        metavar="BASELINE",
+        help=(
+            "Baseline(s) the inline --promptdata/--promptfile case builds on, "
+            "instead of 'default'. Repeatable."
+        ),
+    )
+    @click.option(
+        "--save-case",
+        "save_case_name",
+        default=None,
+        metavar="NAME",
+        help=(
+            "After running, save the inline --promptdata/--promptfile params as a "
+            "named case in <tests-dir>/<name>.yml so it is re-tested in future "
+            "parameterised runs. Requires at least one --promptdata or --promptfile."
+        ),
+    )
+    @click.option(
+        "--secret",
+        "secret_flags",
+        multiple=True,
+        metavar="NAME=VALUE",
+        help=(
+            "Credential for model kinds and llm_call; a bare NAME reads that "
+            "environment variable. Same as promptmap run --secret; overrides "
+            "secrets.yml. Repeatable."
+        ),
+    )
+    @click.option(
+        "--judge",
+        type=click.Choice(["llm", "classifier"]),
+        default=None,
+        help=(
+            "Judge for tests that don't set config(judge=...). Default: test_judge "
+            "in client.py, else llm. classifier uses client.py's classify_call."
+        ),
+    )
+    def test(
+        models_dir: str,
+        tests_dir: str,
+        run_id: str | None,
+        no_color: bool,
+        promptparams_paths: tuple[str, ...],
+        case_filters: tuple[str, ...],
+        check_latest: bool,
+        promptdata: tuple[str, ...],
+        promptfiles: tuple[str, ...],
+        extends: tuple[str, ...],
+        save_case_name: str | None,
+        judge: str | None,
+        secret_flags: tuple[str, ...],
+    ) -> None:
+        """
+        Run test prompts from the tests/ directory against model outputs.
+
+        Each test prompt has full Jinja2 context (ref() works as in models).
+        A test passes when the LLM returns JSON containing {"results": "pass"}.
+
+        When promptparams YAML cases are found, promptmap run is executed once per
+        case and tests are reported for each named case individually.
+        Without promptparams, tests run against the latest (or specified) run.
+
+        \b
+        Examples:
+          promptmap test
+          promptmap test --case 'formal*'
+          promptmap test --promptdata tone=formal --save-case formal
+          promptmap test --check-latest
+        """
+        from promptmap.cli import _git_sha, _secrets_or_exit, init_db_or_exit
+
+        c = Console(highlight=not no_color)
+        secrets = _secrets_or_exit(secret_flags)
+        init_db_or_exit()
+
+        # ------------------------------------------------------------------
+        # Discover tests
+        # ------------------------------------------------------------------
+        tests = load_tests(tests_dir)
+        # ------------------------------------------------------------------
+        # Load models
+        # ------------------------------------------------------------------
+        try:
+            try_load_client_module(models_dir)  # registers any project-local model types
+            all_models = load_models(models_dir)
+        except FileNotFoundError as exc:
+            err_console.print(f"[red]Error:[/red] {exc}")
+            sys.exit(1)
+
+        from promptmap.cli import use_client_blob_store
+        use_client_blob_store(models_dir)
+
+        # ------------------------------------------------------------------
+        # Resolve LLM backend (needed for both modes)
+        # ------------------------------------------------------------------
+        try:
+            llm_call = resolve_llm_call(models_dir)
+            rag_call = resolve_rag_call(models_dir)
+            judge = judge or resolve_test_judge(models_dir)
+            classify_call = resolve_classify_call(models_dir)
+            # Models under test render exactly as they do in a real run.  The
+            # test prompts themselves never get it — a judge given style
+            # instructions is a biased judge.
+            global_instruction = resolve_global_instruction(models_dir)
+        except Exception as exc:
+            err_console.print(f"[red]Backend resolution error:[/red] {exc}")
+            sys.exit(1)
+
+        # ------------------------------------------------------------------
+        # Write promptparams.yml.example — a template for this DAG's inputs
+        # ------------------------------------------------------------------
+        from promptmap.executor.parser_initial import detect_used_promptdata
+
+        dag_promptdata = get_dag_promptdata(all_models)
+        for src in tests.values():
+            for key in detect_used_promptdata(src):
+                if key not in dag_promptdata:
+                    dag_promptdata.append(key)
+        dag_promptfiles = get_dag_promptfiles(all_models)
+
+        # Not a *.yml file, so it is never loaded as cases itself; users copy
+        # it into place (cp promptparams.yml.example tests/cases.yml).
+        example_path = Path(EXAMPLE_PATH)
+        try:
+            write_example(example_path, dag_promptdata, dag_promptfiles)
+            if dag_promptdata or dag_promptfiles:
+                c.print(f"  [dim]promptparams example written → {example_path}[/dim]")
+                c.print()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # ------------------------------------------------------------------
+        # Parse inline --promptdata / --promptfile into a single case.  When
+        # present, it drives a fresh run and takes precedence over the YAML
+        # cases / --check-latest.  It still inherits baselines like any case.
+        # ------------------------------------------------------------------
+        inline_data: dict[str, str] = {}
+        inline_files: dict[str, str] = {}
+        for v in promptdata:
+            if "=" not in v:
+                err_console.print(f"[red]Error:[/red] --promptdata must be KEY=VALUE, got: {v!r}")
+                sys.exit(1)
+            k, _, val = v.partition("=")
+            inline_data[k] = val
+        for f in promptfiles:
+            if "=" not in f:
+                err_console.print(f"[red]Error:[/red] --promptfile must be NAME=PATH, got: {f!r}")
+                sys.exit(1)
+            k, _, val = f.partition("=")
+            inline_files[k] = val
+        inline = bool(inline_data or inline_files)
+
+        if save_case_name is not None and not inline:
+            err_console.print(
+                "[red]Error:[/red] --save-case requires at least one --promptdata or "
+                "--promptfile to record as a new case."
+            )
+            sys.exit(1)
+        if extends and not inline:
+            err_console.print(
+                "[red]Error:[/red] --extends applies to inline --promptdata/--promptfile params."
+            )
+            sys.exit(1)
+
+        # ------------------------------------------------------------------
+        # Load promptparams cases (optional; skipped when --check-latest).
+        # ------------------------------------------------------------------
+        promptparams_paths = promptparams_paths or (tests_dir,)
+        inline_spec: dict = {"promptdata": inline_data, "promptfiles": inline_files}
+        if extends:
+            inline_spec["extends"] = list(extends)
+        try:
+            if inline:
+                cases = [build_case(
+                    save_case_name or "inline",
+                    inline_spec,
+                    load_baselines(promptparams_paths, all_models),
+                    where="inline params",
+                )]
+            elif check_latest:
+                cases = []
+            else:
+                cases = _filter_cases(load_cases(promptparams_paths, all_models), case_filters)
+        except PromptParamsError as exc:
+            err_console.print(f"[red]promptparams error:[/red] {exc}")
+            sys.exit(1)
+
+        if case_filters and not cases and not inline and not check_latest:
+            err_console.print(
+                f"[red]Error:[/red] no promptparams case matches {', '.join(case_filters)}."
+            )
+            sys.exit(1)
+
+        if not tests and not any(case.expect for case in cases):
+            c.print(f"[yellow]No tests found.[/yellow] Create *.prompt files in '{tests_dir}' or add expect to YAML cases.")
+            return
+
+        if cases:
+            # --------------------------------------------------------------
+            # Per-case mode: run models then test for each case
+            # --------------------------------------------------------------
+            if inline:
+                c.print("  promptparams : [dim]inline --promptdata/--promptfile[/dim] (1 case)")
+            else:
+                c.print(
+                    f"  promptparams : {len(cases)} case{'s' if len(cases) != 1 else ''}"
+                )
+            c.print()
+
+            try:
+                ordered_models = list(build_dag(all_models))  # validates DAG
+            except (CyclicDependencyError, UnknownModelError) as exc:
+                err_console.print(f"[red]Dependency error:[/red] {exc}")
+                sys.exit(1)
+            ordered_models = list(all_models.values())
+
+            git_sha = _git_sha()
+            all_test_results: list = []
+
+            any_run_errors = False
+            for idx, case in enumerate(cases, start=1):
+                row_promptdata, row_promptfiles = case.promptdata, case.promptfiles
+                c.rule(f"[bold]Case {idx}/{len(cases)}[/bold] — {case.name}")
+                inputs = [f"{k}={v}" for k, v in row_promptdata.items()]
+                inputs += [f"{k}={v}" for k, v in row_promptfiles.items()]
+                if inputs:
+                    c.print(f"  [dim]{_truncate(', '.join(inputs))}[/dim]")
+
+                # Run models for this row; given models are pinned, not run
+                unknown = sorted(set(case.given) - {m.name for m in ordered_models})
+                if unknown:
+                    err_console.print(
+                        f"[red]Error:[/red] case '{case.name}' gives {', '.join(unknown)}, "
+                        "which is not a model."
+                    )
+                    sys.exit(1)
+                unknown_expected = sorted(set(case.expect) - set(all_models))
+                if unknown_expected:
+                    err_console.print(f"Error: case '{case.name}' expects unknown model(s): {', '.join(unknown_expected)}")
+                    sys.exit(1)
+                if case.given:
+                    c.print(f"  [dim]given: {', '.join(case.given)}[/dim]")
+                case_models = models_for_case(ordered_models, case.given)
+                row_run_id = db.create_run(model_count=len(case_models), git_sha=git_sha)
+                model_run_results: list = []
+                on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(case_models))
+                try:
+                    run_results = asyncio.run(execute_run(
+                        run_id=row_run_id,
+                        ordered_models=case_models,
+                        preloaded_outputs=case.given or None,
+                        storage_backend=db,
+                        on_model_start=on_model_start,
+                        on_model_done=on_model_done,
+                        llm_call=llm_call,
+                        rag_call=rag_call,
+                        promptdata=row_promptdata or None,
+                        promptfiles=row_promptfiles or None,
+                        global_instruction=global_instruction,
+                        secrets=secrets,
+                    ))
+                except MissingSecretsError as exc:
+                    err_console.print(f"[red]Configuration error:[/red] {exc}")
+                    db.finish_run(row_run_id, "error")
+                    sys.exit(1)
+                run_errors = sum(1 for r in run_results if r.status == "error")
+                any_run_errors = any_run_errors or bool(run_errors)
+                db.finish_run(row_run_id, "success" if not run_errors else "partial")
+
+                model_outputs = {
+                    **case.given,
+                    **{
+                        r.model_name: r.llm_output
+                        for r in run_results
+                        if r.status == "success" and r.llm_output
+                    },
+                }
+
+                # Run tests against this row's outputs
+                row_test_results: list = []
+                on_start, on_done = pretty_print.make_test_callbacks(c, row_test_results, total=len(tests) + len(case.expect))
+                execute_tests(
+                    run_id=row_run_id,
+                    tests=tests,
+                    model_outputs=model_outputs,
+                    storage_backend=db,
+                    on_test_start=on_start,
+                    on_test_done=on_done,
+                    llm_call=llm_call,
+                    promptdata=row_promptdata or None,
+                    promptfiles=row_promptfiles or None,
+                    param_label=case.name,
+                    expect=case.expect,
+                    secrets=secrets,
+                    judge=judge,
+                    classify_call=classify_call,
+                )
+                all_test_results.extend(row_test_results)
+
+                passed = sum(1 for r in row_test_results if r.status == "pass")
+                failed_row = sum(1 for r in row_test_results if r.status in ("fail", "error"))
+                status_color = "green" if not failed_row else "red"
+                c.print(f"  [{status_color}]{passed}/{len(row_test_results)} passed[/{status_color}]")
+                c.print()
+
+            # Overall summary
+            total_passed = sum(1 for r in all_test_results if r.status == "pass")
+            total_failed = sum(1 for r in all_test_results if r.status in ("fail", "error"))
+            c.rule("[bold]Overall[/bold]")
+            overall_color = "green" if not total_failed else "red"
+            n_cases = f"{len(cases)} case{'s' if len(cases) != 1 else ''}"
+            c.print(f"  [{overall_color}]{total_passed}/{len(all_test_results)} passed across {n_cases}[/{overall_color}]")
+
+            # Save the inline params as a named case so it is re-tested in
+            # future parameterised runs.  Only what was passed inline is
+            # written, so the saved case keeps inheriting its baselines.
+            if save_case_name is not None:
+                try:
+                    saved = save_case(
+                        tests_dir,
+                        save_case_name,
+                        inline_data,
+                        inline_files,
+                        extends=list(extends) or None,
+                    )
+                except PromptParamsError as exc:
+                    err_console.print(f"[red]Error:[/red] {exc}")
+                    sys.exit(1)
+                c.print(f"  [dim]saved case '{save_case_name}' → {saved}[/dim]")
+
+            if total_failed or any_run_errors:
+                sys.exit(1)
+
+        else:
+            # --------------------------------------------------------------
+            # Single-run mode: test against latest (or specified) run
+            # --------------------------------------------------------------
+            if run_id:
+                with db.get_conn() as conn:
+                    target_run = conn.execute(
+                        "SELECT * FROM runs WHERE run_id=?", (run_id,)
+                    ).fetchone()
+                if not target_run:
+                    err_console.print(f"[red]Error:[/red] Run '{run_id}' not found.")
+                    sys.exit(1)
+            else:
+                target_run = db.get_latest_successful_run()
+                if target_run is None:
+                    err_console.print(
+                        f"[red]Error:[/red] No previous successful run found.\n"
+                        f"Run [bold]promptmap run[/bold] first, then [bold]promptmap test[/bold]."
+                    )
+                    sys.exit(1)
+
+            model_names = list(all_models.keys())
+            model_outputs = db.get_model_outputs_from_run(target_run["run_id"], model_names)
+
+            pretty_print.print_test_header(c, tests_dir, tests, target_run)
+
+            test_results: list = []
+            on_start, on_done = pretty_print.make_test_callbacks(c, test_results, total=len(tests))
+            execute_tests(
+                run_id=target_run["run_id"],
+                tests=tests,
+                model_outputs=model_outputs,
+                storage_backend=db,
+                on_test_start=on_start,
+                on_test_done=on_done,
+                llm_call=llm_call,
+                judge=judge,
+                classify_call=classify_call,
+                secrets=secrets,
+            )
+
+            pretty_print.print_test_summary(c, test_results, target_run)
+
+            failed  = sum(1 for r in test_results if r.status == "fail")
+            errored = sum(1 for r in test_results if r.status == "error")
+            if failed or errored:
+                sys.exit(1)
+
+
+def _filter_cases(cases: list, patterns: tuple[str, ...]) -> list:
+    """Keep the cases whose name matches any pattern (exact or glob, any case)."""
+    from fnmatch import fnmatchcase
+
+    if not patterns:
+        return cases
+    lowered = [p.lower() for p in patterns]
+    return [c for c in cases if any(fnmatchcase(c.name.lower(), p) for p in lowered)]
+
+
+def models_for_case(ordered_models: list, given: dict) -> list:
+    """The models a case runs: none that are given, none that only feed given ones.
+
+    A model is kept when it is not given and either nothing depends on it or
+    something kept does.  So a case that pins ``board`` skips ``board`` and
+    any model whose output only ``board`` reads.
+    """
+    if not given:
+        return list(ordered_models)
+    children: dict[str, list[str]] = {m.name: [] for m in ordered_models}
+    for m in ordered_models:
+        for dep in m.depends_on:
+            children.setdefault(dep, []).append(m.name)
+    kept: dict[str, bool] = {}
+
+    def keep(name: str) -> bool:
+        if name not in kept:
+            kept[name] = False  # guards a cycle; the DAG check reports those
+            kept[name] = name not in given and (
+                not children.get(name) or any(keep(child) for child in children[name])
+            )
+        return kept[name]
+
+    return [m for m in ordered_models if keep(m.name)]
+
+
+def _truncate(text: str, limit: int = 160) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"

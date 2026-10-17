@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pbt.executor.graph import load_models
+from promptmap.executor.graph import load_models
 
 
 def write(path: Path, text: str) -> None:

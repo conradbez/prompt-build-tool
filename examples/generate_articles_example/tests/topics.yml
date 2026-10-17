@@ -1,4 +1,4 @@
-# Each case only lists what it changes. Run with: pbt test
+# Each case only lists what it changes. Run with: promptmap test
 cases:
   - name: Default topic and audience
 

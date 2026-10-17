@@ -1,4 +1,4 @@
-{# agent37 comes from pbt-extra-model-kinds: pip install "prompt-build-tool[extras]" #}
+{# agent37 comes from promptmap-extra-model-kinds: pip install "promptmap[extras]" #}
 {{ config(model_type="agent37", produces_files=True) }}
 Build an audio pipeline that uses the Python library below to turn the script
 below into a full-length podcast episode. Return the audio file.

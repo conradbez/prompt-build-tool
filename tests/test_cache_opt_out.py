@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pbt
-from pbt.storage import MemoryStorageBackend
+import promptmap
+from promptmap.storage import MemoryStorageBackend
 from tests.test_each_fanout import run_models
 
 
@@ -46,7 +46,7 @@ def test_cache_false_writes_the_entry_a_cached_model_then_reads() -> None:
 
 
 def test_cache_is_a_known_config_key(recwarn) -> None:
-    from pbt.executor.graph import build_models_from_dict
+    from promptmap.executor.graph import build_models_from_dict
 
     build_models_from_dict({"a": "{{ config(cache=False) }}\nHi"})
-    assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
+    assert [w for w in recwarn if issubclass(w.category, promptmap.UnknownConfigKeyWarning)] == []

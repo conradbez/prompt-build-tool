@@ -1,0 +1,410 @@
+"""SQLite-backed storage backend."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+
+from promptmap.tokens import add_tokens
+
+if TYPE_CHECKING:
+    from promptmap.files import BlobStore
+
+# Columns added to model_results after the first release.  promptmap does not migrate
+# databases — this exists so that opening an older one fails with an
+# explanation instead of "no such column".  Keep it in step with init_db().
+_LATE_COLUMNS = {
+    "llm_output_validated": "TEXT",
+}
+
+
+# Nullable columns added later still, which init_db() adds in place: a missing
+# value only means "not reported", so there is nothing to explain or migrate.
+_ADDED_COLUMNS = {
+    "spent_tokens": "INTEGER",
+    "cache_spent_tokens": "INTEGER",
+}
+
+
+class StaleDatabaseError(RuntimeError):
+    """Raised when .promptmap/promptmap.db predates the current schema."""
+
+
+class SQLiteStorageBackend:
+    def __init__(self, path: str | Path | None = None, blob_store: "BlobStore | None" = None) -> None:
+        self._db_path = Path(path) if path is not None else Path(".promptmap") / "promptmap.db"
+        self._blob_store = blob_store
+
+    def db_path(self) -> Path:
+        return self._db_path
+
+    def blob_store(self) -> "BlobStore":
+        """Where file outputs' bytes live: the ``blobs`` table of this database
+        unless another :class:`~promptmap.files.BlobStore` (S3, …) was passed in."""
+        if self._blob_store is None:
+            from promptmap.files import SQLiteBlobStore
+            self._blob_store = SQLiteBlobStore(self._db_path)
+        return self._blob_store
+
+    def set_blob_store(self, store: "BlobStore | None") -> None:
+        """Replace the blob store, e.g. with one client.py provides."""
+        self._blob_store = store
+
+    @contextmanager
+    def get_conn(self):
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def init_db(self) -> None:
+        with self.get_conn() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id       TEXT        PRIMARY KEY,
+                    run_date     TEXT        NOT NULL,
+                    created_at   TEXT        NOT NULL,
+                    status       TEXT        NOT NULL DEFAULT 'running',
+                    completed_at TEXT,
+                    model_count  INTEGER     NOT NULL DEFAULT 0,
+                    git_sha      TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS model_results (
+                    id               INTEGER   PRIMARY KEY AUTOINCREMENT,
+                    run_id           TEXT      NOT NULL REFERENCES runs(run_id),
+                    model_name       TEXT      NOT NULL,
+                    status           TEXT      NOT NULL DEFAULT 'pending',
+                    prompt_template  TEXT,
+                    prompt_rendered  TEXT,
+                    prompt_hash      TEXT,
+                    llm_output       TEXT,
+                    llm_output_validated TEXT,
+                    cached           INTEGER   NOT NULL DEFAULT 0,
+                    started_at       TEXT,
+                    completed_at     TEXT,
+                    execution_ms     INTEGER,
+                    error            TEXT,
+                    depends_on       TEXT      NOT NULL DEFAULT '[]',
+                    model_type       TEXT      NOT NULL DEFAULT '',
+                    config           TEXT      NOT NULL DEFAULT '{}',
+                    spent_tokens     INTEGER,
+                    cache_spent_tokens INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_model_results_run
+                    ON model_results (run_id, model_name);
+
+                CREATE INDEX IF NOT EXISTS idx_model_results_prompt_hash
+                    ON model_results (prompt_hash, completed_at DESC);
+
+                CREATE TABLE IF NOT EXISTS test_results (
+                    id               INTEGER   PRIMARY KEY AUTOINCREMENT,
+                    run_id           TEXT      NOT NULL REFERENCES runs(run_id),
+                    test_name        TEXT      NOT NULL,
+                    status           TEXT      NOT NULL,
+                    prompt_rendered  TEXT,
+                    llm_output       TEXT,
+                    error            TEXT,
+                    started_at       TEXT,
+                    completed_at     TEXT,
+                    execution_ms     INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_test_results_run
+                    ON test_results (run_id, test_name);
+            """)
+            self._check_schema(conn)
+
+    def _check_schema(self, conn: sqlite3.Connection) -> None:
+        """Fail with an explanation when the database predates this schema.
+
+        ``CREATE TABLE IF NOT EXISTS`` silently leaves an older table alone, so
+        without this the first write fails much later with a bare
+        "no such column".
+        """
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_results)")}
+        for name, type_ in _ADDED_COLUMNS.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE model_results ADD COLUMN {name} {type_}")
+        missing = {name: t for name, t in _LATE_COLUMNS.items() if name not in columns}
+        if not missing:
+            return
+
+        path = self._db_path
+        alters = " ".join(
+            f'ALTER TABLE model_results ADD COLUMN {name} {type_};'
+            for name, type_ in missing.items()
+        )
+        raise StaleDatabaseError(
+            f"'{path}' was created by an older version of promptmap and is missing "
+            f"the model_results column(s): {', '.join(sorted(missing))}.\n\n"
+            f"promptmap does not migrate databases. The file holds only run history "
+            f"and the prompt cache, so the simplest fix is to delete it:\n\n"
+            f"    rm {path}\n\n"
+            f"To keep your run history instead, add the column(s) by hand:\n\n"
+            f'    sqlite3 {path} "{alters}"'
+        )
+
+    def create_run(self, model_count: int, git_sha: Optional[str] = None) -> str:
+        run_id = str(uuid.uuid4())
+        now = _now()
+        with self.get_conn() as conn:
+            conn.execute(
+                "INSERT INTO runs (run_id, run_date, created_at, status, model_count, git_sha) "
+                "VALUES (?, ?, ?, 'running', ?, ?)",
+                (run_id, _today(now), now, model_count, git_sha),
+            )
+        return run_id
+
+    def finish_run(self, run_id: str, status: str) -> None:
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE runs SET status=?, completed_at=? WHERE run_id=?",
+                (status, _now(), run_id),
+            )
+
+    def get_latest_successful_run(self) -> Optional[sqlite3.Row]:
+        with self.get_conn() as conn:
+            return conn.execute(
+                """SELECT * FROM runs
+                   WHERE status IN ('success', 'partial')
+                   ORDER BY created_at DESC
+                   LIMIT 1""",
+            ).fetchone()
+
+    def record_test_result(self, run_id: str, result: "TestResult") -> None:  # noqa: F821
+        with self.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO test_results
+                   (run_id, test_name, status, prompt_rendered, llm_output,
+                    error, completed_at, execution_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    result.test_name,
+                    result.status,
+                    result.prompt_rendered,
+                    result.llm_output,
+                    result.error or None,
+                    _now(),
+                    result.execution_ms,
+                ),
+            )
+
+    def get_test_results(self, run_id: str) -> list[sqlite3.Row]:
+        with self.get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM test_results WHERE run_id=? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+
+    def get_model_outputs_from_run(self, run_id: str, model_names: list[str]) -> dict[str, str]:
+        if not model_names:
+            return {}
+        placeholders = ",".join("?" * len(model_names))
+        with self.get_conn() as conn:
+            rows = conn.execute(
+                f"""SELECT model_name,
+                           COALESCE(llm_output_validated, llm_output) AS llm_output
+                    FROM model_results
+                    WHERE run_id = ?
+                      AND model_name IN ({placeholders})
+                      AND status = 'success'""",
+                (run_id, *model_names),
+            ).fetchall()
+        return {row["model_name"]: row["llm_output"] for row in rows}
+
+    def get_cached_llm_output(self, cache_key: str) -> Optional[str]:
+        prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        with self.get_conn() as conn:
+            row = conn.execute(
+                """SELECT llm_output FROM model_results
+                   WHERE prompt_hash = ? AND status = 'success'
+                   ORDER BY completed_at DESC
+                   LIMIT 1""",
+                (prompt_hash,),
+            ).fetchone()
+        return row["llm_output"] if row else None
+
+    def get_cached_token_usage(self, cache_key: str) -> int | None:
+        """Tokens the call behind :meth:`get_cached_llm_output` spent.  A row
+        that was itself a cache hit carries the original call's tokens forward."""
+        prompt_hash = hashlib.sha256(cache_key.encode()).hexdigest()
+        with self.get_conn() as conn:
+            row = conn.execute(
+                """SELECT spent_tokens, cache_spent_tokens
+                   FROM model_results
+                   WHERE prompt_hash = ? AND status = 'success'
+                   ORDER BY completed_at DESC
+                   LIMIT 1""",
+                (prompt_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        return add_tokens(row["spent_tokens"], row["cache_spent_tokens"])
+
+    def upsert_model_pending(
+        self,
+        run_id: str,
+        model_name: str,
+        prompt_template: str,
+        depends_on: list[str],
+        model_type: str = "",
+        config: dict | None = None,
+    ) -> None:
+        with self.get_conn() as conn:
+            conn.execute(
+                """INSERT INTO model_results
+                   (run_id, model_name, status, prompt_template, depends_on,
+                    model_type, config)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                (run_id, model_name, prompt_template, json.dumps(depends_on),
+                 model_type, json.dumps(config or {}, sort_keys=True)),
+            )
+
+    def mark_model_running(self, run_id: str, model_name: str) -> None:
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE model_results SET status='running', started_at=? "
+                "WHERE run_id=? AND model_name=?",
+                (_now(), run_id, model_name),
+            )
+
+    def mark_model_success(
+        self,
+        run_id: str,
+        model_name: str,
+        prompt_rendered: str,
+        llm_output: str,
+        cache_key: str | None = None,
+        cached: bool = False,
+    ) -> None:
+        now = _now()
+        with self.get_conn() as conn:
+            row = conn.execute(
+                "SELECT started_at FROM model_results WHERE run_id=? AND model_name=?",
+                (run_id, model_name),
+            ).fetchone()
+            started_str = row["started_at"] if row else None
+            if started_str:
+                try:
+                    started_dt = datetime.fromisoformat(started_str)
+                    now_dt = datetime.fromisoformat(now)
+                    elapsed = int((now_dt - started_dt).total_seconds() * 1000)
+                except (ValueError, TypeError):
+                    elapsed = 0
+            else:
+                elapsed = 0
+
+            prompt_hash = hashlib.sha256((cache_key or prompt_rendered).encode()).hexdigest()
+            conn.execute(
+                """UPDATE model_results
+                   SET status='success',
+                       prompt_rendered=?,
+                       prompt_hash=?,
+                       llm_output=?,
+                       completed_at=?,
+                       execution_ms=?,
+                       cached=?
+                   WHERE run_id=? AND model_name=?
+                """,
+                (prompt_rendered, prompt_hash, llm_output, now, elapsed,
+                 int(cached), run_id, model_name),
+            )
+
+    def record_validated_output(self, run_id: str, model_name: str, output: str) -> None:
+        """Store the post-validation output alongside the raw one.
+
+        The raw text stays in ``llm_output`` because that is what the prompt
+        cache serves — editing a validator must not force a new LLM call.
+        """
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE model_results SET llm_output_validated=? "
+                "WHERE run_id=? AND model_name=?",
+                (output, run_id, model_name),
+            )
+
+    def record_token_usage(
+        self,
+        run_id: str,
+        model_name: str,
+        spent_tokens: int | None = None,
+        cache_spent_tokens: int | None = None,
+    ) -> None:
+        """Store the tokens a model spent, and those its cache hits saved."""
+        with self.get_conn() as conn:
+            conn.execute(
+                """UPDATE model_results
+                   SET spent_tokens=?, cache_spent_tokens=?
+                   WHERE run_id=? AND model_name=?""",
+                (spent_tokens, cache_spent_tokens, run_id, model_name),
+            )
+
+    def mark_model_error(self, run_id: str, model_name: str, error: str) -> None:
+        with self.get_conn() as conn:
+            conn.execute(
+                """UPDATE model_results
+                   SET status='error', completed_at=?, error=?
+                   WHERE run_id=? AND model_name=?
+                """,
+                (_now(), error, run_id, model_name),
+            )
+
+    def mark_model_skipped(self, run_id: str, model_name: str) -> None:
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE model_results SET status='skipped' "
+                "WHERE run_id=? AND model_name=?",
+                (run_id, model_name),
+            )
+
+    def get_run_results(self, run_id: str) -> list[sqlite3.Row]:
+        with self.get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM model_results WHERE run_id=? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+
+    def get_latest_runs(self, limit: int = 10) -> list[sqlite3.Row]:
+        with self.get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+    def clear_cache(self) -> int:
+        """Nullify all prompt_hash values, forcing fresh LLM calls on next run.
+
+        Returns the number of cache entries cleared.
+        """
+        with self.get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE model_results SET prompt_hash = NULL WHERE prompt_hash IS NOT NULL"
+            )
+            return cursor.rowcount
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _today(now: str) -> str:
+    return now[:10]

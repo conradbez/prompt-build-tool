@@ -1,11 +1,11 @@
-"""on_model_start / on_model_done callbacks on pbt.run() and pbt.async_run()."""
+"""on_model_start / on_model_done callbacks on promptmap.run() and promptmap.async_run()."""
 
 from __future__ import annotations
 
 import asyncio
 
-import pbt
-from pbt.storage import MemoryStorageBackend
+import promptmap
+from promptmap.storage import MemoryStorageBackend
 
 MODELS = {
     "topic": "Name one topic.",
@@ -16,7 +16,7 @@ MODELS = {
 
 def _events(llm_call, models=MODELS) -> tuple[list[tuple[str, str]], dict]:
     events: list[tuple[str, str]] = []
-    results = pbt.run(
+    results = promptmap.run(
         models_from_dict=models,
         llm_call=llm_call,
         verbose=False,
@@ -50,8 +50,8 @@ def test_done_reports_error_and_skipped() -> None:
 
 
 def test_done_receives_model_run_result() -> None:
-    seen: list[pbt.ModelRunResult] = []
-    pbt.run(
+    seen: list[promptmap.ModelRunResult] = []
+    promptmap.run(
         models_from_dict={"topic": "Name one topic."},
         llm_call=lambda prompt: "hello",
         verbose=False,
@@ -59,7 +59,7 @@ def test_done_receives_model_run_result() -> None:
         on_model_done=seen.append,
     )
     assert len(seen) == 1
-    assert isinstance(seen[0], pbt.ModelRunResult)
+    assert isinstance(seen[0], promptmap.ModelRunResult)
     assert seen[0].llm_output == "hello"
 
 
@@ -69,7 +69,7 @@ def test_async_run_accepts_callbacks() -> None:
     async def llm(prompt: str) -> str:
         return "ok"
 
-    asyncio.run(pbt.async_run(
+    asyncio.run(promptmap.async_run(
         models_from_dict=MODELS,
         llm_call=llm,
         verbose=False,
@@ -81,7 +81,7 @@ def test_async_run_accepts_callbacks() -> None:
 
 def test_callbacks_fire_with_verbose_logging() -> None:
     events: list[str] = []
-    pbt.run(
+    promptmap.run(
         models_from_dict={"topic": "Name one topic."},
         llm_call=lambda prompt: "ok",
         verbose=True,

@@ -1,4 +1,4 @@
-"""secrets.yml / promptdata.yml / promptfiles.yml defaults, and `pbt init --secrets|--data|--files`."""
+"""secrets.yml / promptdata.yml / promptfiles.yml defaults, and `promptmap init --secrets|--data|--files`."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from pbt.cli import main
-from pbt.model_types import _REGISTRY
-from pbt.project_values import ProjectValuesError, load_values
+from promptmap.cli import main
+from promptmap.model_types import _REGISTRY
+from promptmap.project_values import ProjectValuesError, load_values
 
 CLIENT_PY = """\
-import pbt
+import promptmap
 
-@pbt.model_kind("needs_yml_secret_test", secrets={"YML_KEY"})
+@promptmap.model_kind("needs_yml_secret_test", secrets={"YML_KEY"})
 async def needs_secret(rendered, call):
     return "secret=" + ("ok" if call.secrets["YML_KEY"] == "from-yml" else "flag")
 
@@ -98,7 +98,7 @@ def test_bad_secrets_yml_never_echoes_its_contents(project):
 
 
 # ---------------------------------------------------------------------------
-# pbt init --secrets | --data | --files
+# promptmap init --secrets | --data | --files
 # ---------------------------------------------------------------------------
 
 def _init(kind):

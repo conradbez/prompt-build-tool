@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-import pbt
-from pbt.executor.graph import build_models_from_dict, load_models
-from pbt.executor.parser_initial import _extra_config_keys
+import promptmap
+from promptmap.executor.graph import build_models_from_dict, load_models
+from promptmap.executor.parser_initial import _extra_config_keys
 
 
 # ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ from pbt.executor.parser_initial import _extra_config_keys
 # ---------------------------------------------------------------------------
 
 def test_unknown_key_warns():
-    with pytest.warns(pbt.UnknownConfigKeyWarning, match="'tags' is not recognised"):
+    with pytest.warns(promptmap.UnknownConfigKeyWarning, match="'tags' is not recognised"):
         build_models_from_dict({"a": '{{ config(tags="article") }}\nHi'})
 
 
@@ -25,23 +25,23 @@ def test_known_keys_do_not_warn(recwarn):
         "a": '{{ config(output_format="json", output_extension="html") }}\nHi',
         "b": '{{ config(model_type="template", global_instruction=False) }}\n{{ ref("a") }}',
     })
-    assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
+    assert [w for w in recwarn if issubclass(w.category, promptmap.UnknownConfigKeyWarning)] == []
 
 
 def test_unknown_key_is_still_captured_in_config():
     """The warning is advisory — the key stays in config for llm_call to consume."""
-    with pytest.warns(pbt.UnknownConfigKeyWarning):
+    with pytest.warns(promptmap.UnknownConfigKeyWarning):
         models = build_models_from_dict({"a": '{{ config(temperature="0.7") }}\nHi'})
     assert models["a"].config["temperature"] == "0.7"
 
 
 def test_near_miss_key_suggests_correction():
-    with pytest.warns(pbt.UnknownConfigKeyWarning, match=r"Did you mean 'output_format'\?"):
+    with pytest.warns(promptmap.UnknownConfigKeyWarning, match=r"Did you mean 'output_format'\?"):
         build_models_from_dict({"a": '{{ config(output_fmt="json") }}\nHi'})
 
 
 def test_one_warning_per_unknown_key():
-    with pytest.warns(pbt.UnknownConfigKeyWarning) as record:
+    with pytest.warns(promptmap.UnknownConfigKeyWarning) as record:
         build_models_from_dict({"a": '{{ config(foo="1", bar="2", output_format="json") }}\nHi'})
     assert len(record) == 2
 
@@ -51,7 +51,7 @@ def test_warning_names_the_model_and_file(tmp_path, recwarn):
     models_dir.mkdir()
     (models_dir / "article.prompt").write_text('{{ config(tags="x") }}\nHi', encoding="utf-8")
 
-    with pytest.warns(pbt.UnknownConfigKeyWarning, match="article") as record:
+    with pytest.warns(promptmap.UnknownConfigKeyWarning, match="article") as record:
         load_models(models_dir)
     assert "article.prompt" in str(record[0].message)
 
@@ -60,10 +60,10 @@ def test_register_config_keys_silences_warning(recwarn):
     """Custom llm_call keys can be registered as recognised."""
     original = set(_extra_config_keys)
     try:
-        pbt.register_config_keys("temperature")
-        assert "temperature" in pbt.known_config_keys()
+        promptmap.register_config_keys("temperature")
+        assert "temperature" in promptmap.known_config_keys()
         build_models_from_dict({"a": '{{ config(temperature="0.7") }}\nHi'})
-        assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
+        assert [w for w in recwarn if issubclass(w.category, promptmap.UnknownConfigKeyWarning)] == []
     finally:
         _extra_config_keys.clear()
         _extra_config_keys.update(original)
@@ -74,12 +74,12 @@ def test_register_config_keys_silences_warning(recwarn):
 # ---------------------------------------------------------------------------
 
 def test_unknown_model_type_fails():
-    with pytest.raises(pbt.UnknownModelTypeError, match="unknown model_type 'lop'"):
+    with pytest.raises(promptmap.UnknownModelTypeError, match="unknown model_type 'lop'"):
         build_models_from_dict({"a": '{{ config(model_type="lop") }}\nHi'})
 
 
 def test_missing_extras_kind_says_what_to_install():
-    with pytest.raises(pbt.UnknownModelTypeError, match=r"prompt-build-tool\[extras\]"):
+    with pytest.raises(promptmap.UnknownModelTypeError, match=r"promptmap\[extras\]"):
         build_models_from_dict({"a": '{{ config(model_type="agent37") }}\nHi'})
 
 
@@ -89,4 +89,4 @@ def test_known_model_types_do_not_warn(model_type, recwarn):
         "src": '{{ config(output_format="json") }}\nList things.',
         "a": f'{{{{ config(model_type="{model_type}") }}}}\n{{{{ ref("src") }}}}',
     })
-    assert [w for w in recwarn if issubclass(w.category, pbt.UnknownConfigKeyWarning)] == []
+    assert [w for w in recwarn if issubclass(w.category, promptmap.UnknownConfigKeyWarning)] == []

@@ -13,12 +13,12 @@ import json
 
 import pytest
 
-import pbt
-from pbt.executor.executor import execute_run
-from pbt.executor.graph import build_models_from_dict
-from pbt.files import Dir, File
-from pbt.model_types import _REGISTRY
-from pbt.storage import MemoryStorageBackend
+import promptmap
+from promptmap.executor.executor import execute_run
+from promptmap.executor.graph import build_models_from_dict
+from promptmap.files import Dir, File
+from promptmap.model_types import _REGISTRY
+from promptmap.storage import MemoryStorageBackend
 
 
 def stub_llm(prompt: str, config: dict | None = None) -> str:
@@ -88,7 +88,7 @@ def test_one_skipped_item_does_not_skip_the_model():
         ),
     })
     assert results["each"].value == ["skipped", "resp"]
-    assert results["each"].status != pbt.ModelStatus.SKIPPED
+    assert results["each"].status != promptmap.ModelStatus.SKIPPED
 
 
 def test_json_output_parses_each_item():
@@ -114,7 +114,7 @@ def test_any_custom_kind_can_fan_out():
     async def shout(rendered, call):
         return (await call.llm(rendered)).upper()
 
-    pbt.register_model_kind(pbt.ModelKind("shout_each_test", exec_fn=shout))
+    promptmap.register_model_kind(promptmap.ModelKind("shout_each_test", exec_fn=shout))
     try:
         _, _, results = run_models({
             "items": '{{ config(output_format="json") }}\nList things.',
@@ -173,7 +173,7 @@ async def test_each_model_gets_global_instruction_per_item():
         prompts.append(prompt)
         return stub_llm(prompt, config)
 
-    await pbt.async_run(
+    await promptmap.async_run(
         models_from_dict={
             "items": '{{ config(output_format="json") }}\nList things.',
             "items_loop": '{{ config(each="items") }}\nDescribe: {{ ref("items") }}',
@@ -198,7 +198,7 @@ def _llm(prompt: str, config: dict | None = None) -> str:
 
 
 async def _run(models: dict) -> dict:
-    return await pbt.async_run(
+    return await promptmap.async_run(
         models_from_dict=models,
         llm_call=_llm,
         verbose=False,
@@ -224,5 +224,5 @@ async def test_each_over_text_errors():
         "fan": '{{ config(each="text") }}\nDescribe {{ ref("text") }}',
     }
     outputs = await _run(models)
-    assert isinstance(outputs["fan"], pbt.ModelError)
+    assert isinstance(outputs["fan"], promptmap.ModelError)
     assert "does not return a JSON list" in str(outputs["fan"])

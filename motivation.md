@@ -2,7 +2,7 @@ At the edge of the industrial and digital revolutions, we asked: *what do humans
 
 I'm betting that humans have an intuition that LLMs lack. Something best illustrated through a mistake I made that I could easily imagine an LLM making.
 
-# Updating the map — `pbt test`
+# Updating the map — `promptmap test`
 
 Large Language Model is a drunken tourist in Dublin.
 
@@ -21,22 +21,22 @@ So what does the intuition loop that updates our mental map look like? In Dublin
 
 These checks only work if you make a prediction first. *"I expect to see the river on my left"* is a test of your intuition.
 
-When building a complex system the journey is the human creator iterating toward a solution they trust, and `pbt` aims to be a useful tool for the hunman to stay oriented along the way:
+When building a complex system the journey is the human creator iterating toward a solution they trust, and `promptmap` aims to be a useful tool for the hunman to stay oriented along the way:
 
-1. **The map** is the developer’s understanding of the problem, expressed through a DAG of models (`pbt models`).
-2. **A step** is a change to a prompt, assumption, component, or connection (`pbt run`).
+1. **The map** is the developer’s understanding of the problem, expressed through a DAG of models (`promptmap models`).
+2. **A step** is a change to a prompt, assumption, component, or connection (`promptmap run`).
 3. **A landmark** is an expectation that lets the developer check whether that step moved them in the right direction.
-4. **Tests** preserve those expectations across iterations (`pbt test`).
+4. **Tests** preserve those expectations across iterations (`promptmap test`).
 
-`pbt test` is a structured way for humans to look up from the screen and spot those landmarks as we develop our map of models. Tests check what we expect to get out, making sure the map’s intuition still holds against reality.
+`promptmap test` is a structured way for humans to look up from the screen and spot those landmarks as we develop our map of models. Tests check what we expect to get out, making sure the map’s intuition still holds against reality.
 
-# Creating and exploring the map — `pbt models`, `docs`, and `serve`
+# Creating and exploring the map — `promptmap models`, `docs`, and `serve`
 
-If `pbt test` provides the landmarks, `pbt models` is the map itself—holding both the destination and the divergent roads leading there. `pbt` gives your mental model of a problem a natural resting place, much like a paper map helps build a picture in your head of the streets ahead and gives you landmarks to orient yourself against the real world.
+If `promptmap test` provides the landmarks, `promptmap models` is the map itself—holding both the destination and the divergent roads leading there. `promptmap` gives your mental model of a problem a natural resting place, much like a paper map helps build a picture in your head of the streets ahead and gives you landmarks to orient yourself against the real world.
 
 A fitting analogy comes from physics class, where I was told never to erase incorrect working, but rather to build off it and use it to navigate closer to the correct answer. If we treat a prompt as a single pass/fail one-shot, we lose the contextual journey and struggle to orient ourselves toward the destination. At the same time, if we mindlessly save every prompt variation in a flat folder, we end up in chaos—something akin to trying to use a *"101 Sights to See in Dublin"* brochure to navigate the streets.
 
-This is where `pbt docs` and `pbt serve` come in—turning your prompt pipeline into a living, visual map you can inspect and manipulate through the drag-and-drop companion to `pbt`:
+This is where `promptmap docs` and `promptmap serve` come in—turning your prompt pipeline into a living, visual map you can inspect and manipulate through the drag-and-drop companion to `promptmap`:
 
 ![Drag-and-drop DAG editor](motivation/dnd.png)
 
@@ -53,7 +53,7 @@ Each model is a hypothesis connected to higher- and lower-order hypotheses, form
 ```markdown
 # Example: An automated PCB design pipeline
 
-To see how the map and landmarks work together in practice, consider an automated [PCB design project](./examples/pcb_design) structured as a `pbt` DAG:
+To see how the map and landmarks work together in practice, consider an automated [PCB design project](./examples/pcb_design) structured as a `promptmap` DAG:
 
 
 ```text
@@ -74,4 +74,4 @@ pcb_design/
 
 > *"I discovered that correct logical pin names don’t guarantee correct physical pad connections. I’ve changed my process to account for that. `reversed_flyback_diode.yml` checks that my pipeline still catches this mistake as I keep iterating."*
 
-Now, whenever we tweak upstream prompts in `1_design` or `2_build`, running `pbt run && pbt test` verifies that our mental map still holds against reality.
+Now, whenever we tweak upstream prompts in `1_design` or `2_build`, running `promptmap run && promptmap test` verifies that our mental map still holds against reality.

@@ -12,9 +12,9 @@ import json
 
 import pytest
 
-from pbt import jsonpath
-from pbt.executor.parser_initial import extract_dependencies
-from pbt.storage import MemoryStorageBackend
+from promptmap import jsonpath
+from promptmap.executor.parser_initial import extract_dependencies
+from promptmap.storage import MemoryStorageBackend
 from tests.test_each_fanout import run_models
 
 
@@ -189,7 +189,7 @@ def test_each_index_lines_up_two_lists():
 
 
 def test_each_item_attaches_its_own_files():
-    from pbt.files import File
+    from promptmap.files import File
 
     seen: list[list[str]] = []
 
@@ -203,8 +203,8 @@ def test_each_item_attaches_its_own_files():
         ref = rendered.split()[-1]
         return {"output": {"ref": ref}, "files": [File(f"{ref} crop".encode(), name=f"{ref}.png")]}
 
-    import pbt
-    pbt.register_model_kind(pbt.ModelKind("fake_research_test", exec_fn=_async(research)))
+    import promptmap
+    promptmap.register_model_kind(promptmap.ModelKind("fake_research_test", exec_fn=_async(research)))
     try:
         _, _, results = run_models({
             "parts": '{{ config(model_type="template") }}x',
@@ -214,7 +214,7 @@ def test_each_item_attaches_its_own_files():
             llm_call=lambda p, files=None, config=None: json.dumps(["D1", "Q2"]) if "PARTS" in p else llm(p, files, config),
         )
     finally:
-        from pbt.model_types import _REGISTRY
+        from promptmap.model_types import _REGISTRY
         _REGISTRY.pop("fake_research_test", None)
     assert results["check"].value == ["checked", "checked"]
     assert sorted(seen) == [("D1", [b"D1 crop"]), ("Q2", [b"Q2 crop"])]

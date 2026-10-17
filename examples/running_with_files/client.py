@@ -2,8 +2,8 @@ import mimetypes
 import os
 from google import genai
 
-# Automatically picked up by `pbt` to run .prompt files.
-# Optional kwargs passed by pbt when declared in the signature:
+# Automatically picked up by `promptmap` to run .prompt files.
+# Optional kwargs passed by promptmap when declared in the signature:
 #   files  - list of open file objects attached to the prompt (via --promptdata key=@path)
 #   config - dict of {{ config(...) }} options from the .prompt file (e.g. {"output_format": "json"})
 def llm_call(prompt: str, files: list | None = None, config: dict | None = None) -> str:

@@ -8,12 +8,12 @@ import warnings
 
 import pytest
 
-import pbt
-from pbt.executor.executor import execute_run
-from pbt.executor.graph import build_models_from_dict
-from pbt.model_spec import ModelSpec
-from pbt.model_types import get_model_kind, known_model_kinds
-from pbt.storage.memory import MemoryStorageBackend
+import promptmap
+from promptmap.executor.executor import execute_run
+from promptmap.executor.graph import build_models_from_dict
+from promptmap.model_spec import ModelSpec
+from promptmap.model_types import get_model_kind, known_model_kinds
+from promptmap.storage.memory import MemoryStorageBackend
 
 
 def stub_llm(prompt: str, config: dict | None = None) -> str:
@@ -49,7 +49,7 @@ def test_builtin_kinds_are_registered():
 
 
 def test_register_a_new_model_kind_end_to_end():
-    @pbt.model_kind("shout_test", config_keys={"suffix"})
+    @promptmap.model_kind("shout_test", config_keys={"suffix"})
     async def shout(rendered, call):
         response = await call.llm(rendered)
         return response.upper() + call.spec.config.get("suffix", "")
@@ -64,7 +64,7 @@ def test_register_a_new_model_kind_end_to_end():
 
 def test_a_kind_with_no_exec_fn_uses_the_rendered_text_as_its_output():
     calls: list[str] = []
-    pbt.register_model_kind(pbt.ModelKind("passthrough_test", exec_fn=None))
+    promptmap.register_model_kind(promptmap.ModelKind("passthrough_test", exec_fn=None))
 
     _, _, results = run_models(
         {
@@ -78,11 +78,11 @@ def test_a_kind_with_no_exec_fn_uses_the_rendered_text_as_its_output():
 
 
 def test_registering_a_kind_declares_its_config_keys():
-    @pbt.model_kind("quiet_test", config_keys={"volume"})
+    @promptmap.model_kind("quiet_test", config_keys={"volume"})
     async def quiet(rendered, call):
         return "ok"
 
-    assert "volume" in pbt.known_config_keys()
+    assert "volume" in promptmap.known_config_keys()
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # an UnknownConfigKeyWarning would fail here
         build_models_from_dict(
@@ -91,7 +91,7 @@ def test_registering_a_kind_declares_its_config_keys():
 
 
 def test_unknown_model_type_fails():
-    with pytest.raises(pbt.UnknownModelTypeError, match="unknown model_type 'nope'"):
+    with pytest.raises(promptmap.UnknownModelTypeError, match="unknown model_type 'nope'"):
         build_models_from_dict({"a": '{{ config(model_type="nope") }}\nHi'})
 
 
@@ -122,7 +122,7 @@ def test_template_kind_renders_without_calling_the_llm():
 # ---------------------------------------------------------------------------
 
 def test_execute_python_cache_hit_is_still_recorded_as_success():
-    """A cached model must complete its run row, or `pbt test` cannot see it."""
+    """A cached model must complete its run row, or `promptmap test` cannot see it."""
     models = {"py": '{{ config(model_type="execute_python") }}\noutput = "hello"'}
     storage, _, _ = run_models(models)
 
@@ -152,7 +152,7 @@ def test_validated_output_is_what_downstream_readers_see():
         llm_call=lambda prompt: "raw-output",
         validators={"v": lambda prompt, result: "VALIDATED"},
     )
-    # `pbt test` reads outputs back out of storage — it must judge the value the
+    # `promptmap test` reads outputs back out of storage — it must judge the value the
     # pipeline actually passed on, not the pre-validation text.
     assert storage.get_model_outputs_from_run(run_id, ["v"]) == {"v": "VALIDATED"}
     # ...while the prompt cache still holds the raw output, so editing a
@@ -161,7 +161,7 @@ def test_validated_output_is_what_downstream_readers_see():
 
 
 def test_cache_key_is_one_formula_for_every_kind():
-    from pbt.executor.run_context import RunContext
+    from promptmap.executor.run_context import RunContext
 
     ctx = RunContext(run_id="r", storage=MemoryStorageBackend(), llm_call=stub_llm)
     spec = ModelSpec(name="s", source="hi", config={"a": "1"})
@@ -174,7 +174,7 @@ def test_post_processing_kind_is_idempotent_across_cached_runs():
     The cache has to hold the raw response, not this model's final output, or
     the second run applies the transform to an already-transformed value.
     """
-    @pbt.model_kind("suffixer_test", config_keys={"suffix"})
+    @promptmap.model_kind("suffixer_test", config_keys={"suffix"})
     async def suffixer(rendered, call):
         response = await call.llm(rendered)
         return response + call.spec.config.get("suffix", "")

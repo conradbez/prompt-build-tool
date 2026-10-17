@@ -4,21 +4,21 @@ Everything beyond the basics in the [README](../README.md).
 
 ## Python API
 
-pbt can be used directly from Python without the CLI:
+promptmap can be used directly from Python without the CLI:
 
 ```python
-import pbt
+import promptmap
 
-results = pbt.run("path/to/models")
+results = promptmap.run("path/to/models")
 
 for name, output in results.items():
     print(name, output)
 ```
 
-### `pbt.run()`
+### `promptmap.run()`
 
 ```python
-results = pbt.run(
+results = promptmap.run(
     models_dir="models",       # path to *.prompt files
     select=["article"],        # optional: run only these models
     llm_call=my_llm_fn,        # optional: custom LLM backend
@@ -34,7 +34,7 @@ results = pbt.run(
 > to read env var `NAME`) passes credentials to the run.
 > Kinds read `call.secrets["NAME"]`; an `llm_call(prompt, secrets)` receives them
 > if it declares the parameter. Kinds can require them with
-> `@pbt.model_kind("x", secrets={"NAME"})` so a missing one fails before the run
+> `@promptmap.model_kind("x", secrets={"NAME"})` so a missing one fails before the run
 > starts. They are never rendered, cached, stored or shown in a repr, so
 > rotating a key keeps cache hits.
 
@@ -57,17 +57,17 @@ or `ModelStatus.SKIPPED` when an upstream model failed, or a `ModelError`
 carrying the message when that model itself failed.
 
 ```python
-results = pbt.run("models")
+results = promptmap.run("models")
 
-if isinstance(results["article"], pbt.ModelError):
+if isinstance(results["article"], promptmap.ModelError):
     print("failed:", results["article"])
-elif results["article"] is pbt.ModelStatus.SKIPPED:
+elif results["article"] is promptmap.ModelStatus.SKIPPED:
     print("never ran")
 else:
     print(results["article"])
 ```
 
-`pbt.async_run(...)` takes the same arguments and returns the same dict, for
+`promptmap.async_run(...)` takes the same arguments and returns the same dict, for
 calling from inside an existing event loop.
 
 ### Live progress
@@ -77,7 +77,7 @@ the run is in progress, e.g. to drive a UI:
 
 ```python
 statuses = {}
-pbt.run(
+promptmap.run(
     "models",
     on_model_start=lambda name: statuses.update({name: "running"}),
     on_model_done=lambda r: statuses.update({r.model_name: r.status}),
@@ -86,23 +86,23 @@ pbt.run(
 
 ---
 
-## Token usage (`pbt.LLMResult`)
+## Token usage (`promptmap.LLMResult`)
 
-Return `pbt.LLMResult(text, spent_tokens=...)` instead of the bare text and pbt records the tokens each model spent — `pbt docs` then shows, per run, tokens used, tokens served from cache, and an estimated cold-start total (used + cached). How you count `spent_tokens` is up to you; a sane default is input + output + thinking, or the provider's own total when it reports one. The scaffolded clients already do this; a plain string still works, tokens just show as `—`.
+Return `promptmap.LLMResult(text, spent_tokens=...)` instead of the bare text and promptmap records the tokens each model spent — `promptmap docs` then shows, per run, tokens used, tokens served from cache, and an estimated cold-start total (used + cached). How you count `spent_tokens` is up to you; a sane default is input + output + thinking, or the provider's own total when it reports one. The scaffolded clients already do this; a plain string still works, tokens just show as `—`.
 
 ```python
-import pbt
+import promptmap
 
-def llm_call(prompt: str) -> pbt.LLMResult:
+def llm_call(prompt: str) -> promptmap.LLMResult:
     response = genai.Client().models.generate_content(...)
-    return pbt.LLMResult(response.text, spent_tokens=response.usage_metadata.total_token_count)
+    return promptmap.LLMResult(response.text, spent_tokens=response.usage_metadata.total_token_count)
 ```
 
 ---
 
-## Bulk testing with YAML cases (`pbt test`)
+## Bulk testing with YAML cases (`promptmap test`)
 
-List named sets of inputs in any `*.yml` under `tests/`, at any depth (all files are combined). `pbt test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
+List named sets of inputs in any `*.yml` under `tests/`, at any depth (all files are combined). `promptmap test` runs the models once per case and reports each test as `test_name[case name]`. Shared inputs go in `baselines`; every case inherits `default` unless it `extends` another, and only lists what it changes:
 
 ```yaml
 baselines:
@@ -114,7 +114,7 @@ cases:
     promptdata: {topic: How rockets reach orbit}
 ```
 
-See [`examples/generate_articles_example/tests/`](../examples/generate_articles_example/tests/) for a full example, and the `pbt.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
+See [`examples/generate_articles_example/tests/`](../examples/generate_articles_example/tests/) for a full example, and the `promptmap.promptparams` docstring for every rule. Handy flags: `--case "Rocket*"` to run matching cases, `--promptdata k=v` for a one-off case, `--save-case NAME` to keep it.
 
 ### Testing one model on a known input (`given`)
 
@@ -133,7 +133,7 @@ cases:
             - {ref: D1, pads: [{pad: "1", net: MOTOR_DRAIN}, {pad: "2", net: 12V}]}
 ```
 
-`pbt test --case "Reversed flyback diode"` then runs only what sits downstream
+`promptmap test --case "Reversed flyback diode"` then runs only what sits downstream
 of `board`. A full example, pinning only `parts` and `board` while the rest of
 the pipeline runs, is [`examples/pcb_design/tests/reversed_flyback_diode.yml`](../examples/pcb_design/tests/reversed_flyback_diode.yml).
 
@@ -194,29 +194,29 @@ expectation. Expected values are never injected into model prompts.
 
 Results appear as `expect.polarity[Reversed flyback diode]`. Missing models,
 items, fields, and unequal values fail with the affected field path. A failed
-assertion or model execution makes `pbt test` exit nonzero for CI. Existing
+assertion or model execution makes `promptmap test` exit nonzero for CI. Existing
 `tests/*.prompt` checks can run alongside assertions. `--check-latest` skips
 YAML cases, including their expectations.
 
 ---
 
-## `pbt ls`
+## `promptmap ls`
 
 List discovered models and their dependency graph.
 
 ```bash
-pbt ls
+promptmap ls
 ```
 
 ---
 
-## `pbt serve`
+## `promptmap serve`
 
-Start the pbt HTTP server and open the docs page in the browser.
+Start the promptmap HTTP server and open the docs page in the browser.
 
 ```bash
-pbt serve
-# pbt serve --host 0.0.0.0 --port 8000
+promptmap serve
+# promptmap serve --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -257,7 +257,7 @@ Call `config()` at the top of a `.prompt` file to declare the expected output fo
 Return a JSON object with keys "title" and "summary".
 ```
 
-When `output_format: json` is set, pbt validates the LLM output as JSON (stripping optional ` ```json ``` ` fences) and passes the parsed `dict`/`list` to downstream models via `ref()`, for example enabling `{{ ref('model').title }}` access.
+When `output_format: json` is set, promptmap validates the LLM output as JSON (stripping optional ` ```json ``` ` fences) and passes the parsed `dict`/`list` to downstream models via `ref()`, for example enabling `{{ ref('model').title }}` access.
 
 ### Recognised keys
 
@@ -271,12 +271,12 @@ When `output_format: json` is set, pbt validates the LLM output as JSON (strippi
 | `global_instruction` | `False` opts this model out of the run's [global instruction](#global-instructions-globalprompt) |
 | `cache` | `False` skips reading the prompt cache, so the model always re-runs; the fresh result still overwrites the cached entry |
 
-Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since pbt forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
+Any other key — and any unknown `model_type` — raises an `UnknownConfigKeyWarning` naming the model and file, with a did-you-mean suggestion, so typos like `output_fmt="json"` surface instead of being silently ignored. The key is still kept in the config dict, since promptmap forwards the whole dict to a `llm_call(prompt, config=...)` that accepts one. If your `llm_call` consumes custom keys, register them once to silence the warning:
 
 ```python
-import pbt
+import promptmap
 
-pbt.register_config_keys("temperature", "max_tokens")
+promptmap.register_config_keys("temperature", "max_tokens")
 ```
 
 ---
@@ -284,8 +284,8 @@ pbt.register_config_keys("temperature", "max_tokens")
 ## Global instructions (`global.prompt`)
 
 Sometimes every prompt in a project needs the same preamble — a house style, a
-persona, an output convention. This is pbt's analogue of dbt's `query-comment`:
-one snippet, rendered into every prompt pbt sends.
+persona, an output convention. This is promptmap's analogue of dbt's `query-comment`:
+one snippet, rendered into every prompt promptmap sends.
 
 Create a `global.prompt` next to your `models/` directory (the same place
 `client.py` and `rag.py` live) and it is picked up automatically:
@@ -335,12 +335,12 @@ including `article` itself. Use `promptdata()` for values that vary per run.
 ### Setting it from Python
 
 ```python
-import pbt
+import promptmap
 
-pbt.run(global_instruction="Write in British English.")
+promptmap.run(global_instruction="Write in British English.")
 
 # or build it at runtime — the callable is invoked once per run
-pbt.run(global_instruction=lambda: load_house_style_from_somewhere())
+promptmap.run(global_instruction=lambda: load_house_style_from_somewhere())
 ```
 
 The explicit argument wins over `global.prompt`. This is also the only way to
@@ -348,7 +348,7 @@ set one for `models_from_dict` runs, which never touch the filesystem. On the
 CLI, `--global-instruction PATH` overrides the file for a single run:
 
 ```bash
-pbt run --global-instruction experiments/terse.prompt
+promptmap run --global-instruction experiments/terse.prompt
 ```
 
 ### Opting out
@@ -369,7 +369,7 @@ Two exclusions are automatic:
   judge.
 
 Changing the instruction changes every rendered prompt, so the prompt cache
-invalidates itself — the next `pbt run` re-runs affected models without
+invalidates itself — the next `promptmap run` re-runs affected models without
 `--clear-cache`.
 
 ---
@@ -400,7 +400,7 @@ Polish this section:
 - **Paths.** `.key`, `[n]` and `[*]`, in the SQL/JSON spelling. `each="chapters"` is shorthand for `chapters[*]`. A path that does not lead to a list fails with the type it found.
 - **Where an item came from.** Inside an `each` model, `{{ each }}` describes the current item, like a row of SQL's `json_each`: `each.index` (its position in the flat list), `each.indices` (one per `[*]`), `each.path` (e.g. `sections[1][0]`) and `each.parent` (the value one step above it). `ref('parts').parts[each.index]` lines up two lists built from the same items.
 - **Per item files.** `promptfiles=["research.files"]` on a model with `each="research"` attaches the current item's files only.
-- **Per item rows and cache.** Each item is stored as its own row, `polish[0]`, `polish[1]`, … in `pbt docs` and the database. Its raw response sits under that item's own cache key, so on the next run only changed items reach the LLM.
+- **Per item rows and cache.** Each item is stored as its own row, `polish[0]`, `polish[1]`, … in `promptmap docs` and the database. Its raw response sits under that item's own cache key, so on the next run only changed items reach the LLM.
 
 The model named in `each` is a dependency even when the template never `ref()`s it. A skip function inside an `each` model applies to that item only; the model as a whole still succeeds.
 
@@ -410,7 +410,7 @@ The same paths work in any `ref()`: `{{ ref('parts.parts[0].lcsc') }}`, or `{{ r
 
 ---
 
-## Models that produce files (`pbt.File`, `pbt.Dir`, `pbt.Output`)
+## Models that produce files (`promptmap.File`, `promptmap.Dir`, `promptmap.Output`)
 
 A model can output images, zips, PDFs or whole folders, with or without text,
 and pass them to the models downstream of it. `llm_call` returns a file object
@@ -418,14 +418,14 @@ instead of a string, or a dict/list with file objects inside:
 
 ```python
 # client.py
-import pbt
+import promptmap
 
 def llm_call(prompt, files=None, config=None):
     ...
-    return pbt.File(png_bytes, name="logo.png")                        # one file
-    return pbt.Dir("build/site")                                       # a folder
-    return pbt.Output("Here's the logo.", files=[pbt.File(png_bytes, name="logo.png")])  # text + files
-    return {"caption": text, "image": pbt.File(png_bytes, name="logo.png")}              # anywhere in JSON
+    return promptmap.File(png_bytes, name="logo.png")                        # one file
+    return promptmap.Dir("build/site")                                       # a folder
+    return promptmap.Output("Here's the logo.", files=[promptmap.File(png_bytes, name="logo.png")])  # text + files
+    return {"caption": text, "image": promptmap.File(png_bytes, name="logo.png")}              # anywhere in JSON
 ```
 
 Downstream models use it in three ways:
@@ -456,15 +456,15 @@ print("made a thumbnail")                                    # ...and printed te
 `File`, `Dir` and `Output` are available in Python models without an import.
 
 **Caching.** File bytes are stored once, by sha256, in the `blobs` table of
-`.pbt/pbt.db`. The model's output keeps a small manifest of those hashes, so the
+`.promptmap/promptmap.db`. The model's output keeps a small manifest of those hashes, so the
 prompt cache serves files exactly as it serves text. A downstream model's cache
 key covers the hashes of any files attached to it, so changed bytes mean a fresh
-call. If a cached file's bytes have gone missing, pbt recomputes it.
+call. If a cached file's bytes have gone missing, promptmap recomputes it.
 
-**Where the files end up.** `pbt run` writes each model's files to
-`outputs/<model>/`, next to its text in `outputs/<model>.md`. `pbt docs` shows
-them in a gallery. `pbt show-result <model> --save-files DIR` exports any past
-run's files. `pbt.run()` returns the `File`/`Dir`/`Output` objects.
+**Where the files end up.** `promptmap run` writes each model's files to
+`outputs/<model>/`, next to its text in `outputs/<model>.md`. `promptmap docs` shows
+them in a gallery. `promptmap show-result <model> --save-files DIR` exports any past
+run's files. `promptmap.run()` returns the `File`/`Dir`/`Output` objects.
 
 **Keeping bytes elsewhere (e.g. S3).** A blob store is three methods (`put`,
 `get` and `exists`), keyed by sha256. Define `blob_store` in `client.py`, as an
@@ -475,7 +475,7 @@ instance or a zero-argument function, and every command uses it:
 import boto3
 
 class S3BlobStore:
-    def __init__(self, bucket, prefix="pbt/blobs/"):
+    def __init__(self, bucket, prefix="promptmap/blobs/"):
         self.s3, self.bucket, self.prefix = boto3.client("s3"), bucket, prefix
     def put(self, sha256, data):
         if not self.exists(sha256):
@@ -495,15 +495,15 @@ class S3BlobStore:
 blob_store = S3BlobStore("my-bucket")
 ```
 
-From Python, pass `pbt.run(..., blob_store=S3BlobStore("my-bucket"))` or
+From Python, pass `promptmap.run(..., blob_store=S3BlobStore("my-bucket"))` or
 `SQLiteStorageBackend(blob_store=...)`.
 
 **Safety.** Model output is never trusted to name a file. A stored file
-reference is an object tagged `"$pbt"`, and only pbt writes those tags: the
+reference is an object tagged `"$promptmap"`, and only promptmap writes those tags: the
 same key in JSON a model returns is escaped, so it reads back as plain data.
 Every reference is still checked when it is read back (hash format, file name,
 relative paths, MIME type, the folder's tree hash), and every read checks the
-bytes against their hash. `pbt.Dir` refuses symlinks, and file names can never
+bytes against their hash. `promptmap.Dir` refuses symlinks, and file names can never
 contain a path.
 
 ---
@@ -515,7 +515,7 @@ agent runs shell commands in `agent_dir` until it submits. Two backends:
 
 | `agent_backend`  | what it is | install |
 |------------------|------------|---------|
-| `mini-swe-agent` (default) | [mini-swe-agent](https://mini-swe-agent.com): a minimal bash-only agent | included with pbt |
+| `mini-swe-agent` (default) | [mini-swe-agent](https://mini-swe-agent.com): a minimal bash-only agent | included with promptmap |
 | `opencode`       | [opencode](https://opencode.ai): a full coding agent with file tools and **MCP servers** | `npm i -g opencode-ai` (or `curl -fsSL https://opencode.ai/install \| bash`) |
 
 ```bash
@@ -572,7 +572,7 @@ is started with `--auto`, so it approves its own tool calls).
 
 `agent_mcp` is opencode's [`mcp` config block](https://opencode.ai/docs/mcp-servers/):
 a dict of server name to server config, either inline or as the path of an
-`opencode.json` (relative to the `.prompt` file). pbt passes it to opencode
+`opencode.json` (relative to the `.prompt` file). promptmap passes it to opencode
 through `OPENCODE_CONFIG_CONTENT`, which opencode merges over its project and
 global config, so an `opencode.json` already in `agent_dir` still applies.
 
@@ -594,10 +594,10 @@ write the answer to answer.md and reply with its contents.
 
 or, keeping the servers in a file: `agent_mcp="./opencode.json"`.
 
-The `opencode` binary is found on `PATH`, or at `PBT_OPENCODE_BIN`. Provider
-keys are the same ones pbt uses: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and
+The `opencode` binary is found on `PATH`, or at `PROMPTMAP_OPENCODE_BIN`. Provider
+keys are the same ones promptmap uses: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and
 `GEMINI_API_KEY` (passed to opencode as `GOOGLE_GENERATIVE_AI_API_KEY`). Step and
-cost limits are enforced by pbt from opencode's per-step cost events: when
+cost limits are enforced by promptmap from opencode's per-step cost events: when
 exceeded, the process is stopped and the last log entry is
 `{"type": "exit", "reason": "..."}`.
 
@@ -605,18 +605,18 @@ exceeded, the process is stopped and the last log entry is
 
 ## Writing your own model kind (`model_type=`)
 
-Every `.prompt` file is run by a *model kind*. Leave `model_type` unset and pbt
+Every `.prompt` file is run by a *model kind*. Leave `model_type` unset and promptmap
 sends the rendered prompt to your LLM; set it to `template`,
-`execute_python` or `agent` and pbt runs it differently. If none of those do
+`execute_python` or `agent` and promptmap runs it differently. If none of those do
 what you need, you can add your own.
 
 A kind is a function and a registration, both in `client.py`:
 
 ```python
 # client.py
-import pbt
+import promptmap
 
-@pbt.model_kind("shout", config_keys={"suffix"})
+@promptmap.model_kind("shout", config_keys={"suffix"})
 async def shout(rendered, call):
     response = await call.llm(rendered)
     return response.upper() + call.spec.config.get("suffix", "")
@@ -631,12 +631,12 @@ Summarise {{ ref('article') }}.
 ```
 
 ```bash
-pbt run
+promptmap run
 ```
 
 ### What you get
 
-pbt renders the template for you and hands your function two things:
+promptmap renders the template for you and hands your function two things:
 
 | | |
 |---|---|
@@ -646,9 +646,9 @@ pbt renders the template for you and hands your function two things:
 Whatever you return becomes the model's output — the thing `ref('loud')` gives
 downstream models, and the thing written to `outputs/`. Return a string and it
 is parsed for you if the model sets `output_format="json"`. Return a list or a
-dict and it is kept as-is. Return a `pbt.File`, `pbt.Dir` or `pbt.Output`, or a
+dict and it is kept as-is. Return a `promptmap.File`, `promptmap.Dir` or `promptmap.Output`, or a
 list/dict with them inside, and the model produces
-[files](#models-that-produce-files-pbtfile-pbtdir-pbtoutput): pbt stores the
+[files](#models-that-produce-files-promptmapfile-promptmapdir-promptmapoutput): promptmap stores the
 bytes, caches them, and hands them downstream. See
 [Produce or read files](#optional-extras) below.
 
@@ -659,12 +659,12 @@ methods on it.
 
 Everything else keeps working without you doing anything: the prompt cache,
 `{{ config(output_format="json") }}`, the skip functions, `validation/`,
-`pbt test`, `pbt docs` and the run report all treat your kind like a built-in
+`promptmap test`, `promptmap docs` and the run report all treat your kind like a built-in
 one. `call.llm` is already cached, timed and skip-aware — there is nothing to
 opt into.
 
-`config_keys={"suffix"}` tells pbt which `config()` keys your kind reads.
-Without it, `pbt run` warns that `suffix` looks like a typo.
+`config_keys={"suffix"}` tells promptmap which `config()` keys your kind reads.
+Without it, `promptmap run` warns that `suffix` looks like a typo.
 
 ### The full record
 
@@ -672,7 +672,7 @@ The decorator is shorthand for building a `ModelKind` and registering it. The
 long form is what you want for a kind that has no `exec_fn` of its own:
 
 ```python
-pbt.register_model_kind(pbt.ModelKind(
+promptmap.register_model_kind(promptmap.ModelKind(
     name="shout",
     exec_fn=shout,
     config_keys={"suffix"},
@@ -695,7 +695,7 @@ just `await call.llm(rendered)`; `template` is
 **Skip the LLM entirely.** Anything you can compute, you can return:
 
 ```python
-@pbt.model_kind("truncate", config_keys={"max_words"})
+@promptmap.model_kind("truncate", config_keys={"max_words"})
 async def truncate(rendered, call):
     return " ".join(rendered.split()[:call.spec.config_int("max_words", 50)])
 ```
@@ -705,7 +705,7 @@ async def truncate(rendered, call):
 {{ ref('article') }}
 ```
 
-The `ref()` calls in the template are what tell pbt your model has to run after
+The `ref()` calls in the template are what tell promptmap your model has to run after
 the models it references — reading `call.outputs` directly does not create that
 edge.
 
@@ -715,7 +715,7 @@ model's template as Python. Write a kind when the behaviour is worth reusing
 across models and configuring per model, the way `truncate` takes `max_words`.
 
 **Fan out over a list.** Nothing to write: any model using your kind can set
-`config(each="model.key[*]")`, and pbt renders once per item, runs your
+`config(each="model.key[*]")`, and promptmap renders once per item, runs your
 `exec_fn` on each concurrently, and collects the results into a list.
 
 **Cache expensive non-LLM work.** Anything slow and repeatable can go behind the
@@ -725,28 +725,28 @@ same cache your LLM calls use, so it does not re-run when nothing changed:
 return await call.compute(rendered, compute=lambda: scrape(rendered))
 ```
 
-**Produce or read files.** Upstream files arrive in `call.outputs` as `pbt.File`,
-`pbt.Dir` and `pbt.Output` objects, and returning one makes your model output
+**Produce or read files.** Upstream files arrive in `call.outputs` as `promptmap.File`,
+`promptmap.Dir` and `promptmap.Output` objects, and returning one makes your model output
 files. This kind zips every file its upstream models produced:
 
 ```python
 import io, zipfile
-import pbt
+import promptmap
 
-@pbt.model_kind("zip_files", config_keys={"zip_name"})
+@promptmap.model_kind("zip_files", config_keys={"zip_name"})
 async def zip_files(rendered, call):
     def build():
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for name in call.spec.depends_on:
                 value = call.outputs[name]
-                files = value.files.values() if isinstance(value, pbt.Output) else [value]
+                files = value.files.values() if isinstance(value, promptmap.Output) else [value]
                 for f in files:
-                    if isinstance(f, pbt.File):
+                    if isinstance(f, promptmap.File):
                         # A fixed timestamp keeps the zip's bytes, and so its hash, stable.
                         info = zipfile.ZipInfo(f"{name}/{f.name}", date_time=(1980, 1, 1, 0, 0, 0))
                         zf.writestr(info, f.read_bytes())
-        return pbt.File(buf.getvalue(), name=call.spec.config.get("zip_name", "bundle.zip"))
+        return promptmap.File(buf.getvalue(), name=call.spec.config.get("zip_name", "bundle.zip"))
 
     return await call.compute(rendered, compute=build)
 ```
@@ -767,8 +767,8 @@ Three things make this work well:
   should give the same bytes. Zips normally stamp the current time on each
   entry; the fixed `date_time` above prevents that. Without it, every re-zip
   would be a "new" file to downstream models.
-- **No storage code.** pbt writes the bytes to the blob store, caches the
-  manifest, shows the file in `pbt docs` and writes it to `outputs/<model>/`.
+- **No storage code.** promptmap writes the bytes to the blob store, caches the
+  manifest, shows the file in `promptmap docs` and writes it to `outputs/<model>/`.
   The same happens for files returned from `call.llm()`, and for files a kind
   builds without `call.compute`.
 
@@ -784,7 +784,7 @@ for a model to answer — Python source, or a value passed straight through — 
 ### Where to register it
 
 Anywhere that runs before your models are read. `client.py` is the easiest spot,
-because pbt already imports it on every `pbt run`, `pbt test` and `pbt ls`.
+because promptmap already imports it on every `promptmap run`, `promptmap test` and `promptmap ls`.
 
 A worked example lives in [`examples/custom_model_type/`](../examples/custom_model_type/).
 

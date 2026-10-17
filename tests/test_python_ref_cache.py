@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pbt.storage import MemoryStorageBackend
+from promptmap.storage import MemoryStorageBackend
 from tests.test_each_fanout import run_models
 
 CALC = '{{ config(model_type="execute_python") }}\na = ref("arch")\noutput = len(a["paths"])\n'

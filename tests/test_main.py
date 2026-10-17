@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-import pbt
-from pbt.storage import MemoryStorageBackend
+import promptmap
+from promptmap.storage import MemoryStorageBackend
 
 from tests.conftest import MODELS, stub_llm
 
@@ -21,7 +21,7 @@ from tests.conftest import MODELS, stub_llm
 # ---------------------------------------------------------------------------
 
 async def _run(select: list[str] | None = None) -> dict:
-    return await pbt.async_run(
+    return await promptmap.async_run(
         models_from_dict=MODELS,
         select=select,
         llm_call=stub_llm,
@@ -33,8 +33,8 @@ async def _run(select: list[str] | None = None) -> dict:
 def _assert_ok(outputs: dict, name: str) -> None:
     assert name in outputs, f"'{name}' missing from outputs: {list(outputs)}"
     val = outputs[name]
-    assert not isinstance(val, pbt.ModelError), f"'{name}' errored: {val}"
-    assert val != pbt.ModelStatus.SKIPPED, f"'{name}' was unexpectedly skipped"
+    assert not isinstance(val, promptmap.ModelError), f"'{name}' errored: {val}"
+    assert val != promptmap.ModelStatus.SKIPPED, f"'{name}' was unexpectedly skipped"
 
 
 # ---------------------------------------------------------------------------
@@ -43,13 +43,13 @@ def _assert_ok(outputs: dict, name: str) -> None:
 
 async def test_full_run_no_errors() -> None:
     outputs = await _run()
-    errors = {k: v for k, v in outputs.items() if isinstance(v, pbt.ModelError)}
+    errors = {k: v for k, v in outputs.items() if isinstance(v, promptmap.ModelError)}
     assert not errors, f"Models errored: {errors}"
 
 
 async def test_full_run_no_unexpected_skips() -> None:
     outputs = await _run()
-    skipped = {k for k, v in outputs.items() if v == pbt.ModelStatus.SKIPPED}
+    skipped = {k for k, v in outputs.items() if v == promptmap.ModelStatus.SKIPPED}
     assert not skipped, f"Models were skipped: {skipped}"
 
 

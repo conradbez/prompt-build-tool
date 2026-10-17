@@ -2,9 +2,9 @@
 Integration test: an ``agent`` model with ``agent_backend="opencode"`` doing a
 small programming task through a real opencode binary and OpenAI model.
 
-Requires the ``opencode`` binary (PATH or PBT_OPENCODE_BIN) and one provider
+Requires the ``opencode`` binary (PATH or PROMPTMAP_OPENCODE_BIN) and one provider
 key (environment or .env): OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY;
-skipped otherwise.  Override the model with PBT_OPENCODE_TEST_MODEL (an
+skipped otherwise.  Override the model with PROMPTMAP_OPENCODE_TEST_MODEL (an
 opencode ``provider/model`` name).
 """
 
@@ -16,7 +16,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from pbt.executor.builtin_kinds import _opencode_bin
+from promptmap.executor.builtin_kinds import _opencode_bin
 from tests.test_model_types import run_models
 
 load_dotenv()
@@ -28,7 +28,7 @@ _MODEL_FOR_KEY = {
     "GEMINI_API_KEY": "google/gemini-3.8-flash",
 }
 DEFAULT_MODEL = next((m for k, m in _MODEL_FOR_KEY.items() if os.environ.get(k)), None)
-MODEL = os.environ.get("PBT_OPENCODE_TEST_MODEL") or DEFAULT_MODEL
+MODEL = os.environ.get("PROMPTMAP_OPENCODE_TEST_MODEL") or DEFAULT_MODEL
 
 pytestmark = pytest.mark.skipif(
     not (_opencode_bin() and MODEL),

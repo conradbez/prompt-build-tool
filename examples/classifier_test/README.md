@@ -1,6 +1,6 @@
 # Classifier-judged tests
 
-`pbt test` judged by a local [Ollaya](https://ollaya.dev) classifier instead of
+`promptmap test` judged by a local [Ollaya](https://ollaya.dev) classifier instead of
 an LLM. No API key needed: the model is a fixed haiku, and the tests only ask
 yes/no questions about it.
 
@@ -25,8 +25,8 @@ This downloads the `laya` model on first use and starts the server on
 
 ```bash
 cd examples/classifier_test
-pbt run    # builds the haiku
-pbt test   # asks Ollaya about it
+promptmap run    # builds the haiku
+promptmap test   # asks Ollaya about it
 ```
 
 Both tests should pass:
@@ -56,10 +56,10 @@ Is this poem about autumn?
 `client.py` builds the judge with no extra dependencies:
 
 ```python
-classify_call = pbt.systemone_classifier(model="laya", base_url="http://localhost:11435")
+classify_call = promptmap.systemone_classifier(model="laya", base_url="http://localhost:11435")
 test_judge = "classifier"
 ```
 
 Set `OLLAYA_MODEL` or `OLLAYA_URL` to use another model or server. To use
-hosted Jev instead, call `pbt.systemone_classifier()` with no arguments and set
+hosted Jev instead, call `promptmap.systemone_classifier()` with no arguments and set
 `TYPESAFE_API_KEY`.

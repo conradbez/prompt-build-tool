@@ -4,7 +4,7 @@ from dotenv import find_dotenv, load_dotenv
 from openai import OpenAI
 
 # Picks up OPENROUTER_API_KEY (and AGENT37_API_KEY for the audio model) from
-# the nearest .env above where you run pbt.
+# the nearest .env above where you run promptmap.
 load_dotenv(find_dotenv(usecwd=True))
 
 MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-5.5")
@@ -12,7 +12,7 @@ MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-5.5")
 # The agent37 model (audio) takes its LLM from the run settings, which default
 # to Gemini. Point it at OpenRouter too.
 try:
-    from pbt_extra_model_kinds import agent_exec
+    from promptmap_extra_model_kinds import agent_exec
 
     agent_exec.use_run(agent_exec.RunSettings(
         provider="openrouter",
@@ -20,7 +20,7 @@ try:
         model=MODEL,
     ))
 except ImportError:
-    pass  # no extras: pbt stops on the agent37 model and says what to install
+    pass  # no extras: promptmap stops on the agent37 model and says what to install
 
 
 def llm_call(prompt: str) -> str:

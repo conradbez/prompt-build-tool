@@ -8,15 +8,15 @@ import pickle
 import pytest
 from click.testing import CliRunner
 
-import pbt
-from pbt.cli import main
-from pbt.executor.executor import execute_run
-from pbt.executor.graph import build_models_from_dict
-from pbt.executor.run_context import RunContext
-from pbt.model_types import ModelCall, _REGISTRY
-from pbt.secrets import MissingSecretsError, Secrets, parse_secret_flags
-from pbt.storage.memory import MemoryStorageBackend
-from pbt.storage.sqlite import SQLiteStorageBackend
+import promptmap
+from promptmap.cli import main
+from promptmap.executor.executor import execute_run
+from promptmap.executor.graph import build_models_from_dict
+from promptmap.executor.run_context import RunContext
+from promptmap.model_types import ModelCall, _REGISTRY
+from promptmap.secrets import MissingSecretsError, Secrets, parse_secret_flags
+from promptmap.storage.memory import MemoryStorageBackend
+from promptmap.storage.sqlite import SQLiteStorageBackend
 
 KEY = "sk-live-0123456789abcdef"
 
@@ -26,7 +26,7 @@ def kind_reading_secret():
     """A kind whose output is derived from — but never equal to — a secret."""
     seen: list[str] = []
 
-    @pbt.model_kind("needs_key_test")
+    @promptmap.model_kind("needs_key_test")
     async def needs_key(rendered, call):
         seen.append(call.secrets["API_KEY"])
         return await call.llm(rendered)
@@ -119,9 +119,9 @@ def test_concurrent_runs_each_see_only_their_own_secrets():
 
     async def both():
         await asyncio.gather(
-            pbt.async_run(models_from_dict={"m": "alice"}, llm_call=llm_call, verbose=False,
+            promptmap.async_run(models_from_dict={"m": "alice"}, llm_call=llm_call, verbose=False,
                           storage_backend=MemoryStorageBackend(), secrets={"API_KEY": "key-a"}),
-            pbt.async_run(models_from_dict={"m": "bob"}, llm_call=llm_call, verbose=False,
+            promptmap.async_run(models_from_dict={"m": "bob"}, llm_call=llm_call, verbose=False,
                           storage_backend=MemoryStorageBackend(), secrets={"API_KEY": "key-b"}),
         )
 
@@ -152,7 +152,7 @@ def test_stored_run_never_contains_the_value(tmp_path, kind_reading_secret):
     def llm_call(prompt, secrets, config=None):
         return "resp"
 
-    storage = SQLiteStorageBackend(tmp_path / "pbt.db")
+    storage = SQLiteStorageBackend(tmp_path / "promptmap.db")
     run_models(
         {"m": '{{ config(model_type="needs_key_test") }}\nhi', "n": "{{ ref('m') }} again"},
         storage=storage, llm_call=llm_call, secrets={"API_KEY": KEY},
@@ -170,7 +170,7 @@ def test_stored_run_never_contains_the_value(tmp_path, kind_reading_secret):
 def test_kind_declared_secrets_fail_before_any_model_runs():
     calls = []
 
-    @pbt.model_kind("modal_test", secrets={"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"})
+    @promptmap.model_kind("modal_test", secrets={"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"})
     async def modal(rendered, call):
         return "done"
 
@@ -207,25 +207,25 @@ def test_bare_secret_flag_rejects_unset_env_var():
 
 def test_cli_run_exits_when_secret_env_var_unset(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("PBT_TEST_UNSET_KEY", raising=False)
-    result = CliRunner().invoke(main, ["run", "--secret", "PBT_TEST_UNSET_KEY"])
+    monkeypatch.delenv("PROMPTMAP_TEST_UNSET_KEY", raising=False)
+    result = CliRunner().invoke(main, ["run", "--secret", "PROMPTMAP_TEST_UNSET_KEY"])
     assert result.exit_code == 1
-    assert "PBT_TEST_UNSET_KEY is not set" in " ".join(result.output.split())
+    assert "PROMPTMAP_TEST_UNSET_KEY is not set" in " ".join(result.output.split())
 
 
 # ---------------------------------------------------------------------------
-# pbt test: --secret reaches the per-case runs and the LLM judge
+# promptmap test: --secret reaches the per-case runs and the LLM judge
 # ---------------------------------------------------------------------------
 
 SECRET_CLIENT_PY = """\
-import pbt
+import promptmap
 
-@pbt.model_kind("needs_secret_cli_test", secrets={"PBT_CLI_TEST_KEY"})
+@promptmap.model_kind("needs_secret_cli_test", secrets={"PROMPTMAP_CLI_TEST_KEY"})
 async def needs_secret(rendered, call):
     return "value-from-kind"
 
 def llm_call(prompt, secrets):
-    assert secrets["PBT_CLI_TEST_KEY"]
+    assert secrets["PROMPTMAP_CLI_TEST_KEY"]
     return '{"results": "pass"}'
 """
 
@@ -241,20 +241,20 @@ def _secret_project(root):
     (root / "tests" / "cases.yml").write_text("cases:\n  - name: one\n")
 
 
-def test_pbt_test_passes_secrets_to_runs_and_judge(tmp_path, monkeypatch):
+def test_promptmap_test_passes_secrets_to_runs_and_judge(tmp_path, monkeypatch):
     _secret_project(tmp_path)
     monkeypatch.chdir(tmp_path)
-    result = CliRunner().invoke(main, ["test", "--secret", f"PBT_CLI_TEST_KEY={KEY}"])
+    result = CliRunner().invoke(main, ["test", "--secret", f"PROMPTMAP_CLI_TEST_KEY={KEY}"])
     assert result.exit_code == 0, result.output
     assert KEY not in result.output
     _REGISTRY.pop("needs_secret_cli_test", None)
 
 
-def test_pbt_test_without_secret_fails_cleanly(tmp_path, monkeypatch):
+def test_promptmap_test_without_secret_fails_cleanly(tmp_path, monkeypatch):
     _secret_project(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(main, ["test"])
     assert result.exit_code == 1
-    assert "PBT_CLI_TEST_KEY" in result.output
+    assert "PROMPTMAP_CLI_TEST_KEY" in result.output
     assert not isinstance(result.exception, MissingSecretsError)  # exited, no traceback
     _REGISTRY.pop("needs_secret_cli_test", None)

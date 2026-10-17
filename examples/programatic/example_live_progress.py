@@ -1,7 +1,7 @@
 """
-Demonstrates tracking live progress while pbt runs.
+Demonstrates tracking live progress while promptmap runs.
 
-pbt.run() and pbt.async_run() accept two optional callbacks:
+promptmap.run() and promptmap.async_run() accept two optional callbacks:
   on_model_start(name)     — fired just before a model starts
   on_model_done(result)    — fired when a model finishes; result.status is
                              "success", "error" or "skipped"
@@ -19,8 +19,8 @@ import os
 import random
 import time
 
-import pbt
-from pbt.storage import MemoryStorageBackend
+import promptmap
+from promptmap.storage import MemoryStorageBackend
 
 HERE = os.path.dirname(__file__)
 MODELS_DIR = os.path.join(HERE, "example_test_run", "models")
@@ -50,15 +50,15 @@ def example_status_board():
         statuses[name] = "running"
         print_board()
 
-    def on_done(result: pbt.ModelRunResult) -> None:
+    def on_done(result: promptmap.ModelRunResult) -> None:
         statuses[result.model_name] = result.status
         print_board()
 
-    pbt.run(
+    promptmap.run(
         models_dir=MODELS_DIR,
         llm_call=slow_llm,
         promptfiles=PROMPTFILES,
-        verbose=False,  # our board replaces pbt's own log
+        verbose=False,  # our board replaces promptmap's own log
         storage_backend=MemoryStorageBackend(),  # keep run history out of the local DB
         on_model_start=on_start,
         on_model_done=on_done,
@@ -88,7 +88,7 @@ async def example_event_stream():
 
     consumer_task = asyncio.create_task(consumer())
 
-    results = await pbt.async_run(
+    results = await promptmap.async_run(
         models_dir=MODELS_DIR,
         llm_call=async_slow_llm,
         promptfiles=PROMPTFILES,

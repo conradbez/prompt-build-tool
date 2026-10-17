@@ -9,7 +9,7 @@ Covers:
 - promptfile paths resolve relative to the YAML file
 - save_case / write_example
 - execute_tests cross-join with named cases
-- CLI pbt test: per-case runs, --case, inline params with baselines,
+- CLI promptmap test: per-case runs, --case, inline params with baselines,
   --save-case, the example file, and the CSV migration error
 """
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from pbt.promptparams import (
+from promptmap.promptparams import (
     PromptParamsError,
     TestCase,
     find_promptparams_files,
@@ -30,9 +30,9 @@ from pbt.promptparams import (
     save_case,
     write_example,
 )
-from pbt.tester import execute_tests
-from pbt.storage.memory import MemoryStorageBackend
-from tests.conftest import run_pbt
+from promptmap.tester import execute_tests
+from promptmap.storage.memory import MemoryStorageBackend
+from tests.conftest import run_promptmap
 
 
 def write(path: Path, text: str) -> Path:
@@ -487,7 +487,7 @@ def output(result) -> str:
 
 
 def test_cli_runs_every_named_case_from_combined_files(promptparams_proj: Path) -> None:
-    result = run_pbt("test", cwd=promptparams_proj, check=False)
+    result = run_promptmap("test", cwd=promptparams_proj, check=False)
     out = output(result)
     assert result.returncode == 0, out
     assert "3 cases" in out
@@ -496,25 +496,25 @@ def test_cli_runs_every_named_case_from_combined_files(promptparams_proj: Path) 
 
 
 def test_cli_case_filter(promptparams_proj: Path) -> None:
-    result = run_pbt("test", "--case", "formal*", cwd=promptparams_proj, check=False)
+    result = run_promptmap("test", "--case", "formal*", cwd=promptparams_proj, check=False)
     out = output(result)
     assert "2 cases" in out
     assert "tone_test[Casual]" not in out
 
-    missing = run_pbt("test", "--case", "nothing", cwd=promptparams_proj, check=False)
+    missing = run_promptmap("test", "--case", "nothing", cwd=promptparams_proj, check=False)
     assert missing.returncode != 0
     assert "no promptparams case matches" in output(missing)
 
 
 def test_cli_explicit_promptparams_path(promptparams_proj: Path) -> None:
-    result = run_pbt("test", "--promptparams", "tests/tone.yml", cwd=promptparams_proj, check=False)
+    result = run_promptmap("test", "--promptparams", "tests/tone.yml", cwd=promptparams_proj, check=False)
     out = output(result)
     assert "2 cases" in out
     assert "tone_test[Casual]" not in out
 
 
 def test_cli_inline_params_inherit_default_and_save_case(promptparams_proj: Path) -> None:
-    result = run_pbt(
+    result = run_promptmap(
         "test", "--promptdata", "tone=playful", "--save-case", "Playful tone",
         cwd=promptparams_proj, check=False,
     )
@@ -529,11 +529,11 @@ def test_cli_inline_params_inherit_default_and_save_case(promptparams_proj: Path
         "cases": [{"name": "Playful tone", "promptdata": {"tone": "playful"}}]
     }
     # ...and it joins the next parameterised run.
-    assert "4 cases" in output(run_pbt("test", cwd=promptparams_proj, check=False))
+    assert "4 cases" in output(run_promptmap("test", cwd=promptparams_proj, check=False))
 
 
 def test_cli_inline_extends(promptparams_proj: Path) -> None:
-    result = run_pbt(
+    result = run_promptmap(
         "test", "--promptdata", "audience=kids", "--extends", "casual",
         cwd=promptparams_proj, check=False,
     )
@@ -541,20 +541,20 @@ def test_cli_inline_extends(promptparams_proj: Path) -> None:
 
 
 def test_cli_save_case_requires_params(promptparams_proj: Path) -> None:
-    result = run_pbt("test", "--save-case", "X", cwd=promptparams_proj, check=False)
+    result = run_promptmap("test", "--save-case", "X", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
     assert not (promptparams_proj / "tests" / "x.yml").exists()
 
 
 def test_cli_bad_yaml_is_reported(promptparams_proj: Path) -> None:
     write(promptparams_proj / "tests" / "bad.yml", "cases:\n  - extends: nope\n")
-    result = run_pbt("test", cwd=promptparams_proj, check=False)
+    result = run_promptmap("test", cwd=promptparams_proj, check=False)
     assert result.returncode != 0
     assert "'nope'" in output(result) and "unknown baseline" in output(result)
 
 
 def test_cli_writes_yaml_example(promptparams_proj: Path) -> None:
-    run_pbt("test", cwd=promptparams_proj, check=False)
+    run_promptmap("test", cwd=promptparams_proj, check=False)
     example = promptparams_proj / "promptparams.yml.example"
     doc = yaml.safe_load(example.read_text())
     assert set(doc["baselines"]["default"]["promptdata"]) == {"tone", "audience"}
@@ -578,8 +578,8 @@ cases:
 
 
 def test_models_for_case_skips_given_and_what_only_feeds_them() -> None:
-    from pbt.cli.test import models_for_case
-    from pbt.executor.graph import build_models_from_dict
+    from promptmap.cli.test import models_for_case
+    from promptmap.executor.graph import build_models_from_dict
 
     specs = list(build_models_from_dict({
         "brief": "b",
@@ -615,7 +615,7 @@ cases:
     given:
       board: {pads: [MOTOR_DRAIN, 12V]}
 """)
-    result = run_pbt("test", cwd=proj, check=False)
+    result = run_promptmap("test", cwd=proj, check=False)
     out = output(result)
     assert result.returncode == 0, out
     assert "given: board" in out
@@ -630,7 +630,7 @@ def test_cli_given_unknown_model_errors(tmp_path: Path) -> None:
     write(proj / "tests" / "t.prompt", "{{ ref('a') }}")
     write(proj / "client.py", GIVEN_CLIENT_PY)
     write(proj / "tests" / "cases.yml", "cases:\n  - name: X\n    given: {nope: 1}\n")
-    result = run_pbt("test", cwd=proj, check=False)
+    result = run_promptmap("test", cwd=proj, check=False)
     assert result.returncode != 0
     assert "gives nope, which is not a model" in output(result)
 
@@ -675,7 +675,7 @@ cases:
         - {{ref: Q2, built_pads_agree: true}}
         - {{ref: D1, built_pads_agree: {expected}}}
 ''')
-    result = run_pbt('test', cwd=proj, check=False)
+    result = run_promptmap('test', cwd=proj, check=False)
     assert result.returncode == exit_code, output(result)
     assert 'expect.polarity' in output(result)
     assert not (proj / 'calls.log').exists()
@@ -710,7 +710,7 @@ def test_cli_rejects_invalid_expectations(tmp_path, expectation, fragment):
     write(proj / 'models' / 'a.prompt', "{{ config(model_type='template') }}ok")
     write(proj / 'client.py', GIVEN_CLIENT_PY)
     write(proj / 'tests' / 'cases.yml', f'cases:\n  - name: Invalid\n    expect: {expectation}\n')
-    result = run_pbt('test', cwd=proj, check=False)
+    result = run_promptmap('test', cwd=proj, check=False)
     assert result.returncode != 0
     assert fragment in " ".join(output(result).split())
 
@@ -721,7 +721,7 @@ def test_cli_model_failure_fails_even_when_expectations_pass(tmp_path):
     write(proj / 'models' / 'bad.prompt', 'Fail this model')
     write(proj / 'client.py', 'def llm_call(prompt):\n    raise RuntimeError("model unavailable")\n')
     write(proj / 'tests' / 'cases.yml', 'cases:\n  - name: Failure\n    expect: {good: ok}\n')
-    result = run_pbt('test', cwd=proj, check=False)
+    result = run_promptmap('test', cwd=proj, check=False)
     assert result.returncode != 0
     assert 'expect.good' in output(result)
     assert 'PASS' in output(result)

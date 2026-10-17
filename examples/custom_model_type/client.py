@@ -1,12 +1,12 @@
 """LLM backend + a custom model kind for this project.
 
-pbt imports this file before it reads models/, so any model kind registered
+promptmap imports this file before it reads models/, so any model kind registered
 here is available to every .prompt file.
 """
 
 import os
 
-import pbt
+import promptmap
 from google import genai
 
 
@@ -16,12 +16,12 @@ from google import genai
 # Use it from a .prompt file with:
 #     {{ config(model_type="shout", suffix="!") }}
 #
-# pbt renders the template and hands the text to this function; `call.llm` is
+# promptmap renders the template and hands the text to this function; `call.llm` is
 # the cached LLM call, already bound to this model.
 #
-# config_keys tells pbt that "suffix" is a real option, not a typo.
+# config_keys tells promptmap that "suffix" is a real option, not a typo.
 
-@pbt.model_kind("shout", config_keys={"suffix"})
+@promptmap.model_kind("shout", config_keys={"suffix"})
 async def shout(rendered, call):
     response = await call.llm(rendered)
     return response.upper() + call.spec.config.get("suffix", "")

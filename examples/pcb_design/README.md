@@ -23,7 +23,7 @@ brief ─► requirements ─► architecture ─┬─► electrical_check (pyt
 every polarised or multi-pin part an agent downloads the datasheet, writes the
 facts needed to set up the PCB with page numbers, and crops the diagram each
 fact comes from. Nothing is kept in a research folder: the notes, the crops and
-the PDF are the model's output files. They show in `pbt docs`, land in
+the PDF are the model's output files. They show in `promptmap docs`, land in
 `outputs/research/`, and reach `board` and `polarity` as data. Resistors and
 capacitors skip without an agent run.
 
@@ -78,10 +78,10 @@ Keep KiCad closed while it runs.
 cd examples/pcb_design
 export GEMINI_API_KEY=...                              # default model gemini-3.5-flash-lite; override with GEMINI_MODEL
 export MSWEA_MODEL_NAME=gemini/gemini-3.5-flash-lite    # the agents' model, via litellm
-pbt run                     # writes build/board/ and outputs/review.md
-pbt test                    # replay the saved regression cases
-pbt run --promptdata reference_project=~/path/to/a/working/atopile/project
-pbt run --promptdata brief="ESP32 soil-moisture sensor, 3V3 only, capacitive probe on a 2-wire cable"
+promptmap run                     # writes build/board/ and outputs/review.md
+promptmap test                    # replay the saved regression cases
+promptmap run --promptdata reference_project=~/path/to/a/working/atopile/project
+promptmap run --promptdata brief="ESP32 soil-moisture sensor, 3V3 only, capacitive probe on a 2-wire cable"
 ```
 
 The agent is capped at 150 steps and $5 (`agent_step_limit`, `agent_cost_limit`
@@ -100,13 +100,13 @@ Everything else runs for real from a one-line `brief`, including the datasheet
 pass on this board, which is the point.
 
 ```bash
-pbt test --case "Reversed flyback diode"
+promptmap test --case "Reversed flyback diode"
 ```
 
 ## Tests: given inputs, expect outputs
 
 Each YAML case uses `given` to supply saved evidence and `expect` to check
-selected fields in the QA output. PBT compares the fields directly, without
+selected fields in the QA output. PROMPTMAP compares the fields directly, without
 another LLM judging the answer:
 
 ```yaml
@@ -124,8 +124,8 @@ incorrect logical pin mapping.
 
 Only listed fields are checked; list items are matched by `ref`. Expectations
 stay outside model inputs. A missing item, missing field, or wrong value fails
-`pbt test` with the field path, and the command exits nonzero for CI.
+`promptmap test` with the field path, and the command exits nonzero for CI.
 
 These are integration tests of QA on saved evidence. They do not rebuild a
 board or certify it.
-Run `pbt test` for both cases, or select one with `--case`.
+Run `promptmap test` for both cases, or select one with `--case`.

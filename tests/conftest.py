@@ -1,4 +1,4 @@
-"""Shared helpers for pbt tests."""
+"""Shared helpers for promptmap tests."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Installed pbt plugins would add model kinds the registry tests don't expect.
-os.environ.setdefault("PBT_DISABLE_PLUGINS", "1")
+# Installed promptmap plugins would add model kinds the registry tests don't expect.
+os.environ.setdefault("PROMPTMAP_DISABLE_PLUGINS", "1")
 
 # ---------------------------------------------------------------------------
 # Stub LLM — covers all model types used in MODELS
@@ -73,12 +73,12 @@ MODELS: dict[str, str] = {
 # CLI helper
 # ---------------------------------------------------------------------------
 
-PBT_BIN = str(Path(sys.executable).parent / "pbt")
+PROMPTMAP_BIN = str(Path(sys.executable).parent / "promptmap")
 
 
-def run_pbt(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+def run_promptmap(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [PBT_BIN, *args],
+        [PROMPTMAP_BIN, *args],
         cwd=cwd,
         capture_output=True,
         text=True,

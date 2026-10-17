@@ -1,6 +1,6 @@
-# pbt for dbt users
+# promptmap for dbt users
 
-| pbt concept | dbt analogy |
+| promptmap concept | dbt analogy |
 |---|---|
 | `.prompt` file | `.sql` model file |
 | `ref('model')` | `{{ ref('model') }}` |

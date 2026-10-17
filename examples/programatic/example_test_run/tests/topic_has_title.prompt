@@ -1,4 +1,4 @@
-{# gate=False: this example shows pbt test reporting after a run, not gating it #}
+{# gate=False: this example shows promptmap test reporting after a run, not gating it #}
 {{ config(gate=False) }}
 The following is a generated blog post topic:
 

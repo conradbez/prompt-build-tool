@@ -34,13 +34,13 @@ separately, so when `issue_tree` changes one branch, only that branch re-runs.
 ```bash
 cd examples/mckinsey_hypothesis
 export GEMINI_API_KEY=...
-pbt run                                  # writes outputs/memo.md
-pbt run --promptdata seed=$RANDOM        # a different random idea
-pbt run --promptdata idea="Drone-delivered pharmacy for rural Ireland"
-pbt test                                 # check the landmarks
+promptmap run                                  # writes outputs/memo.md
+promptmap run --promptdata seed=$RANDOM        # a different random idea
+promptmap run --promptdata idea="Drone-delivered pharmacy for rural Ireland"
+promptmap test                                 # check the landmarks
 ```
 
-`business_idea` is cached on its rendered code, so plain `pbt run` gives the
+`business_idea` is cached on its rendered code, so plain `promptmap run` gives the
 same idea every time. Pass a new `seed` to reroll.
 
 ## Tests: the landmarks

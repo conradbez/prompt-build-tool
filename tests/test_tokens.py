@@ -1,4 +1,4 @@
-"""Token usage: llm_call returning pbt.LLMResult, storage, and the docs report."""
+"""Token usage: llm_call returning promptmap.LLMResult, storage, and the docs report."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import sqlite3
 
 import pytest
 
-import pbt
-from pbt.executor.executor import execute_run
-from pbt.executor.graph import build_models_from_dict
-from pbt.storage.memory import MemoryStorageBackend
-from pbt.storage.sqlite import SQLiteStorageBackend
+import promptmap
+from promptmap.executor.executor import execute_run
+from promptmap.executor.graph import build_models_from_dict
+from promptmap.storage.memory import MemoryStorageBackend
+from promptmap.storage.sqlite import SQLiteStorageBackend
 
 MODELS = {
     "topic": "Name a topic.",
@@ -20,8 +20,8 @@ MODELS = {
 }
 
 
-def token_llm(prompt: str) -> pbt.LLMResult:
-    return pbt.LLMResult(f"re: {prompt}", spent_tokens=15)
+def token_llm(prompt: str) -> promptmap.LLMResult:
+    return promptmap.LLMResult(f"re: {prompt}", spent_tokens=15)
 
 
 def run_once(storage, llm_call=token_llm, models=MODELS):
@@ -36,7 +36,7 @@ def run_once(storage, llm_call=token_llm, models=MODELS):
 
 @pytest.fixture(params=["memory", "sqlite"])
 def storage(request, tmp_path):
-    backend = MemoryStorageBackend() if request.param == "memory" else SQLiteStorageBackend(tmp_path / "pbt.db")
+    backend = MemoryStorageBackend() if request.param == "memory" else SQLiteStorageBackend(tmp_path / "promptmap.db")
     backend.init_db()
     return backend
 
@@ -80,14 +80,14 @@ def test_plain_string_llm_call_leaves_tokens_unknown(storage):
 def test_json_output_parses_inside_llm_result(storage):
     models = {"items": '{{ config(output_format="json") }}List.'}
     _, results = run_once(
-        storage, llm_call=lambda p: pbt.LLMResult('["a"]', spent_tokens=3), models=models,
+        storage, llm_call=lambda p: promptmap.LLMResult('["a"]', spent_tokens=3), models=models,
     )
     assert results["items"].value == ["a"]
     assert results["items"].spent_tokens == 3
 
 
 def test_older_database_gains_token_columns(tmp_path):
-    path = tmp_path / "pbt.db"
+    path = tmp_path / "promptmap.db"
     SQLiteStorageBackend(path).init_db()
     with sqlite3.connect(path) as conn:
         for col in ("spent_tokens", "cache_spent_tokens"):
@@ -101,7 +101,7 @@ def test_older_database_gains_token_columns(tmp_path):
 
 
 def _docs(storage, tmp_path) -> str:
-    from pbt.docs import generate_docs
+    from promptmap.docs import generate_docs
 
     runs = storage.get_latest_runs()
     out = tmp_path / "index.html"
@@ -132,11 +132,11 @@ def test_docs_explain_how_to_report_tokens_when_none_are(tmp_path):
     run_once(storage, llm_call=lambda p: "plain")
     html = _docs(storage, tmp_path)
     assert "Token usage is not being reported" in html
-    assert "pbt.LLMResult" in html and "client.py" in html
+    assert "promptmap.LLMResult" in html and "client.py" in html
 
 
 def test_llm_judged_test_unwraps_llm_result(tmp_path):
-    from pbt.tester import _invoke_llm
+    from promptmap.tester import _invoke_llm
 
-    verdict = _invoke_llm("judge", lambda p: pbt.LLMResult('{"results": "pass"}', spent_tokens=1))
+    verdict = _invoke_llm("judge", lambda p: promptmap.LLMResult('{"results": "pass"}', spent_tokens=1))
     assert verdict == '{"results": "pass"}'

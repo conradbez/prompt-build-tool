@@ -1,5 +1,5 @@
 # Getting Started
 
-`pbt run --`
+`promptmap run --`
 
-`pbt server`
+`promptmap server`

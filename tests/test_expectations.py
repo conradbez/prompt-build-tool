@@ -1,7 +1,7 @@
 """YAML assertions must reject missing evidence and avoid coercing booleans."""
 import pytest
 
-from pbt.expectations import mismatches
+from promptmap.expectations import mismatches
 
 
 @pytest.mark.parametrize('actual, expected, fragment', [

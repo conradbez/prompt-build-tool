@@ -1,6 +1,6 @@
 """
 CLI integration tests — exercise all model types and basic model/validation/test
-workflow through the real pbt binary.  Each test writes files to a tmp dir that
+workflow through the real promptmap binary.  Each test writes files to a tmp dir that
 pytest cleans up automatically after the session.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import MODELS, STUB_CLIENT_PY, run_pbt
+from tests.conftest import MODELS, STUB_CLIENT_PY, run_promptmap
 
 
 def _write_models(models_dir: Path, models: dict[str, str]) -> None:
@@ -26,7 +26,7 @@ def _write_models(models_dir: Path, models: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 def test_cli_run_all_model_types(tmp_path: Path) -> None:
-    run_pbt("init", "proj", "--provider", "openai", cwd=tmp_path)
+    run_promptmap("init", "proj", "--provider", "openai", cwd=tmp_path)
     proj = tmp_path / "proj"
 
     for folder in ("models", "validation", "tests"):
@@ -35,10 +35,10 @@ def test_cli_run_all_model_types(tmp_path: Path) -> None:
     _write_models(proj / "models", MODELS)
     (proj / "client.py").write_text(STUB_CLIENT_PY, encoding="utf-8")
 
-    result = run_pbt("run", cwd=proj, check=False)
+    result = run_promptmap("run", cwd=proj, check=False)
 
     assert result.returncode == 0, (
-        f"pbt run failed (exit {result.returncode})\n"
+        f"promptmap run failed (exit {result.returncode})\n"
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
@@ -53,7 +53,7 @@ SIMPLE_CLIENT_PY = """\
 import json
 
 def llm_call(prompt: str, config: dict | None = None) -> str:
-    # pbt test prompts ask for a results JSON verdict
+    # promptmap test prompts ask for a results JSON verdict
     if "respond only with valid json" in prompt.lower():
         return json.dumps({"results": "pass"})
     return "Hello"
@@ -90,16 +90,16 @@ def simple_proj(tmp_path: Path) -> Path:
 
 
 def test_simple_run_succeeds(simple_proj: Path) -> None:
-    result = run_pbt("run", cwd=simple_proj, check=False)
+    result = run_promptmap("run", cwd=simple_proj, check=False)
     assert result.returncode == 0, result.stderr
 
 
 def test_simple_output_written(simple_proj: Path) -> None:
-    run_pbt("run", cwd=simple_proj)
+    run_promptmap("run", cwd=simple_proj)
     assert (simple_proj / "outputs" / "greet.md").exists()
 
 
-def test_simple_pbt_test_passes(simple_proj: Path) -> None:
-    run_pbt("run", cwd=simple_proj)
-    result = run_pbt("test", cwd=simple_proj, check=False)
+def test_simple_promptmap_test_passes(simple_proj: Path) -> None:
+    run_promptmap("run", cwd=simple_proj)
+    result = run_promptmap("test", cwd=simple_proj, check=False)
     assert result.returncode == 0, result.stderr

@@ -8,7 +8,7 @@ pytest.importorskip("minisweagent")
 
 from minisweagent.models.test_models import DeterministicModel, make_output
 
-from pbt.executor import builtin_kinds
+from promptmap.executor import builtin_kinds
 from tests.test_model_types import run_models
 
 
@@ -44,8 +44,8 @@ def test_agent_runs_in_dir_and_returns_output_logs_time(tmp_path, scripted_agent
 
 
 def test_agent_output_shape(tmp_path, scripted_agent):
-    from pbt.model_spec import ModelSpec
-    from pbt.model_types import ModelCall
+    from promptmap.model_spec import ModelSpec
+    from promptmap.model_types import ModelCall
     import asyncio
 
     spec = ModelSpec(name="a", source="", model_type="agent", config={"agent_dir": str(tmp_path)})
@@ -90,14 +90,14 @@ def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
         calls.append(name)
         return DeterministicModel(outputs=[
             make_output("write", [{"command": (
-                "d=$(ls -d .pbt_out_*) && echo '# SS34' > $d/SS34.md "
+                "d=$(ls -d .promptmap_out_*) && echo '# SS34' > $d/SS34.md "
                 "&& mkdir $d/crops && printf png > $d/crops/band.png"
             )}]),
             make_output("done", [{"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && echo noted"}]),
         ])
 
     monkeypatch.setattr(builtin_kinds, "_agent_model", fake_model)
-    from pbt.storage import MemoryStorageBackend
+    from promptmap.storage import MemoryStorageBackend
 
     storage = MemoryStorageBackend()
     models = {
@@ -115,7 +115,7 @@ def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
     assert by_name["SS34.md"].read_bytes() == b"# SS34\n"
     assert by_name["crops"].files()[0].read_bytes() == b"png"
     assert results["names"].llm_output.split() == ["SS34.md", "crops"]
-    assert not list(tmp_path.glob(".pbt_out_*")), "the output directory is removed"
+    assert not list(tmp_path.glob(".promptmap_out_*")), "the output directory is removed"
 
     _, _, again = run_models(models, storage=storage)
     assert len(calls) == 1, "second run is served from cache"
@@ -127,7 +127,7 @@ def test_agent_files_become_the_models_files(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _agent_project(root, client_py: str | None, config: str = ""):
-    from pbt.executor.graph import load_models
+    from promptmap.executor.graph import load_models
 
     (root / "models" / "sub").mkdir(parents=True)
     if client_py is not None:
@@ -141,8 +141,8 @@ def _agent_project(root, client_py: str | None, config: str = ""):
 def _run_specs(specs):
     import asyncio
 
-    from pbt.executor.executor import execute_run
-    from pbt.storage.memory import MemoryStorageBackend
+    from promptmap.executor.executor import execute_run
+    from promptmap.storage.memory import MemoryStorageBackend
 
     storage = MemoryStorageBackend()
     storage.init_db()

@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from pbt.executor import builtin_kinds
-from pbt.model_spec import ModelSpec
-from pbt.model_types import ModelCall
+from promptmap.executor import builtin_kinds
+from promptmap.model_spec import ModelSpec
+from promptmap.model_types import ModelCall
 from tests.test_model_types import run_models
 
 
@@ -40,7 +40,7 @@ def fake_opencode(tmp_path, monkeypatch):
         script = tmp_path / "opencode"
         script.write_text(FAKE_SCRIPT.format(events="\n".join(events), exit_code=exit_code))
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
-        monkeypatch.setenv("PBT_OPENCODE_BIN", str(script))
+        monkeypatch.setenv("PROMPTMAP_OPENCODE_BIN", str(script))
         return script
     return install
 
@@ -160,7 +160,7 @@ def test_opencode_failure_is_reported(tmp_path, fake_opencode):
 
 
 def test_opencode_missing_binary(tmp_path, monkeypatch):
-    monkeypatch.setenv("PBT_OPENCODE_BIN", "")
+    monkeypatch.setenv("PROMPTMAP_OPENCODE_BIN", "")
     monkeypatch.setattr(builtin_kinds.shutil, "which", lambda _: None)
     with pytest.raises(FileNotFoundError, match="npm i -g opencode-ai"):
         _run_opencode(tmp_path)

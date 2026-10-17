@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-import pbt
-from pbt.classifier import split_question
-from pbt.cli import init_files
-from pbt.storage.memory import MemoryStorageBackend
-from pbt.tester import execute_tests
-from tests.conftest import run_pbt
+import promptmap
+from promptmap.classifier import split_question
+from promptmap.cli import init_files
+from promptmap.storage.memory import MemoryStorageBackend
+from promptmap.tester import execute_tests
+from tests.conftest import run_promptmap
 
 HAIKU = "old pond\nfrog leaps in\nwater's sound"
 
@@ -199,7 +199,7 @@ def systemone_server():
 
 def test_systemone_classifier_request_shape(systemone_server) -> None:
     url, seen = systemone_server
-    classify = pbt.systemone_classifier(model="laya:en", base_url=url, api_key="k")
+    classify = promptmap.systemone_classifier(model="laya:en", base_url=url, api_key="k")
     assert classify("the text", "Is it good?") == 0.87
     assert seen == [(
         "/v1/systemone",
@@ -236,35 +236,35 @@ def classifier_proj(tmp_path: Path) -> Path:
     (proj / "models").mkdir(parents=True)
     (proj / "tests").mkdir()
     (proj / "models" / "haiku.prompt").write_text("Write a haiku.", encoding="utf-8")
-    # gate=False: the stub LLM fails this test, and pbt run would judge it with the LLM.
+    # gate=False: the stub LLM fails this test, and promptmap run would judge it with the LLM.
     (proj / "tests" / "three_lines.prompt").write_text(
         "{{ config(gate=False) }}\n" + CLASSIFIER_TEST, encoding="utf-8"
     )
     (proj / "client.py").write_text(CLIENT_PY, encoding="utf-8")
-    run_pbt("run", cwd=proj)
+    run_promptmap("run", cwd=proj)
     return proj
 
 
 def test_cli_judge_flag(classifier_proj: Path) -> None:
-    result = run_pbt("test", "--judge", "classifier", cwd=classifier_proj, check=False)
+    result = run_promptmap("test", "--judge", "classifier", cwd=classifier_proj, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "P(yes)=0.90" in result.stdout
 
     # Same file, LLM judge: the stub LLM fails anything containing '---'.
-    result = run_pbt("test", "--judge", "llm", cwd=classifier_proj, check=False)
+    result = run_promptmap("test", "--judge", "llm", cwd=classifier_proj, check=False)
     assert result.returncode == 1
 
 
 def test_cli_test_judge_from_client(classifier_proj: Path) -> None:
     client = classifier_proj / "client.py"
     client.write_text(CLIENT_PY + 'test_judge = "classifier"\n', encoding="utf-8")
-    result = run_pbt("test", cwd=classifier_proj, check=False)
+    result = run_promptmap("test", cwd=classifier_proj, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 
 # ---------------------------------------------------------------------------
-# Scaffolded client.py — `pbt init --classifier`
+# Scaffolded client.py — `promptmap init --classifier`
 # ---------------------------------------------------------------------------
 
 def _fake_sdk_modules(completion):
@@ -289,8 +289,8 @@ def test_scaffolded_clients_compile(provider) -> None:
 
 
 def test_init_classifier_is_opt_in(tmp_path: Path) -> None:
-    run_pbt("init", "plain", cwd=tmp_path)
-    run_pbt("init", "judged", "--provider", "deepseek", "--classifier", cwd=tmp_path)
+    run_promptmap("init", "plain", cwd=tmp_path)
+    run_promptmap("init", "judged", "--provider", "deepseek", "--classifier", cwd=tmp_path)
     assert "classify_call" not in (tmp_path / "plain" / "client.py").read_text()
     assert "classify_call" in (tmp_path / "judged" / "client.py").read_text()
 

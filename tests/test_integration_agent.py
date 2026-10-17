@@ -3,7 +3,7 @@ Integration test: an ``agent`` model doing a small programming task with a
 real Gemini model through mini-swe-agent.
 
 Requires GEMINI_API_KEY (read from the environment or .env); skipped otherwise.
-Override the model with PBT_AGENT_TEST_MODEL (a litellm model name).
+Override the model with PROMPTMAP_AGENT_TEST_MODEL (a litellm model name).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set"
 )
 
-MODEL = os.environ.get("PBT_AGENT_TEST_MODEL", "gemini/gemini-3-flash-preview")
+MODEL = os.environ.get("PROMPTMAP_AGENT_TEST_MODEL", "gemini/gemini-3-flash-preview")
 
 TASK = """\
 Create a file fizzbuzz.py in the current directory defining a function

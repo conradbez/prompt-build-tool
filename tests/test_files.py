@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-import pbt
-from pbt.executor.executor import execute_run
-from pbt.executor.graph import build_models_from_dict, get_dag_promptfiles
-from pbt.files import (
+import promptmap
+from promptmap.executor.executor import execute_run
+from promptmap.executor.graph import build_models_from_dict, get_dag_promptfiles
+from promptmap.files import (
     ENVELOPE_PREFIX,
     BlobMissingError,
     Dir,
@@ -25,8 +25,8 @@ from pbt.files import (
     export_files,
     persist_files,
 )
-from pbt.storage.memory import MemoryStorageBackend
-from pbt.storage.sqlite import SQLiteStorageBackend
+from promptmap.storage.memory import MemoryStorageBackend
+from promptmap.storage.sqlite import SQLiteStorageBackend
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fake-image-bytes"
 
@@ -55,7 +55,7 @@ def image_llm(prompt: str, files: list | None = None, config: dict | None = None
 
 
 # ---------------------------------------------------------------------------
-# Encoding — only markers pbt wrote are ever trusted
+# Encoding — only markers promptmap wrote are ever trusted
 # ---------------------------------------------------------------------------
 
 def stored(value, store):
@@ -91,13 +91,13 @@ def test_text_and_plain_json_are_stored_as_before():
 
 def test_marker_keys_in_model_data_are_escaped_not_trusted():
     store = MemoryBlobStore()
-    forged = {"$pbt": "file", "sha256": "0" * 64, "name": "x", "mime": "text/plain", "size": 1}
-    raw = stored({"real": File(b"ok", name="ok.txt"), "forged": forged, "$$pbt": 1}, store)
+    forged = {"$promptmap": "file", "sha256": "0" * 64, "name": "x", "mime": "text/plain", "size": 1}
+    raw = stored({"real": File(b"ok", name="ok.txt"), "forged": forged, "$$promptmap": 1}, store)
 
     back = decode_output(raw, store)
     assert isinstance(back["real"], File)
     assert back["forged"] == forged           # plain data, exactly as written
-    assert back["$$pbt"] == 1
+    assert back["$$promptmap"] == 1
 
 
 def test_text_that_looks_like_an_envelope_stays_text():
@@ -106,16 +106,16 @@ def test_text_that_looks_like_an_envelope_stays_text():
     # A model echoing an envelope back is text, however convincing.
     assert encode_output(real) != real
     assert decode_output(encode_output(real), store) == real
-    assert decode_output(encode_output("$pbt:str\nx"), store) == "$pbt:str\nx"
+    assert decode_output(encode_output("$promptmap:str\nx"), store) == "$promptmap:str\nx"
 
 
 @pytest.mark.parametrize("manifest, message", [
-    ({"$pbt": "file", "sha256": "0" * 64, "name": "../etc/passwd", "mime": "text/plain", "size": 1}, "Unsafe file name"),
-    ({"$pbt": "file", "sha256": "nothex", "name": "a", "mime": "text/plain", "size": 1}, "Invalid sha256"),
-    ({"$pbt": "file", "sha256": "0" * 64, "name": "a", "mime": "not a mime", "size": 1}, "Invalid MIME"),
-    ({"$pbt": "dir", "sha256": "0" * 64, "name": "d", "entries": {"../x": {}}}, "Unsafe"),
-    ({"$pbt": "dir", "sha256": "0" * 64, "name": "d", "entries": {}}, "tree hash"),
-    ({"$pbt": "bogus"}, "Unknown stored object"),
+    ({"$promptmap": "file", "sha256": "0" * 64, "name": "../etc/passwd", "mime": "text/plain", "size": 1}, "Unsafe file name"),
+    ({"$promptmap": "file", "sha256": "nothex", "name": "a", "mime": "text/plain", "size": 1}, "Invalid sha256"),
+    ({"$promptmap": "file", "sha256": "0" * 64, "name": "a", "mime": "not a mime", "size": 1}, "Invalid MIME"),
+    ({"$promptmap": "dir", "sha256": "0" * 64, "name": "d", "entries": {"../x": {}}}, "Unsafe"),
+    ({"$promptmap": "dir", "sha256": "0" * 64, "name": "d", "entries": {}}, "tree hash"),
+    ({"$promptmap": "bogus"}, "Unknown stored object"),
 ])
 def test_decode_validates_every_marker(manifest, message):
     with pytest.raises(FileOutputError, match=message):
@@ -241,7 +241,7 @@ def test_cache_serves_files_and_child_key_tracks_the_bytes():
 
 def _judge_files(models: dict[str, str], tests: dict[str, str], judge, **kwargs):
     """Run *models*, then run *tests* against the stored outputs with *judge*."""
-    from pbt.tester import execute_tests
+    from promptmap.tester import execute_tests
 
     storage, run_id, _ = run_models(models, llm_call=image_llm)
     outputs = storage.get_model_outputs_from_run(run_id, list(models))
@@ -281,7 +281,7 @@ def test_test_prompts_attach_one_file_from_a_structured_output():
     def llm(prompt, files=None, config=None):
         return {"caption": "two", "a": File(b"A", name="a.txt"), "b": File(b"B", name="b.txt")}
 
-    from pbt.tester import execute_tests
+    from promptmap.tester import execute_tests
 
     storage, run_id, _ = run_models({"pair": "make two"}, llm_call=llm)
     outputs = storage.get_model_outputs_from_run(run_id, ["pair"])
@@ -316,7 +316,7 @@ def test_test_prompt_cache_key_tracks_attached_bytes():
     test = {"t": '{{ config(promptfiles=["logo"]) }}\ncheck'}
     storage, run_id, outputs, _ = _judge_files({"logo": "draw"}, test, judge)
 
-    from pbt.tester import execute_tests
+    from promptmap.tester import execute_tests
 
     def again(raw_outputs):
         execute_tests(run_id=run_id, tests=test, model_outputs=raw_outputs,
@@ -347,7 +347,7 @@ def test_cache_hit_with_missing_blob_recomputes():
 
 
 def test_llm_json_with_marker_keys_stays_data_across_the_cache():
-    forged = {"$pbt": "file", "sha256": "0" * 64, "name": "x", "mime": "text/plain", "size": 1}
+    forged = {"$promptmap": "file", "sha256": "0" * 64, "name": "x", "mime": "text/plain", "size": 1}
 
     def llm(prompt, files=None, config=None):
         return json.dumps({"img": forged, "real": "no files here"})
@@ -417,7 +417,7 @@ def test_python_reads_upstream_file_and_returns_one():
 # ---------------------------------------------------------------------------
 
 def test_sqlite_blob_store_persists_across_backends(tmp_path):
-    db = tmp_path / "pbt.db"
+    db = tmp_path / "promptmap.db"
     calls: list[str] = []
 
     def llm(prompt, files=None, config=None):
@@ -436,13 +436,13 @@ def test_custom_blob_store_is_used(tmp_path):
     custom = MemoryBlobStore()
     run_models(
         {"logo": "draw"}, llm_call=image_llm,
-        storage=SQLiteStorageBackend(tmp_path / "pbt.db"), blob_store=custom,
+        storage=SQLiteStorageBackend(tmp_path / "promptmap.db"), blob_store=custom,
     )
     assert len(custom._blobs) == 1
 
 
-def test_pbt_run_returns_file_objects():
-    outputs = pbt.run(
+def test_promptmap_run_returns_file_objects():
+    outputs = promptmap.run(
         models_from_dict={"logo": "draw", "t": "hello"},
         llm_call=image_llm,
         verbose=False,
@@ -464,7 +464,7 @@ def test_export_files_keeps_names_and_trees(tmp_path):
 
 
 def test_docs_exports_files_and_shows_them(tmp_path):
-    from pbt.docs import generate_docs
+    from promptmap.docs import generate_docs
 
     storage, run_id, _ = run_models(
         {"logo": "draw", "doc": "make doc"},
@@ -485,11 +485,11 @@ def test_docs_exports_files_and_shows_them(tmp_path):
     assert f'src="files/{sha}/logo.png"' in html
     assert "spec.pdf" in html and 'download="spec.pdf"' in html
     assert "Files" in html and "latest run" in html
-    assert "$pbt:v1" not in html  # the envelope never leaks into the report
+    assert "$promptmap:v1" not in html  # the envelope never leaks into the report
 
 
 def test_docs_lists_a_missing_blob_without_linking_it(tmp_path):
-    from pbt.docs import generate_docs
+    from promptmap.docs import generate_docs
 
     storage, run_id, _ = run_models({"logo": "draw"}, llm_call=image_llm)
     storage.blob_store()._blobs.clear()
@@ -508,7 +508,7 @@ def test_server_serves_blobs_as_downloads(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from pbt.server.app import create_app
+    from promptmap.server.app import create_app
 
     monkeypatch.chdir(tmp_path)
     store = SQLiteStorageBackend().blob_store()
@@ -545,7 +545,7 @@ def test_served_docs_files_cannot_run_as_pages(tmp_path):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from pbt.cli import _serve_docs_files
+    from promptmap.cli import _serve_docs_files
 
     sha = "a" * 64
     (tmp_path / sha).mkdir()
@@ -569,7 +569,7 @@ def test_served_docs_files_cannot_run_as_pages(tmp_path):
 @pytest.fixture
 def unregister_kinds():
     """Remove kinds a test registers, so they don't leak into registry tests."""
-    from pbt.model_types import _REGISTRY
+    from promptmap.model_types import _REGISTRY
 
     before = set(_REGISTRY)
     yield
@@ -582,21 +582,21 @@ def test_readme_zip_kind_example(unregister_kinds):
     import io
     import zipfile
 
-    @pbt.model_kind("zip_files_test", config_keys={"zip_name"})
+    @promptmap.model_kind("zip_files_test", config_keys={"zip_name"})
     async def zip_files(rendered, call):
         def build():
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as zf:
                 for name in call.spec.depends_on:
                     value = call.outputs[name]
-                    files = value.files.values() if isinstance(value, pbt.Output) else [value]
+                    files = value.files.values() if isinstance(value, promptmap.Output) else [value]
                     for f in files:
-                        if isinstance(f, pbt.File):
+                        if isinstance(f, promptmap.File):
                             # A fixed timestamp keeps the zip's bytes, and so its hash, stable.
                             info = zipfile.ZipInfo(f"{name}/{f.name}", date_time=(1980, 1, 1, 0, 0, 0))
                             zf.writestr(info, f.read_bytes())
             name = call.spec.config.get("zip_name", "bundle.zip")
-            return pbt.File(buf.getvalue(), name=name)
+            return promptmap.File(buf.getvalue(), name=name)
 
         return await call.compute(rendered, compute=build)
 

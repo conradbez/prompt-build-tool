@@ -1,4 +1,4 @@
-# pbt — Architecture & Developer Notes
+# promptmap — Architecture & Developer Notes
 
 ---
 
@@ -7,30 +7,30 @@
 One `.prompt` file to one result, in the order the code actually runs:
 
 ```
-1. pbt/__init__.py  ·  pbt/cli/          entry point
+1. promptmap/__init__.py  ·  promptmap/cli/          entry point
      └─ llm.py / rag.py                  resolve backends by importing client.py,
                                          which is also where custom kinds register
 
-2. pbt/model_types.py                    the registry must be populated FIRST —
+2. promptmap/model_types.py                    the registry must be populated FIRST —
      └─ executor/builtin_kinds.py        build_spec asks it whether a model_type
                                          is known, and warns at parse time if not
 
-3. pbt/executor/graph.py                 load_models → build_spec → build_dag
+3. promptmap/executor/graph.py                 load_models → build_spec → build_dag
      ├─ executor/parser_initial.py       static analysis of raw template text:
      │                                   config(), ref() deps, promptdata()
-     └─ pbt/model_spec.py                → one frozen ModelSpec per node
+     └─ promptmap/model_spec.py                → one frozen ModelSpec per node
 
-4. pbt/executor/executor.py              walk the DAG in topological order
+4. promptmap/executor/executor.py              walk the DAG in topological order
      ├─ executor/run_context.py          render, prompt cache, LLM call, timing
      │    └─ executor/parser_model.py    the Jinja pass: ref(), promptdata(),
      │                                   RAG, skip functions, global instruction
      └─ each kind's exec_fn              given (rendered, call) — the only step
                                          a model kind contributes
 
-5. pbt/storage/                          run rows, outputs, prompt cache
+5. promptmap/storage/                          run rows, outputs, prompt cache
      └─ sqlite.py | memory.py            (base.py is the interface)
 
-   pbt/validator.py · tester.py · docs.py   validation, `pbt test`, `pbt docs`
+   promptmap/validator.py · tester.py · docs.py   validation, `promptmap test`, `promptmap docs`
 ```
 
 Two things about that order are easy to get backwards:
@@ -62,35 +62,35 @@ than being sent to the LLM with a missing input.
 
 ## Key design decisions
 
-**`executor.py` is a pure executor.** It takes callables (`llm_call`, `rag_call`, `validators`) and never touches the filesystem. File discovery lives in `pbt/cli/` and `pbt/__init__.py`. This keeps the executor testable with mock callables.
+**`executor.py` is a pure executor.** It takes callables (`llm_call`, `rag_call`, `validators`) and never touches the filesystem. File discovery lives in `promptmap/cli/` and `promptmap/__init__.py`. This keeps the executor testable with mock callables.
 
 **Prompt cache is content-addressed.** The key is the *rendered* prompt (post-Jinja, pre-LLM), the model's `config()` block as sorted JSON, and a hash of any attached promptfiles, joined by NULs — `RunContext.cache_key()`. SQLite stores the SHA256 of that as `model_results.prompt_hash`. Config and files are part of the key because changing `output_format` or swapping an attached PDF must not serve the old answer.
 
-**`--select` runs the full upstream chain fresh.** `pbt run --select tweet` runs `tweet` and all its ancestors in dependency order. The prompt cache makes unchanged upstream nodes instant — no stale-output risk, no need for a previous run of the same DAG.
+**`--select` runs the full upstream chain fresh.** `promptmap run --select tweet` runs `tweet` and all its ancestors in dependency order. The prompt cache makes unchanged upstream nodes instant — no stale-output risk, no need for a previous run of the same DAG.
 
 **`model_outputs` is `dict[str, str | dict | list]`.** When a model declares `output_format: json`, its entry is a parsed Python object, not a string. Downstream `ref('model')` in Jinja receives the object, enabling `{{ ref('model').key }}` access. The DB always stores canonical JSON strings.
 
 **Validators must not return the raw `result` string when `output_format: json` is set.** The executor parses the LLM output into a Python `dict`/`list` before running validators, storing it in `model_outputs`. If the validator returns the string `result` unchanged, it overwrites the parsed object with a string — breaking any downstream `{{ ref('model').key }}` access. Passthrough validators should either `return True` or return the already-parsed value (e.g. `json.loads(result)`). Validators that don't need to transform JSON output should simply be omitted.
 
-**Model data, model behaviour, and run inputs are three separate things.** A `ModelSpec` (`pbt/model_spec.py`) is inert parsed data: source, deps, config, `model_type`. A `ModelKind` (`pbt/model_types.py`) is a frozen record describing how that data becomes an output — at most one function, `async exec_fn(rendered, call)`, plus two declarative fields. A `RunContext` (`pbt/executor/run_context.py`) carries every run-wide input — the backends, promptdata, promptfiles, validators, the global instruction, accumulated outputs — plus the shared mechanisms `render()`, `call_llm()` and `cached()`. Keeping them apart is why a new run-wide input is one field on `RunContext` rather than a new parameter on six functions, and why a new model kind is one function rather than an edit in the parser, the graph, and the executor.
+**Model data, model behaviour, and run inputs are three separate things.** A `ModelSpec` (`promptmap/model_spec.py`) is inert parsed data: source, deps, config, `model_type`. A `ModelKind` (`promptmap/model_types.py`) is a frozen record describing how that data becomes an output — at most one function, `async exec_fn(rendered, call)`, plus two declarative fields. A `RunContext` (`promptmap/executor/run_context.py`) carries every run-wide input — the backends, promptdata, promptfiles, validators, the global instruction, accumulated outputs — plus the shared mechanisms `render()`, `call_llm()` and `cached()`. Keeping them apart is why a new run-wide input is one field on `RunContext` rather than a new parameter on six functions, and why a new model kind is one function rather than an edit in the parser, the graph, and the executor.
 
-**A kind is data, not a class.** A kind holds no per-model state, so there is nothing for an instance to carry and nothing for a base class to supply. `ModelKind` is a frozen dataclass; the registry is `dict[str, ModelKind]`. The built-ins are the plain LLM call (`""`), `template` (`exec_fn=None`, so it contributes no execution code at all), `execute_python` and `agent`. pbt has no DAG-rewriting hook, so the graph you read in `models/` is the graph that runs; a node is one render and one `exec_fn` call, except an `each=` node, which is one per item.
+**A kind is data, not a class.** A kind holds no per-model state, so there is nothing for an instance to carry and nothing for a base class to supply. `ModelKind` is a frozen dataclass; the registry is `dict[str, ModelKind]`. The built-ins are the plain LLM call (`""`), `template` (`exec_fn=None`, so it contributes no execution code at all), `execute_python` and `agent`. promptmap has no DAG-rewriting hook, so the graph you read in `models/` is the graph that runs; a node is one render and one `exec_fn` call, except an `each=` node, which is one per item.
 
-**Fan-out is the executor's job, not a kind's.** `config(each="path")` on any model tells `execute_model()` to resolve that path (`pbt/jsonpath.py`: `.key`, `[n]`, `[*]`, strict) to a list, render once per item with `ref()` on the iterated model yielding that item (`primary=False`, so one skipped item does not mark the whole model skipped), run `exec_fn` on each concurrently via `asyncio.gather`, and collect the results in input order. `jsonpath.resolve_each` returns one row per item (value, index, indices, path, parent, like SQL's `json_each`), and each render gets that row as the `each` template variable and as the `call.outputs` overlay, so Python `ref()` sees the item too. `each` adds its model as a DAG edge in `graph.build_spec`. Map over map is two wildcards in one path, reduce is any downstream model; there is no recursion in the DAG, so the graph you read is still the graph that runs.
+**Fan-out is the executor's job, not a kind's.** `config(each="path")` on any model tells `execute_model()` to resolve that path (`promptmap/jsonpath.py`: `.key`, `[n]`, `[*]`, strict) to a list, render once per item with `ref()` on the iterated model yielding that item (`primary=False`, so one skipped item does not mark the whole model skipped), run `exec_fn` on each concurrently via `asyncio.gather`, and collect the results in input order. `jsonpath.resolve_each` returns one row per item (value, index, indices, path, parent, like SQL's `json_each`), and each render gets that row as the `each` template variable and as the `call.outputs` overlay, so Python `ref()` sees the item too. `each` adds its model as a DAG edge in `graph.build_spec`. Map over map is two wildcards in one path, reduce is any downstream model; there is no recursion in the DAG, so the graph you read is still the graph that runs.
 
-**A fan-out item is a row, not a node.** After the gather, `_store_item` writes each item as `model[i]` in `model_results`: its rendered prompt, and the raw result of its single call under that item's cache key (`_RenderState.cache_key`/`cache_artifact`, set by `RunContext.cached()`). That row is what serves the item from cache next run, and what `pbt docs` shows per item. An item that made zero or several calls, or was skipped, gets a row but no cache key. The parent row still holds the joined prompts and the full list; `ref('model[1]')` reads the item back through a path, so item rows are never looked up by name.
+**A fan-out item is a row, not a node.** After the gather, `_store_item` writes each item as `model[i]` in `model_results`: its rendered prompt, and the raw result of its single call under that item's cache key (`_RenderState.cache_key`/`cache_artifact`, set by `RunContext.cached()`). That row is what serves the item from cache next run, and what `promptmap docs` shows per item. An item that made zero or several calls, or was skipped, gets a row but no cache key. The parent row still holds the joined prompts and the full list; `ref('model[1]')` reads the item back through a path, so item rows are never looked up by name.
 
 **A kind never sees the `RunContext`.** The executor renders, then binds the model and that render's state onto a `ModelCall` (`spec`, `outputs`, `llm`, `compute`) and hands it to `exec_fn` alongside the rendered text. `call.llm(rendered)` and `call.compute(rendered, compute=fn)` are `functools.partial`s over `RunContext.call_llm` / `RunContext.cached`, already cached, timed and skip-aware. So a kind receives what it needs pre-loaded instead of a god object it must navigate, and caching stays outside the kind entirely.
 
-**`config()` keys are validated, not enforced.** `known_config_keys()` in `parser_initial.py` unions three sources: `_BUILTIN_CONFIG_KEYS` (the keys pbt acts on for every model), the `config_keys` each registered model kind declares, and anything passed to `pbt.register_config_keys(...)` for a custom `llm_call`. A key outside all three (or an unregistered `model_type`) triggers an `UnknownConfigKeyWarning` at load time naming the model and file. It stays a warning because the whole config dict is forwarded to any `llm_call` accepting a `config` parameter, so custom keys are legitimate. **A kind-specific config key belongs on that kind's `config_keys`**, not in `_BUILTIN_CONFIG_KEYS` — registering the kind is then the only step needed.
+**`config()` keys are validated, not enforced.** `known_config_keys()` in `parser_initial.py` unions three sources: `_BUILTIN_CONFIG_KEYS` (the keys promptmap acts on for every model), the `config_keys` each registered model kind declares, and anything passed to `promptmap.register_config_keys(...)` for a custom `llm_call`. A key outside all three (or an unregistered `model_type`) triggers an `UnknownConfigKeyWarning` at load time naming the model and file. It stays a warning because the whole config dict is forwarded to any `llm_call` accepting a `config` parameter, so custom keys are legitimate. **A kind-specific config key belongs on that kind's `config_keys`**, not in `_BUILTIN_CONFIG_KEYS` — registering the kind is then the only step needed.
 
 **The executor owns the lifecycle; a kind owns one step.** `execute_model()` in `executor.py` resolves the kind, renders, asks its `exec_fn` for a value, then applies skip propagation, `output_format` parsing, storage, and validation — identically for built-in and user-registered kinds. `RunContext.cached()` is the single caching path: `call_llm` is a thin wrapper over it, and `execute_python` reaches it as `call.compute` so unchanged code does not re-execute.
 
-**Files are content-addressed blobs plus a manifest in the output string.** `pbt/files.py` holds `File`, `Dir` and `Output`. Anything that produces an output can return them: `llm_call`, `call.compute`, a kind's `exec_fn`, a validator or a skip. `RunContext.cached()` and `execute_model()` write their bytes to a `BlobStore` (sha256 → bytes; `put`/`get`/`exists`) and store `encode_output(value)`: plain text and file-free JSON unchanged, anything with files as `$pbt:v1\n` + JSON with each file tagged by the `"$pbt"` marker key. `encode_output` is the only producer of markers. It escapes marker-looking keys in model data (`$pbt` → `$$pbt`) and text that starts with `$pbt:`. `decode_output` is the only reader, and it validates every marker. So text or JSON from a model can never pose as a file reference. `StorageBackend` is unchanged apart from an optional `blob_store()`; the SQLite backend keeps blobs in a `blobs` table unless given another store, and `client.py` can supply one (`blob_store`). A `promptfiles` name that names a model becomes a DAG edge (`graph._link_promptfile_deps`), and `RunContext.files_for()` resolves it to that model's files, per item for an `each=` model. Test prompts use the same syntax: `tester._open_test_files()` resolves their `promptfiles` against the decoded model outputs, and the files' hashes join the test's cache key.
+**Files are content-addressed blobs plus a manifest in the output string.** `promptmap/files.py` holds `File`, `Dir` and `Output`. Anything that produces an output can return them: `llm_call`, `call.compute`, a kind's `exec_fn`, a validator or a skip. `RunContext.cached()` and `execute_model()` write their bytes to a `BlobStore` (sha256 → bytes; `put`/`get`/`exists`) and store `encode_output(value)`: plain text and file-free JSON unchanged, anything with files as `$promptmap:v1\n` + JSON with each file tagged by the `"$promptmap"` marker key. `encode_output` is the only producer of markers. It escapes marker-looking keys in model data (`$promptmap` → `$$promptmap`) and text that starts with `$promptmap:`. `decode_output` is the only reader, and it validates every marker. So text or JSON from a model can never pose as a file reference. `StorageBackend` is unchanged apart from an optional `blob_store()`; the SQLite backend keeps blobs in a `blobs` table unless given another store, and `client.py` can supply one (`blob_store`). A `promptfiles` name that names a model becomes a DAG edge (`graph._link_promptfile_deps`), and `RunContext.files_for()` resolves it to that model's files, per item for an `each=` model. Test prompts use the same syntax: `tester._open_test_files()` resolves their `promptfiles` against the decoded model outputs, and the files' hashes join the test's cache key.
 
-**Test inputs are named YAML cases, resolved before anything runs.** `pbt/promptparams.py` loads every `tests/**/*.yml` file (a file in a folder named after a model has its `given`/`expect` put under that model), pools their `baselines`, and resolves each case's `extends` chain (implicit `default`, left-to-right merge, `null` deletes) into a flat `TestCase(name, promptdata, promptfiles)`, with promptfile paths made relative to the working directory. `execute_tests` and the CLI only ever see resolved cases; the case name is the test's `param_label`.
+**Test inputs are named YAML cases, resolved before anything runs.** `promptmap/promptparams.py` loads every `tests/**/*.yml` file (a file in a folder named after a model has its `given`/`expect` put under that model), pools their `baselines`, and resolves each case's `extends` chain (implicit `default`, left-to-right merge, `null` deletes) into a flat `TestCase(name, promptdata, promptfiles)`, with promptfile paths made relative to the working directory. `execute_tests` and the CLI only ever see resolved cases; the case name is the test's `param_label`.
 
-**Storage keeps raw and validated output separately.** `mark_model_success` stores the raw output, which is what the prompt cache serves, so editing a validator never forces a new LLM call. When a validator transforms the output, the executor also calls `record_validated_output`, and `get_model_outputs_from_run` prefers it — so `pbt test` judges the value the pipeline actually passed downstream.
+**Storage keeps raw and validated output separately.** `mark_model_success` stores the raw output, which is what the prompt cache serves, so editing a validator never forces a new LLM call. When a validator transforms the output, the executor also calls `record_validated_output`, and `get_model_outputs_from_run` prefers it — so `promptmap test` judges the value the pipeline actually passed downstream.
 
 ---
 
@@ -101,9 +101,9 @@ skipping, JSON parsing, validation, storage — is the executor's job and alread
 applies.
 
 ```python
-import pbt
+import promptmap
 
-@pbt.model_kind("shout", config_keys={"suffix"})
+@promptmap.model_kind("shout", config_keys={"suffix"})
 async def shout(rendered, call):
     response = await call.llm(rendered)
     return response.upper() + call.spec.config.get("suffix", "")
@@ -120,7 +120,7 @@ testable. The equivalent explicit form, which is also how you register a kind
 that has no `exec_fn` of its own:
 
 ```python
-pbt.register_model_kind(pbt.ModelKind("shout", shout, config_keys={"suffix"}))
+promptmap.register_model_kind(promptmap.ModelKind("shout", shout, config_keys={"suffix"}))
 ```
 
 `ModelKind` fields:
@@ -137,7 +137,7 @@ pbt.register_model_kind(pbt.ModelKind("shout", shout, config_keys={"suffix"}))
 `call.compute(rendered, compute=fn)` — both already cached, timed and
 skip-aware.
 
-Put the registration in `client.py`: pbt imports it before parsing any
+Put the registration in `client.py`: promptmap imports it before parsing any
 `.prompt` file, precisely so project-local kinds are available. Registering
 anywhere that runs earlier works too.
 
@@ -155,7 +155,7 @@ when an upstream file's bytes change.
 
 ## Static promptdata() detection
 
-Before any run, pbt scans each template with a regex to discover which `promptdata()` keys it uses — no Jinja rendering needed.
+Before any run, promptmap scans each template with a regex to discover which `promptdata()` keys it uses — no Jinja rendering needed.
 
 ```python
 _PROMPTDATA_PATTERN = re.compile(r"""\bpromptdata\(\s*['"](\w+)['"]\s*\)""")
@@ -167,7 +167,7 @@ def detect_used_promptdata(template_source: str) -> list[str]:
     return list(seen)
 ```
 
-Results stored in `PromptModel.promptdata_used`, shown in `pbt ls`, and warned about in `pbt run` if not provided. This is simpler and more reliable than the previous VarSpy dry-render approach — all branches of conditionals are detected since it's a static scan.
+Results stored in `PromptModel.promptdata_used`, shown in `promptmap ls`, and warned about in `promptmap run` if not provided. This is simpler and more reliable than the previous VarSpy dry-render approach — all branches of conditionals are detected since it's a static scan.
 
 ---
 
@@ -176,29 +176,29 @@ Results stored in `PromptModel.promptdata_used`, shown in `pbt ls`, and warned a
 | | `tests/` | `validation/` |
 |---|---|---|
 | **Format** | `.prompt` Jinja files | `.py` Python files |
-| **When** | Explicit `pbt test` after a run | Automatically inside `pbt run` |
+| **When** | Explicit `promptmap test` after a run | Automatically inside `promptmap run` |
 | **Input** | Model outputs from a previous run | Rendered prompt + LLM output of the current model |
 | **Pass criterion** | LLM returns `{"results": "pass"}` | `validate(prompt, result) -> bool` |
-| **On failure** | Non-zero exit from `pbt test` | Model marked `error`, downstream skipped |
+| **On failure** | Non-zero exit from `promptmap test` | Model marked `error`, downstream skipped |
 
 ---
 
 ## SQLite
 
-All results are stored in `.pbt/pbt.db`.
+All results are stored in `.promptmap/promptmap.db`.
 
 ### SQLite notes
 
-- DB at `.pbt/pbt.db` relative to cwd.
+- DB at `.promptmap/promptmap.db` relative to cwd.
 - `PRAGMA journal_mode=WAL` — allows concurrent readers during a run.
-- `init_db()` is `CREATE TABLE IF NOT EXISTS` only — there is no migration path, so delete `.pbt/pbt.db` after a schema change.
+- `init_db()` is `CREATE TABLE IF NOT EXISTS` only — there is no migration path, so delete `.promptmap/promptmap.db` after a schema change.
 - Three tables: `runs`, `model_results`, `test_results`.
 - `prompt_hash` is indexed (with `completed_at DESC`) for cache lookups.
 
 
 ### `runs`
 
-One row per `pbt run` invocation.
+One row per `promptmap run` invocation.
 
 | Column | Type | Description |
 |---|---|---|
@@ -237,22 +237,22 @@ One row per model per run.
 Query results directly:
 
 ```bash
-sqlite3 .pbt/pbt.db "SELECT model_name, status, execution_ms FROM model_results ORDER BY id DESC LIMIT 10"
+sqlite3 .promptmap/promptmap.db "SELECT model_name, status, execution_ms FROM model_results ORDER BY id DESC LIMIT 10"
 ```
 
 ---
 
 ## Python API
 
-`pbt.run()` is the sync entry point; `pbt.async_run()` is the same function
+`promptmap.run()` is the sync entry point; `promptmap.async_run()` is the same function
 without the `asyncio.run()` wrapper, for calling from inside an event loop. The
 [advanced usage guide](ADVANCED_USAGE.md#python-api) documents every parameter — the notes here are
-the ones that matter when working on pbt itself.
+the ones that matter when working on promptmap itself.
 
 ```python
-import pbt
+import promptmap
 
-results = pbt.run("path/to/models")
+results = promptmap.run("path/to/models")
 
 for name, output in results.items():
     print(name, output)
@@ -263,22 +263,22 @@ model's output string — or `ModelStatus.SKIPPED` if an upstream model failed, 
 a `ModelError` carrying the message if this one did. `ModelRunResult` (with
 `prompt_rendered`, `execution_ms`, `cached`, …) is what `execute_run()` returns
 internally; the public API reduces it to the value a caller wants. Read the rest
-back out of storage, or out of `pbt docs`.
+back out of storage, or out of `promptmap docs`.
 
-Three parameters exist for pbt's own tests and tooling rather than for everyday
+Three parameters exist for promptmap's own tests and tooling rather than for everyday
 use:
 
 | Parameter | Type | Purpose |
 |---|---|---|
 | `models_from_dict` | `dict[str, str] \| None` | Models as `{name: template_source}`, bypassing the filesystem entirely |
-| `storage_backend` | `StorageBackend \| None` | Swap SQLite for `MemoryStorageBackend` (or your own). Defaults to `.pbt/pbt.db` |
+| `storage_backend` | `StorageBackend \| None` | Swap SQLite for `MemoryStorageBackend` (or your own). Defaults to `.promptmap/promptmap.db` |
 | `verbose` | `bool` | The dbt-style progress log. `False` silences it |
 
 ### Passing functions inline
 
 ```python
 import anthropic
-import pbt
+import promptmap
 
 def my_llm(prompt: str) -> str:
     client = anthropic.Anthropic()
@@ -294,14 +294,14 @@ def my_rag(*args) -> list[str]:
     # your vector search here
     return ["Relevant doc 1", "Relevant doc 2"]
 
-results = pbt.run("models", llm_call=my_llm, rag_call=my_rag)
+results = promptmap.run("models", llm_call=my_llm, rag_call=my_rag)
 ```
 
 ---
 
 ## Project layout
 
-What a pbt *project* looks like — the package's own layout is the call order above.
+What a promptmap *project* looks like — the package's own layout is the call order above.
 
 ```
 my-project/
@@ -313,11 +313,11 @@ my-project/
 │   ├── outline.prompt   # depends on topic
 │   └── article.prompt   # depends on topic + outline
 ├── validation/          # optional: per-model validate(prompt, result) -> bool
-├── outputs/             # written by `pbt run` (files in outputs/<model>/)
-└── .pbt/
-    ├── pbt.db           # runs, model results, test results, prompt cache, file blobs
+├── outputs/             # written by `promptmap run` (files in outputs/<model>/)
+└── .promptmap/
+    ├── promptmap.db           # runs, model results, test results, prompt cache, file blobs
     └── docs/
-        ├── index.html   # written by `pbt docs`
+        ├── index.html   # written by `promptmap docs`
         └── files/       # files models produced, linked from the report
 ```
 

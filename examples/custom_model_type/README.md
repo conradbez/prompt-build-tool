@@ -5,8 +5,8 @@ own, alongside two built-in ones.
 
 ```bash
 export GEMINI_API_KEY=your_key_here
-pbt run
-pbt run --promptdata topic="deep sea mining"
+promptmap run
+promptmap run --promptdata topic="deep sea mining"
 ```
 
 ## What is here
@@ -41,9 +41,9 @@ One function, registered by name:
 
 ```python
 # client.py
-import pbt
+import promptmap
 
-@pbt.model_kind("shout", config_keys={"suffix"})
+@promptmap.model_kind("shout", config_keys={"suffix"})
 async def shout(rendered, call):
     response = await call.llm(rendered)
     return response.upper() + call.spec.config.get("suffix", "")
@@ -58,7 +58,7 @@ Write a single short headline for this article.
 {{ ref('article') }}
 ```
 
-pbt renders the template for you. `rendered` is that text; `call` carries what
+promptmap renders the template for you. `rendered` is that text; `call` carries what
 you might need with the model already bound — `call.llm(rendered)` sends it to
 the backend (cached, timed, skip-aware), `call.spec` is the model being run
 (`call.spec.name`, `call.spec.config`), and `call.outputs` holds upstream
@@ -67,8 +67,8 @@ outputs by name.
 Whatever you return becomes the model's output: what `ref()` gives downstream
 models and what lands in `outputs/`.
 
-`config_keys={"suffix"}` tells pbt that `suffix` is a real option. Without it,
-`pbt run` warns that it looks like a typo.
+`config_keys={"suffix"}` tells promptmap that `suffix` is a real option. Without it,
+`promptmap run` warns that it looks like a typo.
 
 ## Before writing a type, check the built-in ones
 
@@ -91,16 +91,16 @@ one-off calculation, `execute_python` is less code.
 ## What you get for free
 
 Your type behaves like a built-in one. The prompt cache, `output_format="json"`
-parsing, the skip functions, `validation/`, `pbt test`, `pbt docs` and the run
+parsing, the skip functions, `validation/`, `promptmap test`, `promptmap docs` and the run
 report all work without any extra code. The same goes for files: return a
-`pbt.File`, `pbt.Dir` or `pbt.Output` and pbt stores it, caches it, shows it in
-`pbt docs` and passes it downstream. Upstream files arrive in `call.outputs` as
+`promptmap.File`, `promptmap.Dir` or `promptmap.Output` and promptmap stores it, caches it, shows it in
+`promptmap docs` and passes it downstream. Upstream files arrive in `call.outputs` as
 those same objects.
 
 ## Where registration goes
 
-`client.py`, because pbt already imports it on every `pbt run`, `pbt test` and
-`pbt ls` — before it reads your models. Anywhere earlier works too.
+`client.py`, because promptmap already imports it on every `promptmap run`, `promptmap test` and
+`promptmap ls` — before it reads your models. Anywhere earlier works too.
 
 See the README section *Writing your own model kind* for the remaining hooks:
 producing and reading files (with a worked `zip_files` kind), caching non-LLM

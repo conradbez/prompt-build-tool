@@ -1,4 +1,4 @@
-{# gate=False: the classifier judge needs a local Ollaya; pbt run should not depend on it #}
+{# gate=False: the classifier judge needs a local Ollaya; promptmap run should not depend on it #}
 {{ config(gate=False) }}
 Does this poem have exactly three lines?
 ---
