@@ -128,8 +128,9 @@ def systemone_classifier(
 
 #: The question :func:`classifier_cache_check` asks by default.
 CACHE_QUESTION = (
-    "The prompt below was changed. Is the previous answer still a good answer "
-    "to the new prompt, so that asking again is not worth it?"
+    "The same prompt template was filled in with different input data. Is the "
+    "previous answer still a good answer to the new prompt, so that asking "
+    "again is not worth it?"
 )
 
 
@@ -147,8 +148,9 @@ def classifier_cache_check(
         classify_call = promptmap.systemone_classifier()
         cache_check = promptmap.classifier_cache_check(classify_call, threshold=0.8)
 
-    The state judged is the previous prompt, the new prompt and the
-    previous answer.
+    The state judged is the previous compiled prompt, the new one and the
+    previous answer.  Both prompts come from the same template, so what
+    differs is the data rendered into them.
     """
     threshold = parse_threshold(str(threshold))
 

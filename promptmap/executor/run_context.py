@@ -185,8 +185,7 @@ class RunContext:
 
     _accounting: dict[str, _ModelAccounting] = field(default_factory=dict)
     _files: dict[str, list | None] = field(default_factory=dict)
-    _previous: dict[str, PreviousRun | None] = field(default_factory=dict)
-    _candidates: dict[str, tuple[PreviousRun, str] | None] = field(default_factory=dict)
+    _previous_rows: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.blobs is None:
@@ -240,14 +239,17 @@ class RunContext:
         counts, so a result produced by an older version of the prompt is
         never offered as this prompt's previous answer.
         """
-        if spec.name not in self._previous:
-            row = self._previous_row(spec, template_hash(spec.source))
-            self._previous[spec.name] = None if row is None else self._as_previous(spec, row)
-        return self._previous[spec.name]
+        row = self._previous_row(spec)
+        return None if row is None else self._as_previous(spec, row)
 
-    def _previous_row(self, spec: ModelSpec, template: str | None) -> Any:
-        lookup = getattr(self.storage, "get_previous_result", None)
-        return lookup(spec.name, template, self.run_id) if lookup else None
+    def _previous_row(self, spec: ModelSpec) -> Any:
+        """The storage row behind :meth:`previous_for`, fetched once per model."""
+        if spec.name not in self._previous_rows:
+            lookup = getattr(self.storage, "get_previous_result", None)
+            self._previous_rows[spec.name] = (
+                lookup(spec.name, template_hash(spec.source), self.run_id) if lookup else None
+            )
+        return self._previous_rows[spec.name]
 
     def _as_previous(self, spec: ModelSpec, row: Any) -> PreviousRun:
         output: Any = decode_output(row["llm_output"] or "", self.blobs)
@@ -261,25 +263,21 @@ class RunContext:
     async def reusable_previous(self, rendered: str, spec: ModelSpec) -> str | None:
         """The model's last raw response, if ``cache_check`` approves reusing it.
 
-        The candidate is the model's latest successful result from another
-        run, whatever template produced it — deciding whether an edit
-        matters is the checker's job.  It sees the candidate as a
-        :class:`PreviousRun`; what comes back is the raw response, which is
-        what the cache serves, so a kind post-processes it exactly as it
-        would a fresh one.
+        The candidate is the same one ``{{ previous }}`` sees: the model's
+        latest successful result from another run of this same template.
+        The template is fixed, so the two compiled prompts differ only in
+        what was rendered into them — promptdata, upstream outputs, RAG —
+        and that difference is what the checker judges.  It sees the
+        candidate as a :class:`PreviousRun`; what comes back is the raw
+        response, which is what the cache serves, so a kind post-processes
+        it exactly as it would a fresh one.
         """
         if self.cache_check is None:
             return None
-        if spec.name not in self._candidates:
-            row = self._previous_row(spec, None)
-            self._candidates[spec.name] = (
-                None if row is None or row["llm_output_raw"] is None
-                else (self._as_previous(spec, row), row["llm_output_raw"])
-            )
-        candidate = self._candidates[spec.name]
-        if candidate is None:
+        row = self._previous_row(spec)
+        if row is None or row["llm_output_raw"] is None:
             return None
-        previous, raw = candidate
+        previous, raw = self._as_previous(spec, row), row["llm_output_raw"]
 
         kwargs: dict = {}
         params = inspect.signature(self.cache_check).parameters

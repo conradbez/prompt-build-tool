@@ -31,7 +31,7 @@ def record_run_ids(run_id: str, map_hash: str, run_hash: str) -> None:
     _DEFAULT_BACKEND.record_run_ids(run_id, map_hash=map_hash, run_hash=run_hash)
 
 
-def get_previous_result(model_name: str, template_hash: str | None, exclude_run_id: str | None = None):
+def get_previous_result(model_name: str, template_hash: str, exclude_run_id: str | None = None):
     return _DEFAULT_BACKEND.get_previous_result(model_name, template_hash, exclude_run_id)
 
 

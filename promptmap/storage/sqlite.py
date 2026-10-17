@@ -269,23 +269,23 @@ class SQLiteStorageBackend:
         return row["llm_output"] if row else None
 
     def get_previous_result(
-        self, model_name: str, template_hash: str | None, exclude_run_id: str | None = None
+        self, model_name: str, template_hash: str, exclude_run_id: str | None = None
     ) -> Optional[sqlite3.Row]:
-        """The latest successful row of *model_name* outside *exclude_run_id*,
-        run from this same template unless *template_hash* is None: its
-        ``run_id``, ``prompt_rendered``, ``llm_output`` (validated when it
-        was) and ``llm_output_raw`` (the response the cache would serve)."""
+        """The latest successful row of *model_name* run from this same
+        template, outside *exclude_run_id*: its ``run_id``,
+        ``prompt_rendered``, ``llm_output`` (validated when it was) and
+        ``llm_output_raw`` (the response the cache would serve)."""
         with self.get_conn() as conn:
             return conn.execute(
                 """SELECT run_id, prompt_rendered,
                           COALESCE(llm_output_validated, llm_output) AS llm_output,
                           llm_output AS llm_output_raw
                    FROM model_results
-                   WHERE (? IS NULL OR template_hash = ?) AND model_name = ?
+                   WHERE template_hash = ? AND model_name = ?
                      AND status = 'success' AND run_id != ?
                    ORDER BY completed_at DESC
                    LIMIT 1""",
-                (template_hash, template_hash, model_name, exclude_run_id or ""),
+                (template_hash, model_name, exclude_run_id or ""),
             ).fetchone()
 
     def get_cached_token_usage(self, cache_key: str) -> int | None:

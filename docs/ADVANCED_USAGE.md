@@ -425,9 +425,11 @@ hit.
 
 ### Deciding when a changed prompt is worth re-asking (`cache_check`)
 
-The prompt cache only hits on an identical prompt. To let a judge decide that
-a *changed* prompt is close enough, define `cache_check` in `client.py` (or
-pass `cache_check=` to `promptmap.run()`):
+The prompt cache only hits on an identical compiled prompt, so any change in
+the data rendered into a template (promptdata, an upstream model's output, RAG
+results) means a new LLM call. To let a judge decide that the inputs changed
+too little to matter, define `cache_check` in `client.py` (or pass
+`cache_check=` to `promptmap.run()`):
 
 ```python
 # client.py
@@ -436,9 +438,11 @@ def cache_check(prompt: str, previous) -> bool:
     ...
 ```
 
-On an exact cache miss, promptmap calls it with the new rendered prompt and
-the model's latest successful result as a `previous` object (`.prompt`,
-`.output`, `.run_id`). Return `True` and the old response is served as a cache
+On an exact cache miss, promptmap calls it with the new compiled prompt and
+the same `previous` object templates see (`.prompt`, `.output`, `.run_id`):
+the model's latest successful result **from the same template**. Since the
+template is fixed, comparing `prompt` with `previous.prompt` compares only the
+inputs. Return `True` and the old response is served as a cache
 hit: the model is reported `cached`, its kind and validator process the
 response as usual, and it is stored under the new prompt, so the same prompt
 next time is an exact hit with no question asked. Return `False` and the LLM
@@ -455,16 +459,16 @@ classify_call = promptmap.systemone_classifier()
 cache_check = promptmap.classifier_cache_check(classify_call, threshold=0.8)
 ```
 
-It asks the classifier whether the previous answer still fits the new prompt,
-showing it the previous prompt, the new prompt and the previous answer, and
+It asks the classifier whether the previous answer still fits the new
+compiled prompt, showing it the previous compiled prompt, the new one and the
+previous answer, and
 reuses the answer when P(yes) ≥ `threshold`. Pass `question=` to word it
 yourself.
 
 Details:
 
-- Unlike `{{ previous }}`, the candidate is **not** limited to the same
-  template: an edit to the `.prompt` file is exactly the kind of change the
-  checker is there to judge.
+- Editing the `.prompt` file is never judged: the edited template has no
+  previous result, so its first run always calls the LLM.
 - It may be `async`, and may also declare `config`, `secrets` and `model`
   (the model name) parameters to receive them.
 - It is never asked on an exact hit, when the model has no earlier result,

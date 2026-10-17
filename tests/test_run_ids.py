@@ -267,12 +267,25 @@ def test_cache_check_is_not_asked_on_an_exact_hit_or_without_history(storage) ->
     assert check.asked == []
 
 
-def test_cache_check_sees_results_from_an_edited_template(storage) -> None:
+def test_cache_check_is_not_asked_after_the_template_changes(storage) -> None:
+    """It judges changed inputs, not edits: a new template has no candidate."""
     llm, check = EchoLLM(), Checker(True)
     _run({"a": "Slogan for tea"}, storage, llm)
     results = _run({"a": "A slogan for tea"}, storage, llm, cache_check=check)
 
-    assert check.asked == [("A slogan for tea", "Slogan for tea", "answer 1")]
+    assert check.asked == []
+    assert results["a"] == "answer 2"
+
+
+def test_cache_check_judges_a_changed_upstream_output(storage) -> None:
+    models = {"topic": "{{ promptdata('topic') }}", "a": "Slogan for {{ ref('topic') }}"}
+    templates = {"topic": "{{ config(model_type='template') }}{{ promptdata('topic') }}",
+                 "a": models["a"]}
+    llm, check = EchoLLM(), Checker(True)
+    _run(templates, storage, llm, **_topic("tea"))
+    results = _run(templates, storage, llm, cache_check=check, **_topic("teas"))
+
+    assert check.asked == [("Slogan for teas", "Slogan for tea", "answer 1")]
     assert results["a"] == "answer 1"
 
 
@@ -293,13 +306,14 @@ async def test_cache_check_may_be_async_and_declare_extras(storage) -> None:
         return True
 
     llm = EchoLLM()
+    models = {"a": "{{ config(output_extension='txt') }}Hi {{ promptdata('who') }}"}
     await promptmap.async_run(
-        models_from_dict={"a": "{{ config(output_extension='txt') }}Hi"},
-        storage_backend=storage, llm_call=llm, verbose=False,
+        models_from_dict=models, storage_backend=storage, llm_call=llm, verbose=False,
+        promptdata={"who": "Ada"},
     )
     outputs = await promptmap.async_run(
-        models_from_dict={"a": "{{ config(output_extension='txt') }}Hi!"},
-        storage_backend=storage, llm_call=llm, verbose=False, cache_check=check,
+        models_from_dict=models, storage_backend=storage, llm_call=llm, verbose=False,
+        promptdata={"who": "Ada!"}, cache_check=check,
     )
 
     assert outputs["a"] == "answer 1"
@@ -318,10 +332,11 @@ def test_cache_check_from_client_py(tmp_path, monkeypatch) -> None:
         "    return True\n"
     )
     storage = SQLiteStorageBackend(tmp_path / "promptmap.db")
-    (tmp_path / "map" / "a.prompt").write_text("Hi")
-    promptmap.run(map_dir="map", storage_backend=storage, verbose=False)
-    (tmp_path / "map" / "a.prompt").write_text("Hi there")
-    outputs = promptmap.run(map_dir="map", storage_backend=storage, verbose=False)
+    (tmp_path / "map" / "a.prompt").write_text("Hi {{ promptdata('who') }}")
+    promptmap.run(map_dir="map", storage_backend=storage, verbose=False, promptdata={"who": "Ada"})
+    outputs = promptmap.run(
+        map_dir="map", storage_backend=storage, verbose=False, promptdata={"who": "Ada L."}
+    )
 
     assert outputs["a"] == "answer 1"
 
