@@ -25,3 +25,6 @@ examples/running_with_files/.DS_Store
 
 # Files models produce (produces_files=True) land in outputs/<model>/
 examples/*/outputs/*/
+
+# pbt secrets — never commit (secrets-template.yml is the committed copy)
+secrets.yml

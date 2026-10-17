@@ -44,6 +44,13 @@ from pbt.llm import (
 )
 from pbt.rag import resolve_rag_call
 from pbt.secrets import MissingSecretsError
+from pbt.project_values import (
+    PROMPTDATA_FILE,
+    PROMPTFILES_FILE,
+    SECRETS_FILE,
+    ProjectValuesError,
+    load_values,
+)
 from pbt.global_instruction import resolve_global_instruction
 from pbt.docs import generate_docs
 from pbt.files import FileOutputError, contains_files, decode_output, display_text, export_files, iter_files
@@ -192,8 +199,19 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
         cleared = db.clear_cache()
         c.print(f"  [yellow]Cache cleared[/yellow] ({cleared} entr{'ies' if cleared != 1 else 'y'} invalidated)\n")
 
+    # promptdata.yml / promptfiles.yml in the project root supply defaults;
+    # --promptdata / --promptfile override them key by key.
+    try:
+        promptdata_vars: dict[str, str] = load_values(PROMPTDATA_FILE)
+        file_promptfiles: dict[str, str] = load_values(PROMPTFILES_FILE)
+    except ProjectValuesError as exc:
+        err_console.print(f"[red]Error:[/red] {escape(str(exc))}")
+        sys.exit(1)
+    for label, values in ((PROMPTDATA_FILE, promptdata_vars), (PROMPTFILES_FILE, file_promptfiles)):
+        if values:
+            c.print(f"  [dim]{label}: {', '.join(values)}[/dim]")
+
     # Parse --promptdata KEY=VALUE pairs into a dict
-    promptdata_vars: dict[str, str] = {}
     for v in promptdata:
         if "=" not in v:
             err_console.print(f"[red]Error:[/red] --promptdata must be KEY=VALUE, got: {v!r}")
@@ -205,13 +223,14 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
 
     # Parse --promptfile NAME=PATH pairs into a dict of open file objects.
     promptfiles_dict: dict = {}
-    promptfile_paths: dict[str, str] = {}  # gate tests open their own copies
+    promptfile_paths: dict[str, str] = dict(file_promptfiles)  # gate tests open their own copies
     for f in promptfiles:
         if "=" not in f:
             err_console.print(f"[red]Error:[/red] --promptfile must be NAME=PATH, got: {f!r}")
             sys.exit(1)
         k, _, val = f.partition("=")
         promptfile_paths[k] = val
+    for k, val in promptfile_paths.items():
         try:
             promptfiles_dict[k] = open(val, "rb")  # noqa: WPS515  – closed by llm_call consumer
         except OSError as exc:
@@ -696,14 +715,15 @@ def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_outpu
 # ---------------------------------------------------------------------------
 
 def _secrets_or_exit(flags: tuple[str, ...]):
-    """Parse --secret flags, or exit naming the one that has no value."""
+    """Parse --secret flags over secrets.yml, or exit naming the one that has no value."""
     from dotenv import load_dotenv
 
-    from pbt.secrets import parse_secret_flags
+    from pbt.secrets import Secrets, parse_secret_flags
 
     load_dotenv()  # a bare --secret NAME may be defined in .env
     try:
-        return parse_secret_flags(flags)
+        # secrets.yml in the project root supplies defaults; --secret wins.
+        return Secrets({**load_values(SECRETS_FILE), **parse_secret_flags(flags)})
     except ValueError as exc:
         err_console.print(f"[red]Error:[/red] {exc}")
         sys.exit(1)

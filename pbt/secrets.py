@@ -1,7 +1,8 @@
 """
 :class:`Secrets` — run-scoped credentials that never leak into what pbt keeps.
 
-Pass them with ``pbt.run(secrets={...})`` or ``pbt run --secret NAME=VALUE``.  A
+Pass them with ``pbt.run(secrets={...})``, ``pbt run --secret NAME=VALUE`` or a
+``secrets.yml`` in the project root (flags win).  A
 model kind reads them as ``call.secrets["NAME"]``; an ``llm_call`` that
 declares a ``secrets`` parameter receives them too.
 

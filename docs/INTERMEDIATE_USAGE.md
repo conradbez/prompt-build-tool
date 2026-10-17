@@ -57,6 +57,30 @@ Choose a fascinating topic of your choice.
 
 ---
 
+## Project defaults (`promptdata.yml`, `promptfiles.yml`, `secrets.yml`)
+
+Instead of repeating flags on every run, put defaults in flat `name: value` files in the project root (the directory you run `pbt` from):
+
+| File | Used by | Overridden by |
+|------|---------|---------------|
+| `promptdata.yml` | `pbt run` | `--promptdata KEY=VALUE` |
+| `promptfiles.yml` | `pbt run` (paths relative to the project root) | `--promptfile NAME=PATH` |
+| `secrets.yml` | `pbt run`, `pbt test`, `pbt serve` | `--secret NAME=VALUE` |
+
+CLI flags always win, key by key — so `promptdata.yml` can set `tone` and `topic` while `--promptdata topic=dogs` changes only `topic`. Keys with an empty value are ignored.
+
+Generate a file listing the keys your models use:
+
+```bash
+pbt init data      # promptdata.yml — every promptdata("...") key
+pbt init files     # promptfiles.yml — every config(promptfiles=...) name
+pbt init secrets   # secrets.yml + secrets-template.yml — secrets your model kinds require
+```
+
+Re-running keeps existing values and appends any new keys (`--force` rewrites the file). `pbt init secrets` also adds `secrets.yml` to `.gitignore`: commit `secrets-template.yml` (same keys, no values) and keep real credentials out of git. Like `--secret`, values from `secrets.yml` are never rendered, cached or stored.
+
+---
+
 ## Customising the LLM backend (`client.py`)
 
 pbt is unopinionated about which LLM you use. Create `client.py` at the project root (alongside your `models/` directory) and define an `llm_call` function — usually 5 lines:

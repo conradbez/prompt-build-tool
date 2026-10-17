@@ -110,6 +110,20 @@ The `client.py` at the project root configures which LLM to call. It must expose
 Scaffolded with `pbt init --classifier`, it also has `classifier_for_test_feedback`,
 which judges `{{ config(judge="classifier") }}` tests with a one-token yes/no call.
 """,
+    ".gitignore": """\
+# pbt runtime artifacts
+.pbt/
+
+# pbt secrets — never commit (secrets-template.yml is the committed copy)
+secrets.yml
+.env
+""",
+    "secrets-template.yml": """\
+# Template for secrets.yml (which is gitignored): copy it and fill in values.
+#   cp secrets-template.yml secrets.yml
+# pbt run / test / serve read secrets.yml from the project root;
+# --secret NAME=VALUE overrides.  Regenerate keys with: pbt init secrets
+""",
     "models/articles.prompt": """\
 {{ config(output_format="json") }}
 {# Generate an article on a topic. Pass --promptdata topic=... or leave blank for a generic article. #}
@@ -466,6 +480,12 @@ def register_command(main) -> None:
     @click.argument("project_name", default="generate_articles_example")
     @click.option("--force", is_flag=True, default=False, help="Overwrite existing files.")
     @click.option(
+        "--models-dir",
+        default="models",
+        show_default=True,
+        help="With secrets/data/files: directory whose models' keys are written.",
+    )
+    @click.option(
         "--provider",
         type=click.Choice(PROVIDERS, case_sensitive=False),
         default="gemini",
@@ -476,8 +496,18 @@ def register_command(main) -> None:
         "--classifier", is_flag=True, default=False,
         help="Add a jev-like yes/no classifier to client.py for classifier-judged tests.",
     )
-    def init(project_name: str, force: bool, provider: str, classifier: bool) -> None:
-        """Scaffold a starter pbt project inside PROJECT_NAME/."""
+    def init(project_name: str, force: bool, models_dir: str, provider: str, classifier: bool) -> None:
+        """Scaffold a starter pbt project inside PROJECT_NAME/.
+
+        `pbt init secrets`, `pbt init data` and `pbt init files` instead write
+        secrets.yml (+ secrets-template.yml), promptdata.yml or promptfiles.yml
+        in the current directory, listing the keys this project's models use.
+        Existing values are kept; missing keys are appended.  (To scaffold a
+        project with one of those names, pass ./secrets.)
+        """
+        if project_name in VALUES_FILE_KINDS:
+            init_values_file(console, project_name, models_dir, force)
+            return
         provider = provider.lower()
         files = dict(INIT_FILES)
         files["client.py"] = CLIENT_PY[provider] + (CLASSIFIER_PY[provider] if classifier else "")
@@ -536,3 +566,123 @@ def validate(prompt: str, result: str):
         if is_running_in_vscode():
             setup_vscode_associations()
             console.print("  [dim]VS Code detected — configured .vscode/settings.json for .prompt files[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# pbt init secrets | data | files — project-root values files
+# ---------------------------------------------------------------------------
+
+VALUES_FILE_KINDS = ("secrets", "data", "files")
+
+_VALUES_HEADERS = {
+    "secrets": (
+        "Secrets for pbt run / test / serve — read as call.secrets[\"NAME\"].\n"
+        "Never rendered, cached or stored.  Keep this file out of git;\n"
+        "commit secrets-template.yml instead.  --secret NAME=VALUE overrides."
+    ),
+    "template": (
+        "Template for secrets.yml (which is gitignored): copy it and fill in values.\n"
+        "  cp secrets-template.yml secrets.yml"
+    ),
+    "data": (
+        "Default promptdata() values for pbt run.\n"
+        "--promptdata KEY=VALUE overrides any key here."
+    ),
+    "files": (
+        "Default promptfiles for pbt run: NAME: path (relative to the project root).\n"
+        "--promptfile NAME=PATH overrides any key here."
+    ),
+}
+
+
+def _values_keys(kind: str, models_dir: str) -> list[str]:
+    """Keys the project's models use for *kind*; empty if there are no models."""
+    from pbt.executor.graph import get_dag_promptdata, get_dag_promptfiles, load_models
+    from pbt.llm import try_load_client_module
+    from pbt.model_types import get_model_kind
+
+    if not Path(models_dir).is_dir():
+        return []
+    try_load_client_module(models_dir)  # registers project-local kinds and their secrets
+    models = load_models(models_dir)
+    if kind == "data":
+        return get_dag_promptdata(models)
+    if kind == "files":
+        return get_dag_promptfiles(models)
+    keys: dict[str, None] = {}
+    for spec in models.values():
+        model_kind = get_model_kind(spec.model_type)
+        for name in sorted(model_kind.required_secrets if model_kind is not None else ()):
+            keys[name] = None
+    return list(keys)
+
+
+def _write_values_file(path: Path, keys: list[str], header: str, force: bool) -> tuple[str, list[str]]:
+    """Write *keys* to *path*; keep an existing file's values and append missing keys.
+
+    Returns (action, keys added).
+    """
+    import yaml
+
+    from pbt.project_values import render_values_file
+
+    if not path.exists() or force:
+        action = "overwrote" if path.exists() else "created"
+        path.write_text(render_values_file(keys, header), encoding="utf-8")
+        return action, keys
+    existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    present = {str(k) for k in existing} if isinstance(existing, dict) else set()
+    missing = [k for k in keys if k not in present]
+    if missing:
+        text = path.read_text(encoding="utf-8")
+        body = render_values_file(missing, "")
+        path.write_text(text + ("" if text.endswith("\n") or not text else "\n") + body, encoding="utf-8")
+        return "updated", missing
+    return "unchanged", []
+
+
+def _ensure_gitignored(name: str) -> bool:
+    """Add *name* to ./.gitignore unless already listed. Returns True if added."""
+    path = Path(".gitignore")
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if name in {line.strip().lstrip("/") for line in text.splitlines()}:
+        return False
+    sep = "" if not text or text.endswith("\n") else "\n"
+    path.write_text(f"{text}{sep}\n# pbt secrets — never commit\n{name}\n", encoding="utf-8")
+    return True
+
+
+def init_values_file(console, kind: str, models_dir: str, force: bool) -> None:
+    """Implement `pbt init secrets|data|files` in the current directory."""
+    import sys
+
+    from rich.markup import escape
+
+    from pbt.project_values import (
+        PROMPTDATA_FILE,
+        PROMPTFILES_FILE,
+        SECRETS_FILE,
+        SECRETS_TEMPLATE_FILE,
+    )
+
+    try:
+        keys = _values_keys(kind, models_dir)
+    except Exception as exc:  # noqa: BLE001 — a broken model shouldn't hide the cause
+        console.print(f"[red]Error:[/red] could not read models in {models_dir}: {escape(str(exc))}")
+        sys.exit(1)
+
+    if kind == "secrets":
+        targets = [(SECRETS_TEMPLATE_FILE, "template"), (SECRETS_FILE, "secrets")]
+    else:
+        targets = [(PROMPTDATA_FILE if kind == "data" else PROMPTFILES_FILE, kind)]
+
+    for filename, header in targets:
+        action, added = _write_values_file(Path(filename), keys, _VALUES_HEADERS[header], force)
+        detail = f" ({', '.join(added)})" if added else ""
+        style = "dim" if action == "unchanged" else "green"
+        console.print(f"  [{style}]{action}[/{style}]  {filename}{escape(detail)}")
+
+    if kind == "secrets" and _ensure_gitignored(SECRETS_FILE):
+        console.print(f"  [green]updated[/green]  .gitignore ({SECRETS_FILE})")
+    if not keys:
+        console.print(f"  [dim]No {kind} keys found in {models_dir}/ — add name: value lines by hand.[/dim]")
