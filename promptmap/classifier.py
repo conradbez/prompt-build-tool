@@ -124,3 +124,40 @@ def systemone_classifier(
             raise RuntimeError(f"Unexpected /v1/systemone response: {data!r}"[:500]) from None
 
     return classify_call
+
+
+#: The question :func:`classifier_cache_check` asks by default.
+CACHE_QUESTION = (
+    "The prompt below was changed. Is the previous answer still a good answer "
+    "to the new prompt, so that asking again is not worth it?"
+)
+
+
+def classifier_cache_check(
+    classify_call: ClassifyCall,
+    threshold: float = DEFAULT_THRESHOLD,
+    question: str = CACHE_QUESTION,
+) -> Callable:
+    """
+    Return a ``cache_check`` that asks *classify_call* whether a model's last
+    answer still fits its changed prompt, reusing it when P(yes) reaches
+    *threshold*::
+
+        # client.py
+        classify_call = promptmap.systemone_classifier()
+        cache_check = promptmap.classifier_cache_check(classify_call, threshold=0.8)
+
+    The state judged is the previous prompt, the new prompt and the
+    previous answer.
+    """
+    threshold = parse_threshold(str(threshold))
+
+    def cache_check(prompt: str, previous) -> bool:
+        state = (
+            f"PREVIOUS PROMPT:\n{previous.prompt}\n\n"
+            f"NEW PROMPT:\n{prompt}\n\n"
+            f"PREVIOUS ANSWER:\n{previous.output}"
+        )
+        return float(classify_call(state, question)) >= threshold
+
+    return cache_check

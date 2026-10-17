@@ -103,6 +103,8 @@ def llm_call(prompt: str) -> str:
 
 promptmap will automatically discover and use this file. Run `promptmap init --provider <gemini|openai|anthropic|deepseek|qwen|kimi|xiaomi>` to scaffold a starter `client.py` for your chosen provider; add `--classifier` to also scaffold a jev-like `classify_call` for classifier-judged tests (P(yes) from one-token logprobs where the provider returns them — OpenAI, DeepSeek, Qwen — otherwise a hard yes/no). If the file exists but does not define `llm_call`, promptmap raises an error at startup.
 
+`client.py` can also define `cache_check(prompt, previous) -> bool` to let a judge (e.g. that classifier) decide whether a changed prompt can reuse the last answer — see [`cache_check`](ADVANCED_USAGE.md#deciding-when-a-changed-prompt-is-worth-re-asking-cache_check).
+
 ---
 
 ## Passing files to models (`promptfiles`)

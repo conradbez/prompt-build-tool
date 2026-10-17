@@ -13,7 +13,7 @@ from promptmap.executor.parser_initial import (
     known_config_keys,
     register_config_keys,
 )
-from promptmap.classifier import systemone_classifier
+from promptmap.classifier import classifier_cache_check, systemone_classifier
 from promptmap.executor.graph import UnknownModelTypeError
 from promptmap.model_spec import ModelSpec
 from promptmap.model_types import (
@@ -36,6 +36,7 @@ from promptmap.secrets import Secrets
 from promptmap.storage.base import StorageBackend
 from promptmap.tokens import LLMResult
 from promptmap.executor.executor import ModelRunResult
+from promptmap.executor.parser_model import PreviousRun
 from promptmap.types import PromptFile, PromptModelsDict
 
 # Registers the built-in kinds ("", template, execute_python, agent).  Imported here,
@@ -58,6 +59,7 @@ __all__ = [
     "UnknownConfigKeyWarning",
     "UnknownModelTypeError",
     "systemone_classifier",
+    "classifier_cache_check",
     "ModelStatus",
     "ModelError",
     "PromptModelsDict",
@@ -69,6 +71,7 @@ __all__ = [
     "Output",
     "LLMResult",
     "ModelRunResult",
+    "PreviousRun",
     "BlobStore",
     "MemoryBlobStore",
     "SQLiteBlobStore",
@@ -131,6 +134,7 @@ async def async_run(
     on_model_start: Callable[[str], None] | None = None,
     on_model_done: Callable[[ModelRunResult], None] | None = None,
     secrets: Mapping[str, str] | None = None,
+    cache_check: Callable[..., bool | Awaitable[bool]] | None = None,
 ):
     """
     Execute prompt models as a Python library call.
@@ -199,6 +203,15 @@ async def async_run(
         ``llm_call`` can serve a different key per run.  They are never
         rendered into templates, part of the cache key, stored, or shown in a
         repr — changing a key's value still gets cache hits.
+    cache_check:
+        Optional function ``(prompt: str, previous: PreviousRun) -> bool``
+        asked on an exact prompt-cache miss whether the model's last
+        successful result (``previous.prompt``, ``previous.output``) is still
+        good enough for the new *prompt*.  Return True to reuse it as a cache
+        hit — e.g. a cheap judge model deciding whether the prompt changed
+        meaningfully.  Sync or async; may also declare ``config``,
+        ``secrets`` and ``model`` parameters.  Falls back to ``cache_check``
+        in client.py.
 
     Returns
     -------
@@ -284,6 +297,9 @@ async def async_run(
     if blob_store is None and models_from_dict is None:
         from promptmap.llm import resolve_blob_store
         blob_store = resolve_blob_store(map_dir)
+    if cache_check is None and models_from_dict is None:
+        from promptmap.llm import resolve_cache_check
+        cache_check = resolve_cache_check(map_dir)
 
     # Global instruction: explicit argument wins, else global.prompt on disk.
     from promptmap.global_instruction import (
@@ -379,6 +395,7 @@ async def async_run(
         global_instruction=global_instruction,
         blob_store=blob_store,
         secrets=secrets,
+        cache_check=cache_check,
     )
 
     errors = sum(1 for r in results if r.status == "error")
@@ -425,12 +442,14 @@ def run(
     promptdata: "dict | None" = None,
     promptfiles: "dict[str, PromptFile] | None" = None,
     validation_dir: "str | None" = "validation",
+    tests_dir: "str | None" = "tests",
     storage_backend: "StorageBackend | None" = None,
     global_instruction: "str | Callable[[], str] | None" = None,
     blob_store: "BlobStore | None" = None,
     on_model_start: "Callable[[str], None] | None" = None,
     on_model_done: "Callable[[ModelRunResult], None] | None" = None,
     secrets: "Mapping[str, str] | None" = None,
+    cache_check: "Callable[..., bool | Awaitable[bool]] | None" = None,
 ):
     """Run prompt models synchronously.
 
@@ -449,10 +468,12 @@ def run(
         promptdata=promptdata,
         promptfiles=promptfiles,
         validation_dir=validation_dir,
+        tests_dir=tests_dir,
         storage_backend=storage_backend,
         global_instruction=global_instruction,
         blob_store=blob_store,
         on_model_start=on_model_start,
         on_model_done=on_model_done,
         secrets=secrets,
+        cache_check=cache_check,
     ))

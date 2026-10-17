@@ -130,6 +130,17 @@ def resolve_blob_store(map_dir: str):
     return store
 
 
+def resolve_cache_check(map_dir: str) -> Callable[..., bool] | None:
+    """Return client.py's ``cache_check(prompt, previous) -> bool``, or None.
+
+    Asked on an exact prompt-cache miss whether a model's last result is
+    still good enough for its changed prompt; see
+    :meth:`~promptmap.executor.run_context.RunContext.reusable_previous`.
+    """
+    module = load_client_module(map_dir)
+    return getattr(module, "cache_check", None) if module is not None else None
+
+
 def resolve_classify_call(map_dir: str) -> Callable[[str, str], float] | None:
     """Return client.py's ``classify_call(state, question) -> float``, or None.
 

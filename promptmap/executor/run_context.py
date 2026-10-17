@@ -21,6 +21,10 @@ already applied:
 ``ctx.cached(rendered, spec, state, compute=...)`` → ``call.compute(rendered, compute=...)``
     The same treatment for work that is not an LLM call.
 
+On an exact cache miss, an LLM call also asks the run's ``cache_check`` —
+when there is one — whether the model's last result is still good enough
+for the new prompt (see :meth:`RunContext.reusable_previous`).
+
 Adding a new run-wide input is a field here, not a new parameter on six
 functions.
 """
@@ -160,6 +164,11 @@ class RunContext:
     #: the cache key or storage.
     secrets: Secrets = field(default_factory=Secrets, repr=False)
 
+    #: ``cache_check(prompt, previous) -> bool``: asked on an exact cache miss
+    #: whether the model's last result can be reused for the changed prompt.
+    #: Sync or async; may also declare ``config``, ``secrets`` and ``model``.
+    cache_check: Callable[..., Any] | None = None
+
     #: Where file outputs' bytes live.  Defaults to the storage backend's own
     #: blob store, or an in-memory one for a backend that has none.
     blobs: BlobStore | None = None
@@ -177,6 +186,7 @@ class RunContext:
     _accounting: dict[str, _ModelAccounting] = field(default_factory=dict)
     _files: dict[str, list | None] = field(default_factory=dict)
     _previous: dict[str, PreviousRun | None] = field(default_factory=dict)
+    _candidates: dict[str, tuple[PreviousRun, str] | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.blobs is None:
@@ -230,25 +240,65 @@ class RunContext:
         counts, so a result produced by an older version of the prompt is
         never offered as this prompt's previous answer.
         """
-        if spec.name in self._previous:
-            return self._previous[spec.name]
+        if spec.name not in self._previous:
+            row = self._previous_row(spec, template_hash(spec.source))
+            self._previous[spec.name] = None if row is None else self._as_previous(spec, row)
+        return self._previous[spec.name]
+
+    def _previous_row(self, spec: ModelSpec, template: str | None) -> Any:
         lookup = getattr(self.storage, "get_previous_result", None)
-        row = lookup(spec.name, template_hash(spec.source), self.run_id) if lookup else None
-        previous = None
-        if row is not None:
-            output: Any = decode_output(row["llm_output"] or "", self.blobs)
-            if isinstance(output, str) and spec.output_format == "json":
-                try:
-                    output = parse_json_output(output)
-                except ValueError:
-                    pass  # stored as text after all, e.g. a skip value
-            previous = PreviousRun(
-                prompt=row["prompt_rendered"] or "",
-                output=output,
-                run_id=row["run_id"],
+        return lookup(spec.name, template, self.run_id) if lookup else None
+
+    def _as_previous(self, spec: ModelSpec, row: Any) -> PreviousRun:
+        output: Any = decode_output(row["llm_output"] or "", self.blobs)
+        if isinstance(output, str) and spec.output_format == "json":
+            try:
+                output = parse_json_output(output)
+            except ValueError:
+                pass  # stored as text after all, e.g. a skip value
+        return PreviousRun(prompt=row["prompt_rendered"] or "", output=output, run_id=row["run_id"])
+
+    async def reusable_previous(self, rendered: str, spec: ModelSpec) -> str | None:
+        """The model's last raw response, if ``cache_check`` approves reusing it.
+
+        The candidate is the model's latest successful result from another
+        run, whatever template produced it — deciding whether an edit
+        matters is the checker's job.  It sees the candidate as a
+        :class:`PreviousRun`; what comes back is the raw response, which is
+        what the cache serves, so a kind post-processes it exactly as it
+        would a fresh one.
+        """
+        if self.cache_check is None:
+            return None
+        if spec.name not in self._candidates:
+            row = self._previous_row(spec, None)
+            self._candidates[spec.name] = (
+                None if row is None or row["llm_output_raw"] is None
+                else (self._as_previous(spec, row), row["llm_output_raw"])
             )
-        self._previous[spec.name] = previous
-        return previous
+        candidate = self._candidates[spec.name]
+        if candidate is None:
+            return None
+        previous, raw = candidate
+
+        kwargs: dict = {}
+        params = inspect.signature(self.cache_check).parameters
+        if "config" in params:
+            kwargs["config"] = spec.config
+        if "secrets" in params:
+            kwargs["secrets"] = self.secrets
+        if "model" in params:
+            kwargs["model"] = spec.name
+        if inspect.iscoroutinefunction(self.cache_check):
+            verdict = await self.cache_check(rendered, previous, **kwargs)
+        else:
+            loop = asyncio.get_running_loop()
+            verdict = await loop.run_in_executor(
+                None, lambda: self.cache_check(rendered, previous, **kwargs)
+            )
+            if inspect.isawaitable(verdict):
+                verdict = await verdict
+        return raw if verdict else None
 
     def note(self, spec: ModelSpec, text: str) -> None:
         """Set a one-line header shown above a multi-prompt model's rendered text."""
@@ -299,6 +349,7 @@ class RunContext:
         state: _RenderState | None = None,
         *,
         compute: Callable[[], Any],
+        check: bool = False,
     ) -> str:
         """Return the memoised result of *compute* for this rendered prompt.
 
@@ -322,6 +373,10 @@ class RunContext:
 
         ``{{ config(cache=False) }}`` skips the lookup: the work always runs,
         and its fresh result still overwrites the cache entry.
+
+        *check* consults the run's ``cache_check`` on a miss (LLM calls only).
+        Each ``each=`` item is never checked: its candidate would be the
+        joined fan-out, not that item.
         """
         if state is not None and state.skip_value is not None:
             return state.skip_value
@@ -345,6 +400,24 @@ class RunContext:
                 lookup = getattr(self.storage, "get_cached_token_usage", None)
                 if lookup is not None:
                     acct.cache_spent_tokens = add_tokens(acct.cache_spent_tokens, lookup(key))
+                return value
+
+        reused = None
+        if check and reads_cache and getattr(state, "extra_outputs", None) is None:
+            reused = await self.reusable_previous(rendered, spec)
+        if reused is not None:
+            try:
+                value = decode_output(reused, self.blobs, check_blobs=True)
+            except FileOutputError:
+                pass  # its files are gone — call the LLM after all
+            else:
+                acct.calls += 1
+                acct.cache_hits += 1
+                self._record_artifact(acct, reused)
+                if state is not None:
+                    # Stored under the new key, so an identical prompt next
+                    # time is an exact hit with no question asked.
+                    state.record_call(reused, key, hit=True)
                 return value
 
         started = time.monotonic()
@@ -382,7 +455,7 @@ class RunContext:
         lets a fan-out model issue its calls concurrently.
         """
         return await self.cached(
-            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec, state)
+            rendered, spec, state, compute=lambda: self._invoke_llm(rendered, spec, state), check=True
         )
 
     async def _invoke_llm(

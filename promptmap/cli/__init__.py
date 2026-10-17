@@ -41,6 +41,7 @@ from promptmap.executor.executor import execute_run
 from promptmap.gates import execute_gated_run, gate_reads, gate_upstream, load_gates
 from promptmap.llm import (
     resolve_blob_store,
+    resolve_cache_check,
     resolve_classify_call,
     resolve_llm_call,
     resolve_test_judge,
@@ -332,6 +333,7 @@ def run(map_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple
     try:
         llm_call = resolve_llm_call(map_dir)
         rag_call = resolve_rag_call(map_dir)
+        cache_check = resolve_cache_check(map_dir)
         if global_instruction_path:
             global_instruction = Path(global_instruction_path).read_text(encoding="utf-8")
         else:
@@ -394,6 +396,7 @@ def run(map_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple
         validators=validators or None,
         global_instruction=global_instruction,
         secrets=secrets,
+        cache_check=cache_check,
     )
     gated = None
     try:

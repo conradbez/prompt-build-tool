@@ -325,6 +325,7 @@ async def execute_run(
     skipped: set[str] | None = None,
     skip_downstream: set[str] | None = None,
     secrets: Mapping[str, str] | None = None,
+    cache_check: Callable[..., Any] | None = None,
 ) -> list[ModelRunResult]:
     """
     Execute all *ordered_models* in dependency order.
@@ -363,6 +364,10 @@ async def execute_run(
         passed to an ``llm_call`` that declares a ``secrets`` parameter.  Never
         rendered, cached or stored.  Every secret the selected models' kinds
         declare is checked before any model runs.
+    cache_check:
+        Asked on an exact prompt-cache miss whether a model's last result can
+        be reused for its changed prompt (see
+        :meth:`~promptmap.executor.run_context.RunContext.reusable_previous`).
 
     Returns
     -------
@@ -397,6 +402,7 @@ async def execute_run(
         global_instruction=global_instruction,
         blobs=blob_store,
         secrets=secrets,
+        cache_check=cache_check,
     )
     if skipped is not None:
         ctx.skipped = skipped

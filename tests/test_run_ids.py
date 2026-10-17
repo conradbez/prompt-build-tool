@@ -204,3 +204,141 @@ def test_previous_ignores_failed_runs(storage) -> None:
     _run({"a": _ITERATE}, storage, llm)
 
     assert llm.prompts[1] == "Improve on: answer 1 (asked: First draft)"
+
+
+# -- cache_check --------------------------------------------------------------
+
+
+class Checker:
+    """A cache_check that records what it was asked and answers *verdict*."""
+
+    def __init__(self, verdict: bool) -> None:
+        self.verdict = verdict
+        self.asked: list[tuple[str, str, str]] = []
+
+    def __call__(self, prompt: str, previous) -> bool:
+        self.asked.append((prompt, previous.prompt, previous.output))
+        return self.verdict
+
+
+def _topic(topic: str) -> dict:
+    return {"promptdata": {"topic": topic}}
+
+
+_SLOGAN = {"a": "Slogan for {{ promptdata('topic') }}", "b": "Shout {{ ref('a') }}"}
+
+
+def test_cache_check_approves_reusing_the_last_result(storage) -> None:
+    llm, check = EchoLLM(), Checker(True)
+    _run(_SLOGAN, storage, llm, **_topic("tea"))
+    results = _run(_SLOGAN, storage, llm, cache_check=check, **_topic("green tea"))
+
+    assert check.asked[0] == ("Slogan for green tea", "Slogan for tea", "answer 1")
+    assert results["a"] == "answer 1"
+    run = _latest_run(storage)
+    assert _row(storage, run["run_id"], "a")["cached"]
+
+
+def test_cache_check_rejects_and_the_llm_runs(storage) -> None:
+    llm, check = EchoLLM(), Checker(False)
+    _run(_SLOGAN, storage, llm, **_topic("tea"))
+    results = _run(_SLOGAN, storage, llm, cache_check=check, **_topic("coffee"))
+
+    assert results["a"] == "answer 3"
+    assert llm.prompts[2] == "Slogan for coffee"
+
+
+def test_an_approved_reuse_becomes_an_exact_hit_next_time(storage) -> None:
+    llm = EchoLLM()
+    _run(_SLOGAN, storage, llm, **_topic("tea"))
+    _run(_SLOGAN, storage, llm, cache_check=Checker(True), **_topic("green tea"))
+    check = Checker(False)
+    results = _run(_SLOGAN, storage, llm, cache_check=check, **_topic("green tea"))
+
+    assert check.asked == []
+    assert results["a"] == "answer 1"
+
+
+def test_cache_check_is_not_asked_on_an_exact_hit_or_without_history(storage) -> None:
+    check = Checker(True)
+    _run(_SLOGAN, storage, EchoLLM(), cache_check=check, **_topic("tea"))
+    _run(_SLOGAN, storage, EchoLLM(), cache_check=check, **_topic("tea"))
+
+    assert check.asked == []
+
+
+def test_cache_check_sees_results_from_an_edited_template(storage) -> None:
+    llm, check = EchoLLM(), Checker(True)
+    _run({"a": "Slogan for tea"}, storage, llm)
+    results = _run({"a": "A slogan for tea"}, storage, llm, cache_check=check)
+
+    assert check.asked == [("A slogan for tea", "Slogan for tea", "answer 1")]
+    assert results["a"] == "answer 1"
+
+
+def test_cache_check_respects_cache_false(storage) -> None:
+    check = Checker(True)
+    source = "{{ config(cache=False) }}Slogan for {{ promptdata('topic') }}"
+    _run({"a": source}, storage, EchoLLM(), **_topic("tea"))
+    _run({"a": source}, storage, EchoLLM(), cache_check=check, **_topic("coffee"))
+
+    assert check.asked == []
+
+
+async def test_cache_check_may_be_async_and_declare_extras(storage) -> None:
+    seen: dict = {}
+
+    async def check(prompt, previous, config, model):
+        seen.update(model=model, config=config)
+        return True
+
+    llm = EchoLLM()
+    await promptmap.async_run(
+        models_from_dict={"a": "{{ config(output_extension='txt') }}Hi"},
+        storage_backend=storage, llm_call=llm, verbose=False,
+    )
+    outputs = await promptmap.async_run(
+        models_from_dict={"a": "{{ config(output_extension='txt') }}Hi!"},
+        storage_backend=storage, llm_call=llm, verbose=False, cache_check=check,
+    )
+
+    assert outputs["a"] == "answer 1"
+    assert seen == {"model": "a", "config": {"output_extension": "txt"}}
+
+
+def test_cache_check_from_client_py(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "map").mkdir()
+    (tmp_path / "client.py").write_text(
+        "calls = []\n"
+        "def llm_call(prompt):\n"
+        "    calls.append(prompt)\n"
+        "    return f'answer {len(calls)}'\n"
+        "def cache_check(prompt, previous):\n"
+        "    return True\n"
+    )
+    storage = SQLiteStorageBackend(tmp_path / "promptmap.db")
+    (tmp_path / "map" / "a.prompt").write_text("Hi")
+    promptmap.run(map_dir="map", storage_backend=storage, verbose=False)
+    (tmp_path / "map" / "a.prompt").write_text("Hi there")
+    outputs = promptmap.run(map_dir="map", storage_backend=storage, verbose=False)
+
+    assert outputs["a"] == "answer 1"
+
+
+def test_classifier_cache_check_thresholds_p_yes() -> None:
+    from promptmap.executor.parser_model import PreviousRun
+
+    asked: list[tuple[str, str]] = []
+
+    def classify(state: str, question: str) -> float:
+        asked.append((state, question))
+        return 0.7
+
+    previous = PreviousRun(prompt="Slogan for tea", output="Tea time!")
+    assert promptmap.classifier_cache_check(classify, threshold=0.6)("Slogan for teas", previous)
+    assert not promptmap.classifier_cache_check(classify, threshold=0.8)("Slogan for teas", previous)
+
+    state, question = asked[0]
+    assert "Slogan for tea\n" in state and "Slogan for teas" in state and "Tea time!" in state
+    assert question == promptmap.classifier.CACHE_QUESTION

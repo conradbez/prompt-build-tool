@@ -423,6 +423,55 @@ Because the rendered prompt now includes the last output, it usually differs
 from run to run, so a model that reads `previous` is rarely a prompt-cache
 hit.
 
+### Deciding when a changed prompt is worth re-asking (`cache_check`)
+
+The prompt cache only hits on an identical prompt. To let a judge decide that
+a *changed* prompt is close enough, define `cache_check` in `client.py` (or
+pass `cache_check=` to `promptmap.run()`):
+
+```python
+# client.py
+def cache_check(prompt: str, previous) -> bool:
+    """True reuses previous.output instead of calling the LLM."""
+    ...
+```
+
+On an exact cache miss, promptmap calls it with the new rendered prompt and
+the model's latest successful result as a `previous` object (`.prompt`,
+`.output`, `.run_id`). Return `True` and the old response is served as a cache
+hit: the model is reported `cached`, its kind and validator process the
+response as usual, and it is stored under the new prompt, so the same prompt
+next time is an exact hit with no question asked. Return `False` and the LLM
+is called.
+
+To use a Jev-style classifier (`classify_call`, see `promptmap test --judge
+classifier`) as the judge:
+
+```python
+# client.py
+import promptmap
+
+classify_call = promptmap.systemone_classifier()
+cache_check = promptmap.classifier_cache_check(classify_call, threshold=0.8)
+```
+
+It asks the classifier whether the previous answer still fits the new prompt,
+showing it the previous prompt, the new prompt and the previous answer, and
+reuses the answer when P(yes) ≥ `threshold`. Pass `question=` to word it
+yourself.
+
+Details:
+
+- Unlike `{{ previous }}`, the candidate is **not** limited to the same
+  template: an edit to the `.prompt` file is exactly the kind of change the
+  checker is there to judge.
+- It may be `async`, and may also declare `config`, `secrets` and `model`
+  (the model name) parameters to receive them.
+- It is never asked on an exact hit, when the model has no earlier result,
+  for `{{ config(cache=False) }}` models, for the items of an `each=` model,
+  or for non-LLM work (`execute_python`).
+- `promptmap test` does not use it: tests judge fresh outputs.
+
 ---
 
 ## Map and reduce (`each=`)

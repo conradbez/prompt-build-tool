@@ -93,17 +93,17 @@ class MemoryStorageBackend:
         return self._cache.get(_prompt_hash(cache_key))
 
     def get_previous_result(
-        self, model_name: str, template_hash: str, exclude_run_id: str | None = None
+        self, model_name: str, template_hash: str | None, exclude_run_id: str | None = None
     ) -> dict[str, Any] | None:
-        """The latest successful row of *model_name* run from this same
-        template, outside *exclude_run_id*."""
+        """The latest successful row of *model_name* outside *exclude_run_id*,
+        run from this same template unless *template_hash* is None."""
         matches = [
             row
             for run_id, results in self._results.items()
             if run_id != exclude_run_id
             for row in results.values()
             if row.get("model_name") == model_name
-            and row.get("template_hash") == template_hash
+            and template_hash in (None, row.get("template_hash"))
             and row.get("status") == "success"
         ]
         if not matches:
@@ -113,6 +113,7 @@ class MemoryStorageBackend:
             "run_id": row["run_id"],
             "prompt_rendered": row["prompt_rendered"],
             "llm_output": row.get("llm_output_validated") or row["llm_output"],
+            "llm_output_raw": row["llm_output"],
         }
 
     def get_cached_token_usage(self, cache_key: str) -> int | None:
