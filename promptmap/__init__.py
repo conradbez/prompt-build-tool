@@ -124,6 +124,7 @@ async def async_run(
     promptdata: dict | None = None,
     promptfiles: dict[str, PromptFile] | None = None,
     validation_dir: str | None = "validation",
+    tests_dir: str | None = "tests",
     storage_backend: StorageBackend | None = None,
     global_instruction: str | Callable[[], str] | None = None,
     blob_store: BlobStore | None = None,
@@ -161,6 +162,10 @@ async def async_run(
         Values may be a **string path**, a :class:`pathlib.Path`, or any
         **binary file-like object** (``open(..., "rb")``, ``io.BytesIO``,
         etc.) — whatever your ``llm_call`` implementation accepts.
+    tests_dir:
+        The tests directory, hashed into the run's ``map_hash`` so a changed
+        test changes the map's ID (see :mod:`promptmap.run_ids`).  Ignored
+        for ``models_from_dict`` runs.
     global_instruction:
         Optional prompt text rendered into **every** model prompt — promptmap's
         analogue of dbt's query-comment.  Either a string or a zero-argument
@@ -298,6 +303,18 @@ async def async_run(
     run_id = storage_backend.create_run(
         model_count=len(ordered),
         git_sha=git_sha,
+    )
+    from promptmap.run_ids import record_run_ids
+
+    record_run_ids(
+        storage_backend,
+        run_id,
+        all_models.values(),
+        ordered,
+        tests_dir=tests_dir if models_from_dict is None else None,
+        global_instruction=global_instruction,
+        promptdata=promptdata,
+        promptfiles=promptfiles,
     )
 
     total = len(ordered)

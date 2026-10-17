@@ -66,6 +66,8 @@ than being sent to the LLM with a missing input.
 
 **Prompt cache is content-addressed.** The key is the *rendered* prompt (post-Jinja, pre-LLM), the model's `config()` block as sorted JSON, and a hash of any attached promptfiles, joined by NULs — `RunContext.cache_key()`. SQLite stores the SHA256 of that as `model_results.prompt_hash`. Config and files are part of the key because changing `output_format` or swapping an attached PDF must not serve the old answer.
 
+**Runs are identified by content hashes too.** `promptmap/run_ids.py` defines `template_hash` (one model's raw source, stored per row by `upsert_model_pending`), `map_hash` (all models, the global instruction, all test files) and `run_hash` (`map_hash` + the run's models + promptdata + promptfiles). Each entry point that creates a run calls `record_run_ids()` once the global instruction and inputs are resolved. `{{ previous }}` is looked up by `RunContext.previous_for()` against `template_hash` + model name, excluding the current run, so a result is only ever shown to the exact template that produced it. Both storage methods are optional: without them hashes are not stored and `previous` is `None`.
+
 **`--select` runs the full upstream chain fresh.** `promptmap run --select tweet` runs `tweet` and all its ancestors in dependency order. The prompt cache makes unchanged upstream nodes instant — no stale-output risk, no need for a previous run of the same DAG.
 
 **`model_outputs` is `dict[str, str | dict | list]`.** When a model declares `output_format: json`, its entry is a parsed Python object, not a string. Downstream `ref('model')` in Jinja receives the object, enabling `{{ ref('model').key }}` access. The DB always stores canonical JSON strings.

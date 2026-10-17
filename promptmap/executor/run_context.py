@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from promptmap.executor.parser_model import _RenderState, render_prompt
+from promptmap.executor.parser_model import PreviousRun, _RenderState, render_prompt
 from promptmap.files import (
     BlobStore,
     FileOutputError,
@@ -52,6 +52,7 @@ from promptmap.files import (
     split_model_path,
 )
 from promptmap.model_spec import ModelSpec
+from promptmap.run_ids import template_hash
 from promptmap.secrets import Secrets
 from promptmap.storage.base import StorageBackend
 from promptmap.tokens import add_tokens, split_usage
@@ -175,6 +176,7 @@ class RunContext:
 
     _accounting: dict[str, _ModelAccounting] = field(default_factory=dict)
     _files: dict[str, list | None] = field(default_factory=dict)
+    _previous: dict[str, PreviousRun | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.blobs is None:
@@ -211,6 +213,7 @@ class RunContext:
             model_name=spec.name,
             global_instruction=self.global_instruction_for(spec),
             extra_context=extra_context,
+            previous=self.previous_for(spec),
         )
         state.extra_outputs = extra_outputs
         acct = self._acct(spec.name)
@@ -218,6 +221,34 @@ class RunContext:
         if primary:
             acct.render_state = state
         return rendered, state
+
+    def previous_for(self, spec: ModelSpec) -> PreviousRun | None:
+        """*spec*'s latest successful result from another run of this same
+        template, looked up once per model per run.
+
+        Only a row whose stored template hash matches the current source
+        counts, so a result produced by an older version of the prompt is
+        never offered as this prompt's previous answer.
+        """
+        if spec.name in self._previous:
+            return self._previous[spec.name]
+        lookup = getattr(self.storage, "get_previous_result", None)
+        row = lookup(spec.name, template_hash(spec.source), self.run_id) if lookup else None
+        previous = None
+        if row is not None:
+            output: Any = decode_output(row["llm_output"] or "", self.blobs)
+            if isinstance(output, str) and spec.output_format == "json":
+                try:
+                    output = parse_json_output(output)
+                except ValueError:
+                    pass  # stored as text after all, e.g. a skip value
+            previous = PreviousRun(
+                prompt=row["prompt_rendered"] or "",
+                output=output,
+                run_id=row["run_id"],
+            )
+        self._previous[spec.name] = previous
+        return previous
 
     def note(self, spec: ModelSpec, text: str) -> None:
         """Set a one-line header shown above a multi-prompt model's rendered text."""

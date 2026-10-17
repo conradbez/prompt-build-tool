@@ -47,6 +47,7 @@ from promptmap.llm import (
     try_load_client_module,
 )
 from promptmap.rag import resolve_rag_call
+from promptmap.run_ids import record_run_ids
 from promptmap.secrets import MissingSecretsError
 from promptmap.project_values import (
     PROMPTDATA_FILE,
@@ -375,6 +376,12 @@ def run(map_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tuple
         c.print(f"  [yellow]Warning: promptdata() vars not provided: {missing_promptdata}[/yellow]")
     if dag_promptdata or promptdata_vars:
         c.print()
+
+    record_run_ids(
+        db, run_id, all_models.values(), ordered,
+        tests_dir=tests_dir, global_instruction=global_instruction,
+        promptdata=promptdata_vars, promptfiles=promptfiles_dict,
+    )
 
     run_kwargs = dict(
         storage_backend=db,

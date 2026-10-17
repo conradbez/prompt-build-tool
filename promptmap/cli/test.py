@@ -44,6 +44,7 @@ from promptmap.llm import (
     try_load_client_module,
 )
 from promptmap.rag import resolve_rag_call
+from promptmap.run_ids import record_run_ids
 from promptmap.secrets import MissingSecretsError
 from promptmap.tester import load_tests, execute_tests
 from promptmap.promptparams import (
@@ -376,6 +377,11 @@ def register_command(main) -> None:
                     c.print(f"  [dim]given: {', '.join(case.given)}[/dim]")
                 case_models = models_for_case(ordered_models, case.given)
                 row_run_id = db.create_run(model_count=len(case_models), git_sha=git_sha)
+                record_run_ids(
+                    db, row_run_id, all_models.values(), case_models,
+                    tests_dir=tests_dir, global_instruction=global_instruction,
+                    promptdata=row_promptdata, promptfiles=row_promptfiles,
+                )
                 model_run_results: list = []
                 on_model_start, on_model_done = pretty_print.make_run_callbacks(c, model_run_results, total=len(case_models))
                 try:

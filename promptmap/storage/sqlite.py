@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from promptmap.run_ids import template_hash
 from promptmap.tokens import add_tokens
 
 if TYPE_CHECKING:
@@ -27,8 +28,15 @@ _LATE_COLUMNS = {
 # Nullable columns added later still, which init_db() adds in place: a missing
 # value only means "not reported", so there is nothing to explain or migrate.
 _ADDED_COLUMNS = {
-    "spent_tokens": "INTEGER",
-    "cache_spent_tokens": "INTEGER",
+    "model_results": {
+        "spent_tokens": "INTEGER",
+        "cache_spent_tokens": "INTEGER",
+        "template_hash": "TEXT",
+    },
+    "runs": {
+        "map_hash": "TEXT",
+        "run_hash": "TEXT",
+    },
 }
 
 
@@ -82,7 +90,9 @@ class SQLiteStorageBackend:
                     status       TEXT        NOT NULL DEFAULT 'running',
                     completed_at TEXT,
                     model_count  INTEGER     NOT NULL DEFAULT 0,
-                    git_sha      TEXT
+                    git_sha      TEXT,
+                    map_hash     TEXT,
+                    run_hash     TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS model_results (
@@ -91,6 +101,7 @@ class SQLiteStorageBackend:
                     model_name       TEXT      NOT NULL,
                     status           TEXT      NOT NULL DEFAULT 'pending',
                     prompt_template  TEXT,
+                    template_hash    TEXT,
                     prompt_rendered  TEXT,
                     prompt_hash      TEXT,
                     llm_output       TEXT,
@@ -130,6 +141,11 @@ class SQLiteStorageBackend:
                     ON test_results (run_id, test_name);
             """)
             self._check_schema(conn)
+            # After _check_schema: an older database gains template_hash there.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_model_results_template_hash "
+                "ON model_results (template_hash, model_name, completed_at DESC)"
+            )
 
     def _check_schema(self, conn: sqlite3.Connection) -> None:
         """Fail with an explanation when the database predates this schema.
@@ -138,10 +154,12 @@ class SQLiteStorageBackend:
         without this the first write fails much later with a bare
         "no such column".
         """
+        for table, added in _ADDED_COLUMNS.items():
+            present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, type_ in added.items():
+                if name not in present:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {type_}")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(model_results)")}
-        for name, type_ in _ADDED_COLUMNS.items():
-            if name not in columns:
-                conn.execute(f"ALTER TABLE model_results ADD COLUMN {name} {type_}")
         missing = {name: t for name, t in _LATE_COLUMNS.items() if name not in columns}
         if not missing:
             return
@@ -171,6 +189,14 @@ class SQLiteStorageBackend:
                 (run_id, _today(now), now, model_count, git_sha),
             )
         return run_id
+
+    def record_run_ids(self, run_id: str, map_hash: str, run_hash: str) -> None:
+        """Store the run's content hashes (see :mod:`promptmap.run_ids`)."""
+        with self.get_conn() as conn:
+            conn.execute(
+                "UPDATE runs SET map_hash=?, run_hash=? WHERE run_id=?",
+                (map_hash, run_hash, run_id),
+            )
 
     def finish_run(self, run_id: str, status: str) -> None:
         with self.get_conn() as conn:
@@ -242,6 +268,24 @@ class SQLiteStorageBackend:
             ).fetchone()
         return row["llm_output"] if row else None
 
+    def get_previous_result(
+        self, model_name: str, template_hash: str, exclude_run_id: str | None = None
+    ) -> Optional[sqlite3.Row]:
+        """The latest successful row of *model_name* run from this same
+        template, outside *exclude_run_id*: its ``run_id``,
+        ``prompt_rendered`` and ``llm_output`` (validated when it was)."""
+        with self.get_conn() as conn:
+            return conn.execute(
+                """SELECT run_id, prompt_rendered,
+                          COALESCE(llm_output_validated, llm_output) AS llm_output
+                   FROM model_results
+                   WHERE template_hash = ? AND model_name = ?
+                     AND status = 'success' AND run_id != ?
+                   ORDER BY completed_at DESC
+                   LIMIT 1""",
+                (template_hash, model_name, exclude_run_id or ""),
+            ).fetchone()
+
     def get_cached_token_usage(self, cache_key: str) -> int | None:
         """Tokens the call behind :meth:`get_cached_llm_output` spent.  A row
         that was itself a cache hit carries the original call's tokens forward."""
@@ -271,11 +315,12 @@ class SQLiteStorageBackend:
         with self.get_conn() as conn:
             conn.execute(
                 """INSERT INTO model_results
-                   (run_id, model_name, status, prompt_template, depends_on,
-                    model_type, config)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?)
+                   (run_id, model_name, status, prompt_template, template_hash,
+                    depends_on, model_type, config)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
                 """,
-                (run_id, model_name, prompt_template, json.dumps(depends_on),
+                (run_id, model_name, prompt_template, template_hash(prompt_template),
+                 json.dumps(depends_on),
                  model_type, json.dumps(config or {}, sort_keys=True)),
             )
 

@@ -12,6 +12,12 @@ The first stores the tokens a model spent (and those its cache hits saved);
 the second returns the tokens spent behind a cache entry, so a hit can report
 what it saved.  Without them token usage is simply not recorded.
 
+``record_run_ids`` and ``get_previous_result`` are optional as well.  The
+first stores a run's content hashes (:mod:`promptmap.run_ids`); the second
+returns the latest successful row of a model run from the same template
+hash in another run, which backs ``{{ previous }}`` in templates.  Without
+them the hashes are not stored and ``previous`` is always ``None``.
+
 ``blob_store`` is optional too.  A backend that defines it returns the
 :class:`~promptmap.files.BlobStore` holding the bytes of file outputs; one that does
 not gets an in-memory store per run, so files work within a run but a cached
@@ -52,6 +58,10 @@ class StorageBackend(Protocol):
         cache_spent_tokens: int | None = None,
     ) -> None: ...
     def get_cached_token_usage(self, cache_key: str) -> int | None: ...
+    def record_run_ids(self, run_id: str, map_hash: str, run_hash: str) -> None: ...
+    def get_previous_result(
+        self, model_name: str, template_hash: str, exclude_run_id: str | None = None
+    ) -> Any | None: ...
     def mark_model_error(self, run_id: str, model_name: str, error: str) -> None: ...
     def mark_model_skipped(self, run_id: str, model_name: str) -> None: ...
     def get_run_results(self, run_id: str) -> list[Any]: ...

@@ -27,6 +27,14 @@ def create_run(model_count: int, git_sha: Optional[str] = None) -> str:
     return _DEFAULT_BACKEND.create_run(model_count=model_count, git_sha=git_sha)
 
 
+def record_run_ids(run_id: str, map_hash: str, run_hash: str) -> None:
+    _DEFAULT_BACKEND.record_run_ids(run_id, map_hash=map_hash, run_hash=run_hash)
+
+
+def get_previous_result(model_name: str, template_hash: str, exclude_run_id: str | None = None):
+    return _DEFAULT_BACKEND.get_previous_result(model_name, template_hash, exclude_run_id)
+
+
 def finish_run(run_id: str, status: str) -> None:
     _DEFAULT_BACKEND.finish_run(run_id, status)
 

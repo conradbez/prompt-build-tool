@@ -169,6 +169,7 @@ def extract_jinja_config(template_source: str) -> dict[str, str]:
         "promptdata": lambda *a, **kw: None,
         "return_list_RAG_results": lambda *a, **kw: [],
         "was_skipped": lambda *a, **kw: False,
+        "previous": None,
         "skip_and_set_to_value": lambda value="": "",
         "skip_this_and_downstream": lambda value="": "",
     }

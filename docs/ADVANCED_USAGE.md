@@ -374,6 +374,57 @@ invalidates itself — the next `promptmap run` re-runs affected models without
 
 ---
 
+## Run IDs and iterating on the last answer (`previous`)
+
+Every run stores three content hashes (SHA256 of contents, never of time), so
+two runs of identical inputs share them:
+
+| ID | Hash of | Stored on |
+| --- | --- | --- |
+| `template_hash` | one model's raw `.prompt` source, before Jinja | each `model_results` row |
+| `map_hash` | every model's name and source, `global.prompt`, and every file under `tests/` | the `runs` row |
+| `run_hash` | `map_hash`, the template hashes of the models this run executed, the promptdata, and the promptfiles' contents | the `runs` row |
+
+So a changed `--promptdata` value changes `run_hash` but not `map_hash`, and
+editing a test changes both. (`model_results.prompt_hash` is unrelated: it is
+the prompt-cache key, a hash of the *rendered* prompt.)
+
+### `{{ previous }}`
+
+A template can read its own model's last successful result:
+
+```jinja
+{% if previous %}
+Here is your last attempt:
+{{ previous.output }}
+
+It was written for this prompt:
+{{ previous.prompt }}
+
+Improve it.
+{% else %}
+Write a first draft of a slogan for {{ promptdata('topic') }}.
+{% endif %}
+```
+
+| Attribute | Value |
+| --- | --- |
+| `previous.prompt` | the prompt sent last time, after Jinja |
+| `previous.output` | what the model produced (parsed for `output_format="json"`, so `previous.output.key` works) |
+| `previous.run_id` | the run it came from |
+
+`previous` is `None` unless this model has succeeded before **with the same
+`template_hash`**. Edit the `.prompt` file and it is `None` again until the
+new version has run once; revert the edit and the old version's last result
+comes back. Failed runs are never offered. Promptdata is not part of the
+match, so a run with different inputs still sees the last answer.
+
+Because the rendered prompt now includes the last output, it usually differs
+from run to run, so a model that reads `previous` is rarely a prompt-cache
+hit.
+
+---
+
 ## Map and reduce (`each=`)
 
 Set `each` in `config()` to run a model once per item of an upstream list, then collect the results back into a list. It works on any `model_type`.

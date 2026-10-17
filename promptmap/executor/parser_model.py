@@ -22,6 +22,24 @@ class _ModelContext:
     name: str = ""
 
 
+@dataclass(frozen=True)
+class PreviousRun:
+    """This model's last successful result from an earlier run of the same
+    template, available as ``{{ previous }}`` — ``None`` when there is none.
+
+    Gated on the template hash: edit the ``.prompt`` file and ``previous``
+    is ``None`` until the edited version has run once.
+    """
+    #: The rendered prompt that was sent — after Jinja, before the LLM.
+    prompt: str
+    #: What the model produced, parsed for ``output_format="json"``.
+    output: Any
+    run_id: str = ""
+
+    def __str__(self) -> str:
+        return str(self.output)
+
+
 @dataclass
 class _RenderState:
     """Mutable state set by skip functions during template rendering.
@@ -60,6 +78,7 @@ def render_prompt(
     model_name: str = "",
     global_instruction: str | None = None,
     extra_context: dict | None = None,
+    previous: PreviousRun | None = None,
 ) -> "tuple[str, _RenderState]":
     """
     Render *template_source* as a Jinja2 template.
@@ -80,6 +99,10 @@ def render_prompt(
         work inside it.  Reference ``{{ prompt }}`` in it to place the model
         body explicitly; otherwise the instruction is prepended.  Ignored when
         a skip function fired, since no LLM call will be made.
+    previous:
+        This model's result from its last run of the same template, exposed
+        as ``{{ previous }}`` (``previous.prompt``, ``previous.output``), or
+        None.
 
     Returns
     -------
@@ -121,6 +144,7 @@ def render_prompt(
         "was_skipped": was_skipped,
         "config": lambda **_: "",   # no-op during real render; config already parsed
         "model": model_context,
+        "previous": previous,
         **(extra_context or {}),
     }
 

@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from promptmap.run_ids import template_hash
 from promptmap.tokens import add_tokens
 
 
@@ -39,10 +40,16 @@ class MemoryStorageBackend:
             "completed_at": None,
             "model_count": model_count,
             "git_sha": git_sha,
+            "map_hash": None,
+            "run_hash": None,
         }
         self._results[run_id] = {}
         self._tests[run_id] = []
         return run_id
+
+    def record_run_ids(self, run_id: str, map_hash: str, run_hash: str) -> None:
+        """Store the run's content hashes (see :mod:`promptmap.run_ids`)."""
+        self._runs[run_id].update({"map_hash": map_hash, "run_hash": run_hash})
 
     def finish_run(self, run_id: str, status: str) -> None:
         self._runs[run_id]["status"] = status
@@ -85,6 +92,29 @@ class MemoryStorageBackend:
     def get_cached_llm_output(self, cache_key: str) -> str | None:
         return self._cache.get(_prompt_hash(cache_key))
 
+    def get_previous_result(
+        self, model_name: str, template_hash: str, exclude_run_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """The latest successful row of *model_name* run from this same
+        template, outside *exclude_run_id*."""
+        matches = [
+            row
+            for run_id, results in self._results.items()
+            if run_id != exclude_run_id
+            for row in results.values()
+            if row.get("model_name") == model_name
+            and row.get("template_hash") == template_hash
+            and row.get("status") == "success"
+        ]
+        if not matches:
+            return None
+        row = max(matches, key=lambda r: r["completed_at"])
+        return {
+            "run_id": row["run_id"],
+            "prompt_rendered": row["prompt_rendered"],
+            "llm_output": row.get("llm_output_validated") or row["llm_output"],
+        }
+
     def get_cached_token_usage(self, cache_key: str) -> int | None:
         row = self._cache_rows.get(_prompt_hash(cache_key))
         if row is None:
@@ -105,6 +135,7 @@ class MemoryStorageBackend:
             "model_name": model_name,
             "status": "pending",
             "prompt_template": prompt_template,
+            "template_hash": template_hash(prompt_template),
             "prompt_rendered": None,
             "prompt_hash": None,
             "llm_output": None,
