@@ -486,7 +486,7 @@ def register_command(main) -> None:
     )
     @click.option(
         "--classifier", is_flag=True, default=False,
-        help="Add a jev-like yes/no classifier to client.py for classifier-judged tests.",
+        help='Add a yes/no classify_call to client.py, for tests judged with config(judge="classifier") or --judge classifier.',
     )
     def init(
         project_name: str | None, force: bool, with_secrets: bool, with_data: bool,
@@ -499,6 +499,12 @@ def register_command(main) -> None:
         models use.  Without PROJECT_NAME they are written into the current
         directory instead of scaffolding a project: `pbt init --secrets`.
         Existing values are kept; missing keys are appended.
+
+        \b
+        Examples:
+          pbt init my_project --provider anthropic
+          pbt init my_project --secrets --data
+          pbt init --secrets          (in an existing project)
         """
         kinds = [k for k, on in (("secrets", with_secrets), ("data", with_data), ("files", with_files)) if on]
         if project_name is None and kinds:

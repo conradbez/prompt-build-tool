@@ -3,11 +3,15 @@ pbt — prompt-build-tool CLI
 
 Commands
 --------
+pbt init         Scaffold a starter project (or add secrets/data/files YAML).
 pbt run          Execute all prompt models (or a subset via --select).
 pbt test         Run test prompts from the tests/ directory.
 pbt ls           List discovered models and their dependencies.
 pbt show-runs    Show recent run history from the SQLite store.
 pbt show-result  Print the stored output for a specific model + run.
+pbt docs         Generate an HTML report of past runs.
+pbt serve        Serve the docs report and a web/HTTP model runner.
+pbt type-hints   Write jinja-lsp autocomplete stubs for .prompt files.
 """
 
 from __future__ import annotations
@@ -89,10 +93,21 @@ def init_db_or_exit() -> None:
         sys.exit(1)
 
 
-@click.group()
+@click.group(epilog="Run `pbt COMMAND --help` for a command's options.")
 @click.version_option()
 def main() -> None:
-    """prompt-build-tool (pbt) — dbt-inspired LLM prompt orchestration."""
+    """prompt-build-tool (pbt) — dbt-inspired LLM prompt orchestration.
+
+    Models are Jinja2 *.prompt files in models/ that ref() each other; pbt
+    runs them in dependency order, caches LLM calls and stores every run.
+
+    \b
+    Get started:
+      pbt init my_project   scaffold a project, then cd my_project
+      pbt run               run every model
+      pbt test              check outputs with test prompts
+      pbt docs --open       browse past runs
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +143,7 @@ def main() -> None:
     metavar="KEY=VALUE",
     help=(
         "Inject a variable into every Jinja2 template via promptdata(). "
+        "Overrides promptdata.yml. "
         "Repeatable: --promptdata country=USA --promptdata tone=formal"
     ),
 )
@@ -139,7 +155,8 @@ def main() -> None:
     help=(
         "Pass a credential to model kinds (call.secrets) and llm_call. A bare "
         "NAME reads the environment variable NAME. Never rendered, cached or "
-        "stored. Repeatable: --secret OPENAI_API_KEY=sk-... --secret MODAL_TOKEN_ID"
+        "stored. Overrides secrets.yml. "
+        "Repeatable: --secret OPENAI_API_KEY=sk-... --secret MODAL_TOKEN_ID"
     ),
 )
 @click.option(
@@ -149,7 +166,7 @@ def main() -> None:
     metavar="NAME=PATH",
     help=(
         "Provide a file by name for models that declare it in their config block. "
-        "Repeatable: --promptfile doc=report.pdf --promptfile img=chart.png"
+        "Overrides promptfiles.yml. Repeatable: --promptfile doc=report.pdf --promptfile img=chart.png"
     ),
 )
 @click.option(
@@ -191,6 +208,16 @@ def run(models_dir: str, select: tuple[str, ...], no_color: bool, promptdata: tu
     Tests in the tests dir are gates unless they set {{ config(gate=False) }}:
     they run first, after only the models they read, and the rest of the
     pipeline runs if they all pass.
+
+    Defaults for any value not passed as a flag are read from promptdata.yml,
+    promptfiles.yml and secrets.yml in the current directory (create them
+    with `pbt init --data --files --secrets`). Flags override them key by key.
+
+    \b
+    Examples:
+      pbt run
+      pbt run -s summaries --promptdata topic=cats
+      pbt run --promptfile doc=report.pdf --secret OPENAI_API_KEY
     """
     c = Console(highlight=not no_color)
 
@@ -458,10 +485,10 @@ _register_test(main)
 # pbt ls
 # ---------------------------------------------------------------------------
 
-@main.command("ls")
-@click.option("--models-dir", default="models", show_default=True)
+@main.command("ls", short_help="List models, their dependencies and inputs.")
+@click.option("--models-dir", default="models", show_default=True, help="Directory containing *.prompt files.")
 def list_models(models_dir: str) -> None:
-    """List all discovered models and their dependencies."""
+    """List all discovered models, their dependencies and promptdata() keys."""
     try:
         try_load_client_module(models_dir)  # registers any project-local model types
         models = load_models(models_dir)
@@ -494,7 +521,7 @@ def show_runs(limit: int) -> None:
 # pbt show-result
 # ---------------------------------------------------------------------------
 
-@main.command("show-result")
+@main.command("show-result", short_help="Print the stored output for one model.")
 @click.argument("model_name")
 @click.option("--run-id", default=None, help="Specific run ID (defaults to latest).")
 @click.option(
@@ -502,13 +529,20 @@ def show_runs(limit: int) -> None:
     type=click.Choice(["output", "prompt", "all"]),
     default="output",
     show_default=True,
+    help="output: the (validated) LLM output; prompt: the rendered prompt sent; all: both.",
 )
 @click.option("--models-dir", default="models", show_default=True,
               help="Used to find client.py, for a custom blob store.")
 @click.option("--save-files", "save_files", default=None, metavar="DIR",
               help="Write the files this model produced into DIR.")
 def show_result(model_name: str, run_id: str | None, show: str, models_dir: str, save_files: str | None) -> None:
-    """Print stored output for MODEL_NAME."""
+    """Print stored output for MODEL_NAME (from the latest run by default).
+
+    \b
+    Examples:
+      pbt show-result summaries
+      pbt show-result summaries --show all --run-id <id from pbt show-runs>
+    """
     init_db_or_exit()
     use_client_blob_store(models_dir)
 
@@ -646,17 +680,23 @@ _register_type_hints(main)
 # pbt serve
 # ---------------------------------------------------------------------------
 
-@main.command("serve")
-@click.option("--models-dir", default="models", show_default=True)
-@click.option("--validation-dir", default="validation", show_default=True)
-@click.option("--host", default="127.0.0.1", show_default=True)
-@click.option("--port", default=8000, show_default=True)
+@main.command("serve", short_help="Serve the docs report and a web/HTTP model runner.")
+@click.option("--models-dir", default="models", show_default=True, help="Directory containing *.prompt files.")
+@click.option("--validation-dir", default="validation", show_default=True,
+              help="Directory containing per-model validation Python files.")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
+@click.option("--port", default=8000, show_default=True, help="Port to listen on.")
 @click.option("--docs-output", default=".pbt/docs/index.html", show_default=True,
               help="Path to the pre-generated pbt docs HTML file.")
 @click.option("--secret", "secret_flags", multiple=True, metavar="NAME=VALUE",
-              help="Credential every run receives; a bare NAME reads that env var. Repeatable.")
+              help="Credential every run receives; a bare NAME reads that env var. "
+                   "Overrides secrets.yml. Repeatable.")
 def serve(models_dir: str, validation_dir: str, host: str, port: int, docs_output: str, secret_flags: tuple[str, ...]) -> None:
-    """Start the pbt HTTP server and open the docs page in the browser."""
+    """Start the pbt HTTP server and open the docs page in the browser.
+
+    Serves the report from `pbt docs` (if generated) and a /run page for
+    running models over HTTP. Secrets come from secrets.yml and --secret.
+    """
     import threading
     import time
     import webbrowser

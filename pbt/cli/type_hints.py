@@ -220,7 +220,7 @@ def register_command(main) -> None:
     """Attach the `pbt type-hints` command to *main* Click group."""
     import click
 
-    @main.command("type-hints")
+    @main.command("type-hints", short_help="Write autocomplete stubs for .prompt files.")
     @click.option("--validation-dir", default="validation", show_default=True,
                   help="Directory containing per-model validation Python files.")
     @click.option("--gen-dir", default=".pbt/gen", show_default=True,

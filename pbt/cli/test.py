@@ -62,7 +62,7 @@ from pbt.cli.pretty_print import err_console
 def register_command(main) -> None:
     """Attach the `pbt test` command to *main* Click group."""
 
-    @main.command("test")
+    @main.command("test", short_help="Run test prompts against model outputs.")
     @click.option(
         "--models-dir",
         default="models",
@@ -80,7 +80,7 @@ def register_command(main) -> None:
         default=None,
         help="Use outputs from this specific run (default: latest run). Ignored when promptparams cases are found.",
     )
-    @click.option("--no-color", is_flag=True, default=False)
+    @click.option("--no-color", is_flag=True, default=False, help="Disable rich color output.")
     @click.option(
         "--promptparams",
         "promptparams_paths",
@@ -156,7 +156,8 @@ def register_command(main) -> None:
         metavar="NAME=VALUE",
         help=(
             "Credential for model kinds and llm_call; a bare NAME reads that "
-            "environment variable. Same as pbt run --secret. Repeatable."
+            "environment variable. Same as pbt run --secret; overrides "
+            "secrets.yml. Repeatable."
         ),
     )
     @click.option(
@@ -192,6 +193,13 @@ def register_command(main) -> None:
         When promptparams YAML cases are found, pbt run is executed once per
         case and tests are reported for each named case individually.
         Without promptparams, tests run against the latest (or specified) run.
+
+        \b
+        Examples:
+          pbt test
+          pbt test --case 'formal*'
+          pbt test --promptdata tone=formal --save-case formal
+          pbt test --check-latest
         """
         from pbt.cli import _git_sha, _secrets_or_exit, init_db_or_exit
 
